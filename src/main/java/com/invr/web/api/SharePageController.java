@@ -4,6 +4,7 @@ import com.invr.model.BoardSlot;
 import com.invr.model.CameraDevice;
 import com.invr.model.ShareBoard;
 import com.invr.rtsp.RtspServer;
+import com.invr.web.config.NvrProperties;
 import com.invr.web.service.BoardLayouts;
 import com.invr.web.service.DeviceCatalog;
 import com.invr.web.service.ShareBoardService;
@@ -39,13 +40,16 @@ public class SharePageController {
     private final DeviceCatalog catalog;
     private final ShareEventService eventService;
     private final RtspServer rtspServer;
+    private final NvrProperties props;
 
     public SharePageController(ShareBoardService boards, DeviceCatalog catalog,
-                               ShareEventService eventService, RtspServer rtspServer) {
+                               ShareEventService eventService, RtspServer rtspServer,
+                               NvrProperties props) {
         this.boards = boards;
         this.catalog = catalog;
         this.eventService = eventService;
         this.rtspServer = rtspServer;
+        this.props = props;
     }
 
     @GetMapping("/share/{token}")
@@ -108,6 +112,9 @@ public class SharePageController {
         Map<String, Object> rtsp = new LinkedHashMap<>();
         rtsp.put("host", hostOnly(hostHeader));
         rtsp.put("port", rtspServer.getPort());
+        // 若 RTSP 下行开启了访问令牌，下发给原生大屏客户端，由其拼接到 rtsp://host:port/<did>?t=<token>
+        String tok = props.getRtspToken();
+        rtsp.put("token", (tok == null || tok.isEmpty()) ? null : tok);
         resp.put("rtsp", rtsp);
         // 看板轮询/兜底重载周期（设置页可配），供 share.js 覆盖内置默认
         resp.put("configPollSec", eventService.effectiveConfigPollSec());

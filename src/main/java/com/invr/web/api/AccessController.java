@@ -81,6 +81,8 @@ public class AccessController {
         }
         TokenSession session = obtainSession(request);
         session.setUnlocked(true);
+        // 把内存中的米家会话按当前模式落盘（opt-in 用访问密码派生密钥；默认用 master.key）
+        sessionHolder.persistCurrentIfAny();
         return gateResult(session);
     }
 
@@ -96,6 +98,8 @@ public class AccessController {
         }
         TokenSession session = obtainSession(request);
         session.setUnlocked(true);
+        // opt-in 模式下用访问密码派生密钥恢复此前落盘的米家会话（默认模式为空操作）
+        sessionHolder.restoreAfterUnlock();
         return gateResult(session);
     }
 

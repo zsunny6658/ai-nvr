@@ -15,6 +15,7 @@ import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.Base64;
+import java.util.Optional;
 
 /**
  * Web 控制台“访问密码”的本地存储（独立于米家账号登录）。
@@ -39,11 +40,8 @@ public class AccessKeyStore {
     private static final int SALT_BYTES = 16;
     private static final int KEY_BITS = 256;
     private static final int ITERATIONS = 120_000;
-    public static final int MIN_LEN = 6;
+    public static final int MIN_LEN = 10;
     public static final int MAX_LEN = 64;
-
-    /** URL 一键解锁令牌派生的域分隔前缀（避免与其它 SHA-256 用途混淆）。 */
-    private static final String UNLOCK_DOMAIN = "invr:url-unlock/v1:";
 
     private final Path dir;
     private final ObjectMapper mapper = new ObjectMapper()
@@ -52,6 +50,8 @@ public class AccessKeyStore {
 
     /** null 表示尚未设置访问密码。 */
     private volatile Record record;
+    /** 本次进程内已校验通过的访问密码派生出的会话主密钥（仅内存，不落盘）。 */
+    private volatile byte[] cachedSessionKey;
 
     public AccessKeyStore() {
         this(DataDir.get());
@@ -82,16 +82,17 @@ public class AccessKeyStore {
         }
         byte[] salt = new byte[SALT_BYTES];
         random.nextBytes(salt);
-        byte[] hash = pbkdf2(password, salt, ITERATIONS);
+        byte[] hash = pbkdf2(password, salt, ITERATIONS, KEY_BITS);
 
         Record r = new Record();
         r.algo = ALGO;
         r.iterations = ITERATIONS;
         r.salt = Base64.getEncoder().encodeToString(salt);
         r.hash = Base64.getEncoder().encodeToString(hash);
-        r.urlHash = urlTokenHashB64(password);
+        r.urlHash = urlTokenHashB64(password, salt, ITERATIONS);
         persist(r);
         record = r;
+        cacheSessionKey(password, salt, ITERATIONS);
         log.info("访问密码已设置（PBKDF2 迭代 {}）", ITERATIONS);
     }
 
@@ -104,8 +105,12 @@ public class AccessKeyStore {
         try {
             byte[] salt = Base64.getDecoder().decode(r.salt);
             byte[] expected = Base64.getDecoder().decode(r.hash);
-            byte[] actual = pbkdf2(password, salt, r.iterations);
-            return MessageDigest.isEqual(expected, actual);
+            byte[] actual = pbkdf2(password, salt, r.iterations, KEY_BITS);
+            boolean ok = MessageDigest.isEqual(expected, actual);
+            if (ok) {
+                cacheSessionKey(password, salt, r.iterations);
+            }
+            return ok;
         } catch (Exception e) {
             log.warn("访问密码校验异常：{}", e.getMessage());
             return false;
@@ -115,29 +120,49 @@ public class AccessKeyStore {
     /* ===================== URL 一键解锁令牌 ===================== */
 
     /**
-     * 由访问密码派生 URL 解锁令牌：{@code base64url(SHA-256(UNLOCK_DOMAIN + password))}。
-     * 确定性、无随机盐，便于凭密码随时生成同一条链接；令牌不含也不暴露原密码。
+     * 由访问密码派生 URL 解锁令牌：{@code base64url(PBKDF2(密码, 本密码独立盐, 迭代次数))}。
+     * 与访问密码哈希共用同一 salt / 迭代次数，因此离线爆破访问密码的成本与 PBKDF2 一致
+     * （不再是单次 SHA-256）；令牌本身即 32 字节会话主密钥的编码，供 opt-in 的会话加密复用。
+     * 确定性、凭密码可重算；令牌不含也不暴露原密码。
      */
-    public static String buildUnlockToken(char[] password) {
-        if (password == null || password.length == 0) {
-            throw new IllegalArgumentException("密码为空");
+    public String buildUnlockToken(char[] password) {
+        Record r = record;
+        if (r == null) {
+            throw new IllegalStateException("尚未设置访问密码");
         }
-        byte[] digest = sha256((UNLOCK_DOMAIN + new String(password)).getBytes(StandardCharsets.UTF_8));
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(digest);
+        return unlockTokenOf(password, Base64.getDecoder().decode(r.salt), r.iterations);
     }
 
     /** 校验 URL 携带的解锁令牌（对其二次哈希做恒定时间比较）；未启用/损坏/为空一律 false。 */
     public synchronized boolean verifyUnlockToken(String token) {
+        return verifyUnlockTokenAndGetKey(token).isPresent();
+    }
+
+    /**
+     * 校验 URL 解锁令牌并<strong>返回其编码的 32 字节会话主密钥</strong>。
+     *
+     * <p>用于 opt-in 的“会话密钥由访问密码派生”模式：一键解锁链接的 key 本身就是会话密钥的
+     * base64url 编码，校验通过即代表持有该密码派生密钥，可直接用于解密 {@code session.json}
+     * 恢复米家会话。校验失败（哈希不符/编码损坏/未设置）返回 {@link Optional#empty()}。</p>
+     */
+    public synchronized Optional<byte[]> verifyUnlockTokenAndGetKey(String token) {
         Record r = record;
         if (r == null || r.urlHash == null || token == null || token.isEmpty()) {
-            return false;
+            return Optional.empty();
         }
         try {
             byte[] expected = Base64.getDecoder().decode(r.urlHash);
             byte[] actual = sha256(token.getBytes(StandardCharsets.UTF_8));
-            return MessageDigest.isEqual(expected, actual);
+            if (!MessageDigest.isEqual(expected, actual)) {
+                return Optional.empty();
+            }
+            byte[] key = Base64.getUrlDecoder().decode(token);
+            if (key.length != KEY_BITS / 8) {
+                return Optional.empty();
+            }
+            return Optional.of(key);
         } catch (Exception e) {
-            return false;
+            return Optional.empty();
         }
     }
 
@@ -153,7 +178,7 @@ public class AccessKeyStore {
         if (!verify(password)) {
             throw new IllegalArgumentException("访问密码错误");
         }
-        String expectedHash = urlTokenHashB64(password);
+        String expectedHash = urlTokenHashB64(password, Base64.getDecoder().decode(r.salt), r.iterations);
         if (!expectedHash.equals(r.urlHash)) {
             r.urlHash = expectedHash;
             persist(r);
@@ -183,30 +208,58 @@ public class AccessKeyStore {
         // 新密码与当前密码相同则拒绝（用旧盐派生后做恒定时间比较）
         byte[] oldSalt = Base64.getDecoder().decode(r.salt);
         byte[] oldHash = Base64.getDecoder().decode(r.hash);
-        if (MessageDigest.isEqual(oldHash, pbkdf2(newPassword, oldSalt, r.iterations))) {
+        if (MessageDigest.isEqual(oldHash, pbkdf2(newPassword, oldSalt, r.iterations, KEY_BITS))) {
             throw new IllegalArgumentException("新密码不能与当前密码相同");
         }
         byte[] salt = new byte[SALT_BYTES];
         random.nextBytes(salt);
-        byte[] hash = pbkdf2(newPassword, salt, ITERATIONS);
+        byte[] hash = pbkdf2(newPassword, salt, ITERATIONS, KEY_BITS);
 
         Record nr = new Record();
         nr.algo = ALGO;
         nr.iterations = ITERATIONS;
         nr.salt = Base64.getEncoder().encodeToString(salt);
         nr.hash = Base64.getEncoder().encodeToString(hash);
-        nr.urlHash = urlTokenHashB64(newPassword);
+        nr.urlHash = urlTokenHashB64(newPassword, salt, ITERATIONS);
         persist(nr);
         record = nr;
+        cacheSessionKey(newPassword, salt, ITERATIONS);
         log.info("访问密码已修改（PBKDF2 迭代 {}）", ITERATIONS);
         return buildUnlockToken(newPassword);
     }
 
+    /** 返回本次进程内已校验密码派生出的会话主密钥（32 字节）；未解锁/未设置返回 null。 */
+    public byte[] cachedSessionKey() {
+        byte[] k = cachedSessionKey;
+        return k == null ? null : k.clone();
+    }
+
+    /** 由访问密码派生 32 字节会话主密钥（AES-GCM 用），供 opt-in 的会话加密复用。 */
+    public byte[] sessionKey(char[] password) {
+        Record r = record;
+        if (r == null) {
+            throw new IllegalStateException("尚未设置访问密码");
+        }
+        return deriveSessionKey(password, Base64.getDecoder().decode(r.salt), r.iterations);
+    }
+
     /** 落盘的是“令牌的 SHA-256”，避免 access.json 中直接存放可立即使用的解锁令牌。 */
-    private static String urlTokenHashB64(char[] password) {
-        String token = buildUnlockToken(password);
-        return Base64.getEncoder().encodeToString(
-                sha256(token.getBytes(StandardCharsets.UTF_8)));
+    private static String urlTokenHashB64(char[] password, byte[] salt, int iterations) {
+        String token = unlockTokenOf(password, salt, iterations);
+        return Base64.getEncoder().encodeToString(sha256(token.getBytes(StandardCharsets.UTF_8)));
+    }
+
+    private static String unlockTokenOf(char[] password, byte[] salt, int iterations) {
+        byte[] key = pbkdf2(password, salt, iterations, KEY_BITS);
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(key);
+    }
+
+    private static byte[] deriveSessionKey(char[] password, byte[] salt, int iterations) {
+        return pbkdf2(password, salt, iterations, KEY_BITS);
+    }
+
+    private void cacheSessionKey(char[] password, byte[] salt, int iterations) {
+        this.cachedSessionKey = deriveSessionKey(password, salt, iterations);
     }
 
     private static byte[] sha256(byte[] data) {
@@ -233,9 +286,9 @@ public class AccessKeyStore {
         return "访问密码不能全为空白字符";
     }
 
-    private byte[] pbkdf2(char[] password, byte[] salt, int iterations) {
+    private static byte[] pbkdf2(char[] password, byte[] salt, int iterations, int keyBits) {
         try {
-            PBEKeySpec spec = new PBEKeySpec(password, salt, iterations, KEY_BITS);
+            PBEKeySpec spec = new PBEKeySpec(password, salt, iterations, keyBits);
             try {
                 SecretKeyFactory factory = SecretKeyFactory.getInstance(ALGO);
                 return factory.generateSecret(spec).getEncoded();
@@ -243,7 +296,7 @@ public class AccessKeyStore {
                 spec.clearPassword();
             }
         } catch (Exception e) {
-            throw new IllegalStateException("派生访问密码密钥失败：" + e.getMessage(), e);
+            throw new IllegalStateException("派生密钥失败：" + e.getMessage(), e);
         }
     }
 

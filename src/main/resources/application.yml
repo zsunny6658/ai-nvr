@@ -20,6 +20,13 @@ spring:
 invr:
   # 内嵌 RTSP 下行端口
   rtsp-port: 9554
+  # 可选：内嵌 RTSP 下行访问令牌。非空时所有 RTSP 请求须带 ?t=<token> 且值匹配才放行；
+  # 留空（默认）表示不鉴权。建议配合 HTTPS 反向代理使用，避免令牌在链路上明文暴露。
+  rtsp-token: ""
+  # 可选（opt-in，默认关闭）：米家会话加密密钥由“访问密码”派生（PBKDF2），不再生成与密文同目录的
+  # master.key。开启后重启需先用访问密码解锁才能恢复米家会话（安全性更高）；旧版 master.key 加密的
+  # 会话在切换后需重新登录一次米家账号。
+  session-key-from-password: false
   record-segment-sec: 120
   # 网页 HLS 预览
   hls:

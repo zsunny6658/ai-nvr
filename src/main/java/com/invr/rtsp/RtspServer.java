@@ -33,6 +33,8 @@ public final class RtspServer {
     private volatile int port;
     private final StreamHub hub;
     private final CameraConnector connector;
+    /** RTSP 下行访问令牌；非空时所有请求须带 {@code ?t=<token>} 才放行。CLI 路径传 null（不鉴权）。 */
+    private final String rtspToken;
 
     private EventLoopGroup bossGroup;
     private EventLoopGroup workerGroup;
@@ -40,9 +42,14 @@ public final class RtspServer {
     private Channel serverChannel;
 
     public RtspServer(int port, StreamHub hub, CameraConnector connector) {
+        this(port, hub, connector, null);
+    }
+
+    public RtspServer(int port, StreamHub hub, CameraConnector connector, String rtspToken) {
         this.port = port;
         this.hub = hub;
         this.connector = connector;
+        this.rtspToken = rtspToken;
     }
 
     public int getPort() {
@@ -69,7 +76,7 @@ public final class RtspServer {
                     protected void initChannel(SocketChannel ch) {
                         ch.pipeline()
                                 .addLast(new RtspRequestDecoder())
-                                .addLast(biz, new RtspServerHandler(hub, connector));
+                                .addLast(biz, new RtspServerHandler(hub, connector, rtspToken));
                     }
                 });
         return b.bind(listenPort).sync().channel();

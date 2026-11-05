@@ -42,6 +42,6 @@ public class NvrConfig {
         // 启动端口：Web 设置（settings.json）优先，缺省回落配置文件 invr.rtsp-port
         Integer custom = appSettingsStore.rtspPort();
         int port = (custom != null && custom > 0) ? custom : props.getRtspPort();
-        return new RtspServer(port, hub, connector);
+        return new RtspServer(port, hub, connector, props.getRtspToken());
     }
 }

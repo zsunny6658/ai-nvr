@@ -73,7 +73,12 @@ public class DeviceController {
         m.put("online", c.online());
         m.put("recording", recordingService.isRecording(c.did()));
         m.put("previewing", hlsService.isPreviewing(c.did()));
-        m.put("rtspUrl", "rtsp://" + host + ":" + rtspServer.getPort() + "/" + c.did());
+        String rtspUrl = "rtsp://" + host + ":" + rtspServer.getPort() + "/" + c.did();
+        String tok = props.getRtspToken();
+        if (tok != null && !tok.isEmpty()) {
+            rtspUrl += "?t=" + tok;
+        }
+        m.put("rtspUrl", rtspUrl);
         // 相对路径：配合前端 <base href="./">，直连根路径与 fnOS 网关 /app/{appname}/ 下都能正确解析
         m.put("hlsUrl", "hls/" + c.did() + "/index.m3u8");
         return m;

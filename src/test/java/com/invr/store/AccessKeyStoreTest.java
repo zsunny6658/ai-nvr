@@ -9,6 +9,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -30,11 +31,11 @@ class AccessKeyStoreTest {
     @Test
     void setupThenVerify(@TempDir Path tempDir) {
         AccessKeyStore store = new AccessKeyStore(tempDir);
-        store.setup("abc123".toCharArray());
+        store.setup("abc1234567".toCharArray());
         assertTrue(store.isConfigured());
-        assertTrue(store.verify("abc123".toCharArray()));
-        assertFalse(store.verify("wrong".toCharArray()));
-        assertFalse(store.verify("ABC123".toCharArray()));
+        assertTrue(store.verify("abc1234567".toCharArray()));
+        assertFalse(store.verify("wrongpw000".toCharArray()));
+        assertFalse(store.verify("ABC1234567".toCharArray()));
         assertFalse(store.verify(new char[0]));
         assertFalse(store.verify(null));
     }
@@ -50,10 +51,10 @@ class AccessKeyStoreTest {
     @Test
     void cannotSetupTwice(@TempDir Path tempDir) {
         AccessKeyStore store = new AccessKeyStore(tempDir);
-        store.setup("abc123".toCharArray());
-        assertThrows(IllegalStateException.class, () -> store.setup("xyz789".toCharArray()));
+        store.setup("abc1234567".toCharArray());
+        assertThrows(IllegalStateException.class, () -> store.setup("xyz7890123".toCharArray()));
         // 原密码仍有效
-        assertTrue(store.verify("abc123".toCharArray()));
+        assertTrue(store.verify("abc1234567".toCharArray()));
     }
 
     @Test
@@ -71,15 +72,15 @@ class AccessKeyStoreTest {
         AccessKeyStore reloaded = new AccessKeyStore(tempDir);
         assertTrue(reloaded.isConfigured());
         assertTrue(reloaded.verify("secret-pw-marker".toCharArray()));
-        assertFalse(reloaded.verify("other".toCharArray()));
+        assertFalse(reloaded.verify("other00000".toCharArray()));
     }
 
     @Test
     void samePasswordProducesDifferentSaltHash(@TempDir Path tempDir) throws Exception {
         AccessKeyStore a = new AccessKeyStore(tempDir.resolve("a"));
         AccessKeyStore b = new AccessKeyStore(tempDir.resolve("b"));
-        a.setup("samepass1".toCharArray());
-        b.setup("samepass1".toCharArray());
+        a.setup("samepass12".toCharArray());
+        b.setup("samepass12".toCharArray());
         String ja = Files.readString(tempDir.resolve("a").resolve("access.json"));
         String jb = Files.readString(tempDir.resolve("b").resolve("access.json"));
         assertFalse(ja.equals(jb), "随机盐应使相同密码的落盘哈希不同");
@@ -90,8 +91,8 @@ class AccessKeyStoreTest {
         assertNotNull(AccessKeyStore.validate(null));
         assertNotNull(AccessKeyStore.validate("12345".toCharArray()));
         assertNotNull(AccessKeyStore.validate("     ".toCharArray()));
-        assertNull(AccessKeyStore.validate("123456".toCharArray()));
-        assertNull(AccessKeyStore.validate("a-b-c-d".toCharArray()));
+        assertNull(AccessKeyStore.validate("1234567890".toCharArray()));
+        assertNull(AccessKeyStore.validate("abcdefghij".toCharArray()));
     }
 
     @Test
@@ -103,13 +104,15 @@ class AccessKeyStoreTest {
     }
 
     @Test
-    void unlockTokenIsDeterministicAndUrlSafe() {
+    void unlockTokenIsDeterministicAndUrlSafe(@TempDir Path tempDir) {
+        AccessKeyStore store = new AccessKeyStore(tempDir);
+        store.setup("link-pw-123".toCharArray());
         char[] pw = "link-pw-123".toCharArray();
-        String t1 = AccessKeyStore.buildUnlockToken(pw);
-        String t2 = AccessKeyStore.buildUnlockToken(pw);
+        String t1 = store.buildUnlockToken(pw);
+        String t2 = store.buildUnlockToken(pw);
         assertNotNull(t1);
         assertEquals(t1, t2, "同一密码应派生同一令牌");
-        assertNotEquals(t1, AccessKeyStore.buildUnlockToken("link-pw-124".toCharArray()));
+        assertNotEquals(t1, store.buildUnlockToken("link-pw-124".toCharArray()));
         // URL-safe base64，无 padding 与需要转义的字符
         assertFalse(t1.contains("+"));
         assertFalse(t1.contains("/"));
@@ -123,7 +126,7 @@ class AccessKeyStoreTest {
         char[] pw = "link-pw-123".toCharArray();
         store.setup(pw);
 
-        String token = AccessKeyStore.buildUnlockToken(pw);
+        String token = store.buildUnlockToken(pw);
         assertTrue(store.verifyUnlockToken(token));
         assertFalse(store.verifyUnlockToken(token + "x"));
         assertFalse(store.verifyUnlockToken("not-a-token"));
@@ -153,7 +156,7 @@ class AccessKeyStoreTest {
 
         AccessKeyStore legacy = new AccessKeyStore(tempDir);
         assertTrue(legacy.isConfigured());
-        String token = AccessKeyStore.buildUnlockToken(pw);
+        String token = legacy.buildUnlockToken(pw);
         assertFalse(legacy.verifyUnlockToken(token), "旧记录无 urlHash 时 URL 解锁应不可用");
 
         // 错误密码不允许重新生成
@@ -169,5 +172,22 @@ class AccessKeyStoreTest {
         // 重启加载后令牌仍有效
         AccessKeyStore reloaded = new AccessKeyStore(tempDir);
         assertTrue(reloaded.verifyUnlockToken(token));
+    }
+
+    @Test
+    void verifyUnlockTokenAndGetKeyReturnsDerivedSessionKey(@TempDir Path tempDir) {
+        AccessKeyStore store = new AccessKeyStore(tempDir);
+        char[] pw = "link-pw-123".toCharArray();
+        store.setup(pw);
+
+        String token = store.buildUnlockToken(pw);
+        java.util.Optional<byte[]> key = store.verifyUnlockTokenAndGetKey(token);
+        assertTrue(key.isPresent());
+        assertEquals(32, key.get().length, "令牌解码出的会话主密钥应为 32 字节");
+        assertArrayEquals(key.get(), store.sessionKey(pw),
+                "令牌解码出的密钥应等于访问密码派生的会话密钥");
+
+        assertFalse(store.verifyUnlockTokenAndGetKey(token + "x").isPresent(), "篡改的令牌应返回空");
+        assertFalse(store.verifyUnlockTokenAndGetKey("garbage").isPresent());
     }
 }

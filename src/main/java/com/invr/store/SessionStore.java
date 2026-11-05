@@ -14,6 +14,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.util.Base64;
+import java.util.Optional;
 
 /**
  * 会话凭据本地加密存储。
@@ -92,6 +93,57 @@ public class SessionStore {
         } catch (Exception e) {
             log.warn("会话解密失败（需重新登录）：{}", e.getMessage());
             return java.util.Optional.empty();
+        }
+    }
+
+    /**
+     * 用指定密钥（opt-in：由访问密码派生）加密保存会话；不会创建 / 依赖 {@code master.key}。
+     */
+    public synchronized void saveWithKey(LoginSession session, byte[] key) {
+        try {
+            Files.createDirectories(dir);
+            byte[] plain = mapper.writeValueAsBytes(session);
+
+            byte[] iv = new byte[IV_BYTES];
+            random.nextBytes(iv);
+            Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+            cipher.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(key, "AES"),
+                    new GCMParameterSpec(GCM_TAG_BITS, iv));
+            byte[] encrypted = cipher.doFinal(plain);
+
+            byte[] blob = new byte[iv.length + encrypted.length];
+            System.arraycopy(iv, 0, blob, 0, iv.length);
+            System.arraycopy(encrypted, 0, blob, iv.length, encrypted.length);
+            Files.writeString(dir.resolve(SESSION_FILE), Base64.getEncoder().encodeToString(blob));
+            restrictOwnerOnly(dir.resolve(SESSION_FILE));
+            log.debug("会话已用派生密钥保存至 {}", dir.resolve(SESSION_FILE));
+        } catch (Exception e) {
+            throw new IllegalStateException("保存会话失败：" + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 用指定密钥尝试解密会话（opt-in）；密钥不符 / 损坏返回 empty，绝不创建 {@code master.key}。
+     */
+    public synchronized Optional<LoginSession> loadWithKey(byte[] key) {
+        Path file = dir.resolve(SESSION_FILE);
+        if (!Files.exists(file)) {
+            return Optional.empty();
+        }
+        try {
+            byte[] blob = Base64.getDecoder().decode(Files.readString(file).trim());
+            byte[] iv = java.util.Arrays.copyOfRange(blob, 0, IV_BYTES);
+            byte[] encrypted = java.util.Arrays.copyOfRange(blob, IV_BYTES, blob.length);
+            Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+            cipher.init(Cipher.DECRYPT_MODE, new SecretKeySpec(key, "AES"),
+                    new GCMParameterSpec(GCM_TAG_BITS, iv));
+            byte[] plain = cipher.doFinal(encrypted);
+            return Optional.of(mapper.readValue(plain, LoginSession.class));
+        } catch (IOException e) {
+            throw new IllegalStateException("读取会话失败：" + e.getMessage(), e);
+        } catch (Exception e) {
+            log.warn("以指定密钥解密会话失败（需重新登录）：{}", e.getMessage());
+            return Optional.empty();
         }
     }
 

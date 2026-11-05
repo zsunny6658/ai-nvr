@@ -1,6 +1,7 @@
 package com.invr.web.api;
 
 import com.invr.store.AccessKeyStore;
+import com.invr.web.service.SessionHolder;
 import com.invr.web.service.TokenSessionManager;
 import com.invr.web.service.TokenSessionManager.TokenSession;
 import org.springframework.stereotype.Controller;
@@ -23,10 +24,13 @@ public class UnlockController {
 
     private final AccessKeyStore keyStore;
     private final TokenSessionManager tokenSessions;
+    private final SessionHolder sessionHolder;
 
-    public UnlockController(AccessKeyStore keyStore, TokenSessionManager tokenSessions) {
+    public UnlockController(AccessKeyStore keyStore, TokenSessionManager tokenSessions,
+                           SessionHolder sessionHolder) {
         this.keyStore = keyStore;
         this.tokenSessions = tokenSessions;
+        this.sessionHolder = sessionHolder;
     }
 
     @GetMapping("/unlock")
@@ -34,6 +38,8 @@ public class UnlockController {
         if (key != null && keyStore.verifyUnlockToken(key)) {
             TokenSession session = tokenSessions.create();
             session.setUnlocked(true);
+            // opt-in 模式下用令牌解码出的派生密钥恢复米家会话（默认模式为空操作）
+            keyStore.verifyUnlockTokenAndGetKey(key).ifPresent(sessionHolder::restoreWithUnlockTokenKey);
             return "redirect:/?access_token=" + session.getToken();
         }
         return "redirect:/?unlock_error=1";

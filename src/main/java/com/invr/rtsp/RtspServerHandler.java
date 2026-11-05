@@ -12,6 +12,7 @@ import org.slf4j.LoggerFactory;
 
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.Base64;
 
 /**
@@ -24,6 +25,8 @@ public final class RtspServerHandler extends SimpleChannelInboundHandler<RtspReq
 
     private final StreamHub hub;
     private final CameraConnector connector;
+    /** 非空时，所有取流请求须带 {@code ?t=<token>} 且值匹配才放行；null/空表示不鉴权。 */
+    private final String rtspToken;
 
     private String did;
     private RtspStreamSink sink;
@@ -33,8 +36,13 @@ public final class RtspServerHandler extends SimpleChannelInboundHandler<RtspReq
     private boolean subscribed;
 
     public RtspServerHandler(StreamHub hub, CameraConnector connector) {
+        this(hub, connector, null);
+    }
+
+    public RtspServerHandler(StreamHub hub, CameraConnector connector, String rtspToken) {
         this.hub = hub;
         this.connector = connector;
+        this.rtspToken = rtspToken == null ? "" : rtspToken;
     }
 
     @Override
@@ -42,9 +50,27 @@ public final class RtspServerHandler extends SimpleChannelInboundHandler<RtspReq
         try {
             switch (req.method().toUpperCase()) {
                 case "OPTIONS" -> options(ctx, req);
-                case "DESCRIBE" -> describe(ctx, req);
-                case "SETUP" -> setup(ctx, req);
-                case "PLAY" -> play(ctx, req);
+                case "DESCRIBE" -> {
+                    if (!tokenAllowed(req)) {
+                        denyUnauthorized(ctx, req);
+                        return;
+                    }
+                    describe(ctx, req);
+                }
+                case "SETUP" -> {
+                    if (!tokenAllowed(req)) {
+                        denyUnauthorized(ctx, req);
+                        return;
+                    }
+                    setup(ctx, req);
+                }
+                case "PLAY" -> {
+                    if (!tokenAllowed(req)) {
+                        denyUnauthorized(ctx, req);
+                        return;
+                    }
+                    play(ctx, req);
+                }
                 case "PAUSE" -> simpleOk(ctx, req);
                 case "GET_PARAMETER", "SET_PARAMETER" -> simpleOk(ctx, req);
                 case "TEARDOWN" -> {
@@ -58,6 +84,44 @@ public final class RtspServerHandler extends SimpleChannelInboundHandler<RtspReq
             log.error("RTSP 处理 {} 异常：{}", req.method(), e.toString(), e);
             sendStatus(ctx, req, 500, "Internal Server Error");
         }
+    }
+
+    /** 令牌鉴权：未配置则不限制；已配置则要求 URI 上的 {@code ?t=<token>} 与配置值恒定时间匹配。 */
+    private boolean tokenAllowed(RtspRequest req) {
+        if (rtspToken.isEmpty()) {
+            return true;
+        }
+        String t = queryParam(req.uri(), "t");
+        if (t == null) {
+            return false;
+        }
+        try {
+            return MessageDigest.isEqual(t.getBytes(StandardCharsets.UTF_8),
+                    rtspToken.getBytes(StandardCharsets.UTF_8));
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private void denyUnauthorized(ChannelHandlerContext ctx, RtspRequest req) {
+        log.warn("RTSP 未携带有效令牌，拒绝 {} {}", req.method(), firstPathSegment(req.uri()));
+        sendStatus(ctx, req, 401, "Unauthorized");
+    }
+
+    private static String queryParam(String uri, String name) {
+        if (uri == null || uri.indexOf('?') < 0) {
+            return null;
+        }
+        String query = uri.substring(uri.indexOf('?') + 1);
+        for (String pair : query.split("&")) {
+            int i = pair.indexOf('=');
+            if (i > 0 && name.equals(pair.substring(0, i))) {
+                String v = pair.substring(i + 1);
+                int frag = v.indexOf('#');
+                return frag >= 0 ? v.substring(0, frag) : v;
+            }
+        }
+        return null;
     }
 
     @Override

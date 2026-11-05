@@ -13,6 +13,17 @@ public class NvrProperties {
     private long recordSegmentSec = 120;
     /** 录像保留天数：0 表示永久保留，不自动清理；>0 时超出该天数的分段自动删除。 */
     private int recordRetentionDays = 0;
+    /**
+     * 内嵌 RTSP 下行访问令牌。非空时，所有 RTSP 请求须带上 {@code ?t=<token>} 且值匹配才放行；
+     * 留空（默认）则不鉴权。建议配合 HTTPS 反向代理使用，避免令牌在链路上明文暴露。
+     */
+    private String rtspToken = "";
+    /**
+     * opt-in（默认关闭）：米家会话加密密钥由“访问密码”派生（PBKDF2），不再生成与密文同目录的
+     * master.key。开启后重启需先用访问密码解锁才能恢复米家会话（安全性更高）；旧版 master.key
+     * 加密的会话在切换后需重新登录一次米家账号。
+     */
+    private boolean sessionKeyFromPassword = false;
     private final Hls hls = new Hls();
     private final Share share = new Share();
 
@@ -22,6 +33,22 @@ public class NvrProperties {
 
     public void setRtspPort(int rtspPort) {
         this.rtspPort = rtspPort;
+    }
+
+    public String getRtspToken() {
+        return rtspToken;
+    }
+
+    public void setRtspToken(String rtspToken) {
+        this.rtspToken = rtspToken == null ? "" : rtspToken;
+    }
+
+    public boolean isSessionKeyFromPassword() {
+        return sessionKeyFromPassword;
+    }
+
+    public void setSessionKeyFromPassword(boolean sessionKeyFromPassword) {
+        this.sessionKeyFromPassword = sessionKeyFromPassword;
     }
 
     public String getRecordingDir() {
