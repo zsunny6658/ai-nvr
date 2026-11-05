@@ -1,0 +1,45 @@
+server:
+  port: 9080
+  servlet:
+    # 门禁会话不依赖 Cookie（改用 Authorization 头 / __invr_t 查询参数的令牌会话），
+    # 因此此处不再配置 session cookie（SameSite/Secure 对跨站 iframe + HTTP 均无法生效）。
+    encoding:
+      charset: UTF-8
+      # 仅强制“请求”编码；不要强制响应编码。force-response=true 时 Tomcat 会给所有响应
+      # Content-Type（含 video/mp4、video/iso.segment 二进制）追加 ;charset=UTF-8，导致
+      # Edge 原生 HLS 无法识别 fMP4 初始化段/分片而 MEDIA_ERR_SRC_NOT_SUPPORTED（黑屏）。
+      force: true
+      force-response: false
+
+spring:
+  application:
+    name: invr
+  mvc:
+    static-path-pattern: /**
+
+invr:
+  # 内嵌 RTSP 下行端口
+  rtsp-port: 9554
+  record-segment-sec: 120
+  # 网页 HLS 预览
+  hls:
+    # 目标分片时长（秒，实际按 IDR 边界对齐；真机 GOP≈3.2s，设 3 贴近真实分片）
+    target-sec: 3
+    # m3u8 滑动窗口保留的分片数（HlsSink 构造下限为 3）
+    window: 3
+    # 无播放请求多少秒后停止该摄像头的预览上游（调大以走热启动、降低首帧延迟）
+    idle-sec: 120
+    # 是否把 Opus 音频转码为 AAC（转码失败自动降级为静音，不影响画面）
+    audio: true
+    # 启动后对在线摄像头预热并保持常驻（点击即播、降低首帧延迟）；关闭则按需订阅、空闲回收
+    prewarm: true
+  # 共享看板（免鉴权多宫格展示 + 事件联动）
+  share:
+    # 事件画面持续秒数，到期广播 end 并复原
+    event-duration-sec: 60
+    # SSE 心跳周期（秒），维持长连接
+    sse-heartbeat-sec: 15
+    # 大屏兜底重载周期（秒），0 关闭
+    page-reload-sec: 3600
+    # 展示页配置/设备状态轮询周期（秒，SSE 之外的兜底）
+    config-poll-sec: 60
