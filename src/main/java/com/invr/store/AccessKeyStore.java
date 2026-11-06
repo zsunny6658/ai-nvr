@@ -42,6 +42,8 @@ public class AccessKeyStore {
     private static final int ITERATIONS = 120_000;
     public static final int MIN_LEN = 10;
     public static final int MAX_LEN = 64;
+    /** 解锁/会话密钥派生的域隔离标签，确保其与密码校验哈希（hash）使用不同盐、互不相关。 */
+    private static final byte[] UNLOCK_LABEL = "invr:unlock-token:v1".getBytes(StandardCharsets.UTF_8);
 
     private final Path dir;
     private final ObjectMapper mapper = new ObjectMapper()
@@ -130,7 +132,7 @@ public class AccessKeyStore {
         if (r == null) {
             throw new IllegalStateException("尚未设置访问密码");
         }
-        return unlockTokenOf(password, Base64.getDecoder().decode(r.salt), r.iterations);
+        return unlockTokenOf(password, tokenSalt(Base64.getDecoder().decode(r.salt)), r.iterations);
     }
 
     /** 校验 URL 携带的解锁令牌（对其二次哈希做恒定时间比较）；未启用/损坏/为空一律 false。 */
@@ -240,12 +242,12 @@ public class AccessKeyStore {
         if (r == null) {
             throw new IllegalStateException("尚未设置访问密码");
         }
-        return deriveSessionKey(password, Base64.getDecoder().decode(r.salt), r.iterations);
+        return deriveSessionKey(password, tokenSalt(Base64.getDecoder().decode(r.salt)), r.iterations);
     }
 
     /** 落盘的是“令牌的 SHA-256”，避免 access.json 中直接存放可立即使用的解锁令牌。 */
-    private static String urlTokenHashB64(char[] password, byte[] salt, int iterations) {
-        String token = unlockTokenOf(password, salt, iterations);
+    private static String urlTokenHashB64(char[] password, byte[] baseSalt, int iterations) {
+        String token = unlockTokenOf(password, tokenSalt(baseSalt), iterations);
         return Base64.getEncoder().encodeToString(sha256(token.getBytes(StandardCharsets.UTF_8)));
     }
 
@@ -258,8 +260,23 @@ public class AccessKeyStore {
         return pbkdf2(password, salt, iterations, KEY_BITS);
     }
 
-    private void cacheSessionKey(char[] password, byte[] salt, int iterations) {
-        this.cachedSessionKey = deriveSessionKey(password, salt, iterations);
+    /**
+     * 由基准盐派生“解锁/会话密钥”专用盐：{@code SHA-256(基准盐 ‖ 域标签)} 取前 16 字节。
+     * 使会话密钥 / 解锁令牌与密码校验哈希 {@code hash} 使用不同盐、互不相关，
+     * 避免 access.json 中的 hash 被直接当作会话密钥或可逆推出令牌。
+     */
+    private static byte[] tokenSalt(byte[] baseSalt) {
+        byte[] mixed = new byte[baseSalt.length + UNLOCK_LABEL.length];
+        System.arraycopy(baseSalt, 0, mixed, 0, baseSalt.length);
+        System.arraycopy(UNLOCK_LABEL, 0, mixed, baseSalt.length, UNLOCK_LABEL.length);
+        byte[] h = sha256(mixed);
+        byte[] ts = new byte[SALT_BYTES];
+        System.arraycopy(h, 0, ts, 0, SALT_BYTES);
+        return ts;
+    }
+
+    private void cacheSessionKey(char[] password, byte[] baseSalt, int iterations) {
+        this.cachedSessionKey = deriveSessionKey(password, tokenSalt(baseSalt), iterations);
     }
 
     private static byte[] sha256(byte[] data) {
