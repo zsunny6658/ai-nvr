@@ -37,7 +37,10 @@ public class UdsConnectorConfig {
                 }
                 sock = appDest.trim() + "/app.sock";
             }
-            Connector uds = new Connector("org.apache.coyote.http11.Http11NioProtocol");
+            // Tomcat 的 Unix Domain Socket 仅 Http11Nio2Protocol（NIO.2）支持；
+            // 用 Http11NioProtocol（NIO.1）设置 unixDomainSocketPath 会被静默忽略，
+            // 导致 socket 文件永不创建、fnOS 网关 UDS 转发 502。
+            Connector uds = new Connector("org.apache.coyote.http11.Http11Nio2Protocol");
             uds.setProperty("unixDomainSocketPath", sock);
             uds.setProperty("unixDomainSocketPathPermissions", "rw-rw-rw-");
             factory.addAdditionalTomcatConnectors(uds);
