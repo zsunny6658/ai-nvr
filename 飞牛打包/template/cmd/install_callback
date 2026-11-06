@@ -3,18 +3,28 @@ ETC_DIR="${TRIM_PKGETC}"
 VAR_DIR="${TRIM_PKGVAR}"
 mkdir -p "${ETC_DIR}" "${VAR_DIR}/logs" "${VAR_DIR}/data"
 
-# 从 target 目录里的 manifest 读取端口（打包时复制过来的）
-SERVER_PORT=$(grep "^service_port=" "${TRIM_APPDEST}/manifest" | cut -d= -f2)
-SERVER_PORT=${SERVER_PORT:-9080}
+# 从 target 目录里的 manifest 读取端口（fnpack 会把 manifest 规范化成 "key = value" 带空格格式，
+# 所以 grep 要兼容等号两边的空白）
+SERVER_PORT=$(grep -E "^service_port[[:space:]]*=" "${TRIM_APPDEST}/manifest" | cut -d= -f2 | tr -d ' ')
+SERVER_PORT=${SERVER_PORT:-9099}
 
 # 安装向导里用户输入的 JVM 配置
 JVM_XMX="${wizard_jvm_xmx:-512}"
 JVM_XMS="${wizard_jvm_xms:-128}"
 
-# 生成 Spring Boot 配置（端口从 manifest 读取，和桌面图标一致）
+# 生成 Spring Boot 配置：
+# - port 从 manifest 读取（TCP 双监听保留，checkport 健康检查用）
+# - context-path 必须与 ui/config 的 gatewayPrefix 一致：统一网关转发请求时不剥离前缀，
+#   应用收到的就是 /app/indsvr-invr/... 原始路径
+# - invr.uds-socket 把 socket 路径在安装时固化写入配置，服务进程不再依赖
+#   运行时环境变量 TRIM_APPDEST（fnOS 不保证把它注入给 cmd/main 的子进程）
 cat > "${ETC_DIR}/application-fnos.yml" <<EOFCONF
 server:
   port: ${SERVER_PORT}
+  servlet:
+    context-path: /app/indsvr-invr
+invr:
+  uds-socket: ${TRIM_APPDEST}/app.sock
 EOFCONF
 
 # 生成 JVM 配置
