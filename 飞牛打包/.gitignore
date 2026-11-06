@@ -1,0 +1,6 @@
+# 打包过程产物（非源码，体积大）
+build/
+output/
+
+# macOS 元数据
+.DS_Store
