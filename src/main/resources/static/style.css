@@ -326,3 +326,32 @@ body {
 /* 开放接口 API 密钥：curl 示例块 */
 .api-curl { display: block; font-family: Consolas, monospace; font-size: 12px; line-height: 1.6;
     white-space: pre-wrap; word-break: break-all; color: #0f172a; }
+
+/* v1.1.9 按设备取流清晰度 / 云台控制 */
+.q-list { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
+.q-row { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; align-items: center;
+    border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: #fff; }
+.q-row .q-name { font-weight: 600; font-size: 13px; }
+.q-row .q-meta { font-size: 12px; color: var(--muted); margin-top: 2px; line-height: 1.6; }
+.q-row select { min-width: 156px; }
+.q-state { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 10px;
+    background: #f1f5f9; color: var(--muted); margin-left: 6px; }
+.q-state.ok { background: #d1fae5; color: #065f46; }
+.q-state.bad { background: #fee2e2; color: #991b1b; }
+.q-empty { font-size: 13px; color: var(--muted); padding: 8px 0; }
+
+.ptz-bar { display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: 10px 14px; border-top: 1px solid var(--line); background: #f8fafc; }
+.ptz-info { display: flex; flex-direction: column; min-width: 190px; flex: 1 1 190px; }
+.ptz-info b { font-size: 13px; }
+.ptz-pad { display: grid; grid-template-columns: repeat(3, 34px); grid-auto-rows: 34px; gap: 4px; }
+.ptz-pad button { padding: 0; font-size: 16px; line-height: 1;
+    display: flex; align-items: center; justify-content: center; }
+.ptz-pad .ptz-stop { font-size: 11px; }
+.ptz-speed { display: flex; align-items: center; gap: 6px; }
+.ptz-speed select { padding: 5px 8px; }
+@media (max-width: 640px) {
+    .ptz-bar { gap: 10px; }
+    .ptz-info { min-width: 100%; }
+    .q-row { grid-template-columns: 1fr; }
+}

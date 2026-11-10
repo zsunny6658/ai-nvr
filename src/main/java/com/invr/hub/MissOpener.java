@@ -34,4 +34,12 @@ public interface MissOpener {
     /** 本次连接已正常出帧，重置降级状态。 */
     default void noteFrame() {
     }
+
+    /**
+     * 设备状态发生变化（重新上线 / IP 变化 / 用户改档位）时清空一切失败计数。
+     * 否则刚恢复的设备会沿用之前累积的自动降级档位，明明可以高清却仍以最低档取流。
+     */
+    default void resetFailures() {
+        noteFrame();
+    }
 }

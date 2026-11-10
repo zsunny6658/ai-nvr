@@ -1,9 +1,14 @@
 package com.invr.web.api;
 
+import com.invr.hub.StreamHub;
+import com.invr.miss.MissCommands;
+import com.invr.model.CameraDevice;
 import com.invr.rtsp.RtspServer;
 import com.invr.store.AccessKeyStore;
 import com.invr.store.AppSettingsStore;
 import com.invr.web.config.NvrProperties;
+import com.invr.web.service.DeviceCatalog;
+import com.invr.web.service.DeviceProbe;
 import com.invr.web.service.HlsService;
 import com.invr.web.service.RecordingService;
 import com.invr.web.service.ShareEventService;
@@ -39,11 +44,15 @@ public class SettingsController {
     private final AccessKeyStore accessKeyStore;
     private final HlsService hlsService;
     private final ShareEventService shareEventService;
+    private final DeviceCatalog catalog;
+    private final StreamHub streamHub;
+    private final DeviceProbe deviceProbe;
 
     public SettingsController(RecordingService recordingService, RtspServer rtspServer,
                               NvrProperties props, AppSettingsStore settingsStore,
                               AccessKeyStore accessKeyStore,
-                              HlsService hlsService, ShareEventService shareEventService) {
+                              HlsService hlsService, ShareEventService shareEventService,
+                              DeviceCatalog catalog, StreamHub streamHub, DeviceProbe deviceProbe) {
         this.recordingService = recordingService;
         this.rtspServer = rtspServer;
         this.props = props;
@@ -51,6 +60,9 @@ public class SettingsController {
         this.accessKeyStore = accessKeyStore;
         this.hlsService = hlsService;
         this.shareEventService = shareEventService;
+        this.catalog = catalog;
+        this.streamHub = streamHub;
+        this.deviceProbe = deviceProbe;
     }
 
     /** 聚合返回全部设置（录像相关 + 实时 RTSP 端口）。 */
@@ -62,7 +74,74 @@ public class SettingsController {
         m.put("rtspCustomized", settingsStore.rtspPort() != null);
         m.put("hls", hlsService.hlsSettingsInfo());
         m.put("share", shareEventService.shareSettingsInfo());
+        m.put("quality", qualityInfo());
         return m;
+    }
+
+    /** 按设备的取流清晰度 / 云台控制配置与实时状态。 */
+    private Map<String, Object> qualityInfo() {
+        Map<String, Object> q = new LinkedHashMap<>();
+        q.put("options", List.of(
+                Map.of("value", "default", "label", "自动（按型号，失败自动降级）"),
+                Map.of("value", "0", "label", "自适应（由设备决定）"),
+                Map.of("value", "1", "label", "标清 SD"),
+                Map.of("value", "2", "label", "高清 HD"),
+                Map.of("value", "3", "label", "超清（仅部分机型）")));
+        q.put("ptzMode", settingsStore.ptzMode());
+        List<Map<String, Object>> list = new ArrayList<>();
+        for (CameraDevice c : catalog.all()) {
+            String configured = settingsStore.qualityFor(c.did());
+            Map<String, Object> d = new LinkedHashMap<>();
+            d.put("did", c.did());
+            d.put("name", c.name());
+            d.put("model", c.model());
+            d.put("online", c.online());
+            d.put("quality", configured == null ? "default" : configured);
+            d.put("modelDefault", MissCommands.defaultQuality(c.model()));
+            d.put("streamState", streamHub.isHealthy(c.did()) ? "有画面"
+                    : (streamHub.activeDids().contains(c.did()) ? "连接中" : "未取流"));
+            d.put("lanReachable", deviceProbe.reachable(c.did()));
+            list.add(d);
+        }
+        q.put("devices", list);
+        return q;
+    }
+
+    /**
+     * 修改某台设备的取流清晰度：持久化后立即打断退避并重建上游会话，无需重启应用。
+     * 传 default 恢复「按型号自动 + 失败自动降级」。
+     */
+    @PutMapping("/settings/quality")
+    public Map<String, Object> updateQuality(@RequestBody(required = false) QualityRequest req) {
+        if (req == null || req.did() == null || req.did().isBlank()) {
+            throw ApiException.badRequest("缺少设备 DID");
+        }
+        String v = req.quality() == null ? "default" : req.quality().trim().toLowerCase();
+        if (!List.of("default", "0", "1", "2", "3", "sd", "hd", "auto").contains(v)) {
+            throw ApiException.badRequest("不支持的清晰度档位：" + v);
+        }
+        if (catalog.find(req.did()).isEmpty()) {
+            throw ApiException.notFound("设备列表中未找到 did=" + req.did());
+        }
+        settingsStore.saveDeviceQuality(req.did(), v);
+        boolean woke = streamHub.wakeup(req.did(), "取流清晰度已修改", true);
+        Map<String, Object> m = getSettings();
+        m.put("reconnected", woke);
+        return m;
+    }
+
+    /** 切换云台命令载荷格式（direction 为现行实现，operation 用于部分旧固件）。 */
+    @PutMapping("/settings/ptz")
+    public Map<String, Object> updatePtzMode(@RequestBody(required = false) PtzModeRequest req) {
+        if (req == null) {
+            throw ApiException.badRequest("缺少请求体");
+        }
+        String mode = req.mode() == null ? "" : req.mode().trim().toLowerCase();
+        if (!"direction".equals(mode) && !"operation".equals(mode)) {
+            throw ApiException.badRequest("云台命令格式仅支持 direction / operation");
+        }
+        settingsStore.savePtzMode(mode);
+        return getSettings();
     }
 
     /** 修改录像存储目录（recordingDir 为空表示恢复默认；由目录选择器选定绝对路径）。 */
@@ -252,5 +331,11 @@ public class SettingsController {
 
     public record ShareSettingsRequest(long eventDurationSec, long sseHeartbeatSec,
                                        long pageReloadSec, long configPollSec) {
+    }
+
+    public record QualityRequest(String did, String quality) {
+    }
+
+    public record PtzModeRequest(String mode) {
     }
 }

@@ -50,6 +50,11 @@ public class AppSettingsStore {
     private static final String KEY_SHARE_PAGE_RELOAD_SEC = "sharePageReloadSec";
     private static final String KEY_SHARE_CONFIG_POLL_SEC = "shareConfigPollSec";
 
+    /** 按 DID 的取流清晰度覆盖：{@code {did: "0|1|2|3"}}，未配置=按型号自动。 */
+    private static final String KEY_DEVICE_QUALITY = "deviceQuality";
+    /** 云台命令载荷格式：direction（默认）/ operation（旧固件）。 */
+    private static final String KEY_PTZ_MODE = "ptzMode";
+
     private static final TypeReference<LinkedHashMap<String, Object>> MAP_TYPE = new TypeReference<>() {};
 
     private final Path dir;
@@ -204,6 +209,70 @@ public class AppSettingsStore {
         putOrRemove(m, KEY_SHARE_SSE_HEARTBEAT_SEC, sseHeartbeatSec);
         putOrRemove(m, KEY_SHARE_PAGE_RELOAD_SEC, pageReloadSec);
         putOrRemove(m, KEY_SHARE_CONFIG_POLL_SEC, configPollSec);
+        persist(m);
+    }
+
+    // ===================== 按设备取流清晰度 / 云台 =====================
+
+    /** 返回该 DID 在 Web 端固定的档位；未配置返回 null（按型号自动 + 自动降级）。 */
+    public String qualityFor(String did) {
+        return deviceQuality().get(did);
+    }
+
+    /** 全部按设备档位覆盖（只读快照）。 */
+    @SuppressWarnings("unchecked")
+    public synchronized Map<String, String> deviceQuality() {
+        Object v = all().get(KEY_DEVICE_QUALITY);
+        Map<String, String> out = new LinkedHashMap<>();
+        if (v instanceof Map<?, ?> raw) {
+            for (Map.Entry<?, ?> e : raw.entrySet()) {
+                if (e.getValue() != null) {
+                    out.put(String.valueOf(e.getKey()), String.valueOf(e.getValue()));
+                }
+            }
+        }
+        return out;
+    }
+
+    /** 保存某台设备的档位；null / 空 / "default" 表示清除覆盖、恢复自动。 */
+    @SuppressWarnings("unchecked")
+    public synchronized void saveDeviceQuality(String did, String quality) {
+        Map<String, Object> m = all();
+        Map<String, Object> q;
+        Object v = m.get(KEY_DEVICE_QUALITY);
+        if (v instanceof Map<?, ?> raw) {
+            q = new LinkedHashMap<>((Map<String, Object>) raw);
+        } else {
+            q = new LinkedHashMap<>();
+        }
+        if (quality == null || quality.isBlank() || "default".equalsIgnoreCase(quality.trim())) {
+            q.remove(did);
+            if (q.isEmpty()) {
+                m.remove(KEY_DEVICE_QUALITY);
+            } else {
+                m.put(KEY_DEVICE_QUALITY, q);
+            }
+        } else {
+            q.put(did, quality.trim().toLowerCase());
+            m.put(KEY_DEVICE_QUALITY, q);
+        }
+        persist(m);
+    }
+
+    /** 云台命令载荷格式，默认 direction。 */
+    public String ptzMode() {
+        Object v = all().get(KEY_PTZ_MODE);
+        return (v != null && "operation".equalsIgnoreCase(String.valueOf(v).trim()))
+                ? "operation" : "direction";
+    }
+
+    public synchronized void savePtzMode(String mode) {
+        Map<String, Object> m = all();
+        if (mode != null && "operation".equalsIgnoreCase(mode.trim())) {
+            m.put(KEY_PTZ_MODE, "operation");
+        } else {
+            m.remove(KEY_PTZ_MODE);
+        }
         persist(m);
     }
 

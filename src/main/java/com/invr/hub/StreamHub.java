@@ -69,6 +69,35 @@ public final class StreamHub {
         return n;
     }
 
+    /**
+     * 设备状态变化时打断该设备的重连退避。没有活跃订阅者时返回 false（下次打开预览即全新连接）。
+     */
+    public boolean wakeup(String did, String reason, boolean forceReconnect) {
+        CameraStream cs = streams.get(did);
+        if (cs == null) {
+            return false;
+        }
+        cs.wakeup(reason, forceReconnect);
+        return true;
+    }
+
+    /** 在已有上游会话上发送云台命令；无可用会话返回 false（绝不为此新建取流连接）。 */
+    public boolean motor(String did, String direction, int speed, String mode) {
+        CameraStream cs = streams.get(did);
+        return cs != null && cs.motor(direction, speed, mode);
+    }
+
+    /** 该设备当前是否有一条健康的上游取流会话。 */
+    public boolean isHealthy(String did) {
+        CameraStream cs = streams.get(did);
+        return cs != null && cs.isHealthy();
+    }
+
+    /** 当前有上游会话的设备 DID 列表（供状态接口/排障使用）。 */
+    public java.util.List<String> activeDids() {
+        return new java.util.ArrayList<>(streams.keySet());
+    }
+
     /** 停止全部上游（服务关闭）。 */
     public void shutdown() {
         for (CameraStream c : streams.values()) {

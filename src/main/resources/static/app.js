@@ -14,6 +14,7 @@
         boards: [],
         boardEditId: null,
         hls: null,
+        previewDid: null,
         pollTimer: null,
         gateTimer: null,
         recoveredOnce: false,
@@ -845,11 +846,92 @@
             $('setShareHint').textContent = '默认值：事件 ' + sh.defaultEventDurationSec + 's、心跳 '
                 + sh.defaultSseHeartbeatSec + 's、兜底重载 ' + sh.defaultPageReloadSec + 's、轮询 '
                 + sh.defaultConfigPollSec + 's。';
+            // 按设备取流清晰度 / 云台控制
+            renderQualitySettings(s.quality);
             // 开放接口 API 密钥状态（独立接口，失败不阻塞其余设置项）
             loadApiKey();
         } catch (e) {
             if (e.status === 401) return; // 门禁失效由全局逻辑切回解锁页
             toast('加载设置失败：' + e.message, 'err');
+        }
+    }
+
+    /* ---------- 按设备取流清晰度 / 云台控制 ---------- */
+    function renderQualitySettings(q) {
+        var box = $('setQualityList');
+        if (!box) return;
+        var opts = (q && q.options) || [];
+        var list = (q && q.devices) || [];
+        $('setPtzMode').value = (q && q.ptzMode) || 'direction';
+        $('setQualityHint').textContent = '设备由离线转在线、局域网 CS2 服务恢复可达或云端 IP 变化时，'
+            + '系统会自动打断重连退避并立即重建取流，无需手动刷新页面。';
+        if (!list.length) {
+            box.innerHTML = '<div class="q-empty">尚未发现摄像头，请先在「设备」页刷新设备列表。</div>';
+            return;
+        }
+        box.innerHTML = list.map(function (d) {
+            var reach = d.lanReachable === true ? '<span class="q-state ok">局域网可达</span>'
+                : d.lanReachable === false ? '<span class="q-state bad">局域网不可达</span>'
+                    : '<span class="q-state">探测中</span>';
+            var stream = d.streamState === '有画面' ? '<span class="q-state ok">有画面</span>'
+                : '<span class="q-state">' + esc(d.streamState || '未取流') + '</span>';
+            var sel = '<select data-q-did="' + esc(d.did) + '">' + opts.map(function (o) {
+                return '<option value="' + esc(o.value) + '"' + (o.value === d.quality ? ' selected' : '')
+                    + '>' + esc(o.label) + '</option>';
+            }).join('') + '</select>';
+            return '<div class="q-row"><div>' +
+                '<div class="q-name">' + esc(d.name || d.did) + reach + stream + '</div>' +
+                '<div class="q-meta">' + esc(d.did) + ' · ' + esc(d.model)
+                + ' · 型号默认档位 ' + esc(d.modelDefault) + '</div>' +
+                '</div><div class="set-edit">' + sel +
+                '<button class="btn primary" type="button" data-q-save="' + esc(d.did) + '">应用</button>' +
+                '</div></div>';
+        }).join('');
+    }
+
+    async function saveQuality(did, value) {
+        try {
+            var s = await api('api/settings/quality', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ did: did, quality: value })
+            });
+            state.settings = s;
+            renderQualitySettings(s.quality);
+            toast(s.reconnected ? '清晰度已应用，正在重建取流连接' : '清晰度已保存，下次取流时生效', 'ok');
+        } catch (e) {
+            toast('保存失败：' + e.message, 'err');
+        }
+    }
+
+    async function savePtzMode() {
+        try {
+            var s = await api('api/settings/ptz', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mode: $('setPtzMode').value })
+            });
+            state.settings = s;
+            toast('云台命令格式已保存', 'ok');
+        } catch (e) {
+            toast('保存失败：' + e.message, 'err');
+        }
+    }
+
+    /* 云台命令复用当前预览会话；没有会话时服务端返回 503，明确提示而不新建连接。 */
+    async function ptzMove(direction) {
+        var did = state.previewDid;
+        if (!did) { toast('请先打开实时预览', 'err'); return; }
+        var speed = parseInt($('ptzSpeed').value, 10) || 5;
+        try {
+            await api('api/ptz/' + encodeURIComponent(did), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ direction: direction, speed: speed })
+            });
+        } catch (e) {
+            toast(e.status === 503 ? '画面尚未就绪，请等待预览出图后再控制云台'
+                : ('云台控制失败：' + e.message), 'err');
         }
     }
 
@@ -1379,6 +1461,7 @@
     function openPreview(did) {
         var c = findDevice(did);
         if (!c) { toast('设备信息缺失', 'err'); return; }
+        state.previewDid = did;
         $('previewTitle').textContent = '实时预览 · ' + c.name;
         $('previewRtsp').textContent = c.rtspUrl;
         $('previewModal').hidden = false;
@@ -1451,6 +1534,7 @@
         $('previewLoading').hidden = true;
     }
     function stopPreviewOnly() {
+        state.previewDid = null;
         $('previewModal').hidden = true;
         var video = $('previewVideo');
         if (state.previewWatch) { clearTimeout(state.previewWatch); state.previewWatch = null; }
@@ -1816,6 +1900,21 @@
         $('btnSaveHls').addEventListener('click', saveHls);
         $('btnSaveShare').addEventListener('click', saveShare);
         $('btnSavePw').addEventListener('click', changeAccessPassword);
+
+        // 按设备清晰度 / 云台命令格式
+        $('btnRefreshQuality').addEventListener('click', loadSettings);
+        $('btnSavePtzMode').addEventListener('click', savePtzMode);
+        $('setQualityList').addEventListener('click', function (e) {
+            var b = e.target.closest('button[data-q-save]');
+            if (!b) return;
+            var did = b.getAttribute('data-q-save');
+            var sel = $('setQualityList').querySelector('select[data-q-did="' + CSS.escape(did) + '"]');
+            if (sel) saveQuality(did, sel.value);
+        });
+        $('ptzPad').addEventListener('click', function (e) {
+            var b = e.target.closest('button[data-dir]');
+            if (b) ptzMove(b.getAttribute('data-dir'));
+        });
 
         // 开放接口 API 密钥
         $('btnApiGen').addEventListener('click', generateApiKey);

@@ -302,6 +302,24 @@
                     <p class="muted small" id="setHlsHint"></p>
                 </div>
                 <div class="set-card">
+                    <h3>按设备取流清晰度 / 云台</h3>
+                    <p class="muted small">清晰度档位在每次建立取流连接时生效，保存后会立即重建当前连接（短暂中断数秒）。「自动」按型号选择，并在设备持续不出画面时自动降级；手动固定档位后不再自动降级。云台方向键在实时预览窗口内，复用当前取流会话，不会额外占用摄像头连接。</p>
+                    <div id="setQualityList" class="q-list"></div>
+                    <div class="set-actions">
+                        <button class="btn" id="btnRefreshQuality" type="button">刷新状态</button>
+                    </div>
+                    <div class="set-divider"></div>
+                    <label>云台命令格式（仅当方向键无反应时切换）</label>
+                    <div class="set-edit">
+                        <select id="setPtzMode">
+                            <option value="direction">direction（现行实现，推荐）</option>
+                            <option value="operation">operation（部分旧固件步进式）</option>
+                        </select>
+                        <button class="btn" id="btnSavePtzMode" type="button">保存</button>
+                    </div>
+                    <p class="muted small" id="setQualityHint"></p>
+                </div>
+                <div class="set-card">
                     <h3>共享看板参数</h3>
                     <p class="muted small">免鉴权共享大屏的事件、心跳与轮询周期。事件时长对下一次触发生效，心跳周期下一轮生效；轮询/兜底重载在大屏下次加载时生效。</p>
                     <label>事件画面时长（秒，5～3600）</label>
@@ -341,6 +359,27 @@
             <video id="previewVideo" muted autoplay playsinline controls></video>
             <div id="previewHint" class="video-hint" hidden></div>
             <div class="video-loading" id="previewLoading">正在连接摄像头，首次取流约需数秒…</div>
+        </div>
+        <div class="ptz-bar">
+            <div class="ptz-info">
+                <b>云台控制</b>
+                <span class="muted small">复用当前预览连接，不新增摄像头通道；固定镜头机型可能忽略命令</span>
+            </div>
+            <div class="ptz-pad" id="ptzPad">
+                <span></span><button class="btn tiny" data-dir="up" title="向上">↑</button><span></span>
+                <button class="btn tiny" data-dir="left" title="向左">←</button>
+                <button class="btn tiny ptz-stop" data-dir="stop" title="停止">■</button>
+                <button class="btn tiny" data-dir="right" title="向右">→</button>
+                <span></span><button class="btn tiny" data-dir="down" title="向下">↓</button><span></span>
+            </div>
+            <div class="ptz-speed">
+                <label class="muted small" for="ptzSpeed">速度</label>
+                <select id="ptzSpeed">
+                    <option value="3">慢</option>
+                    <option value="5" selected>中</option>
+                    <option value="10">快</option>
+                </select>
+            </div>
         </div>
         <div class="modal-foot">
             <div class="rtsp-line">

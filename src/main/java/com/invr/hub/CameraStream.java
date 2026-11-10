@@ -60,6 +60,17 @@ public final class CameraStream {
     private volatile MissClient current;
     private volatile int generation;
 
+    /** 退避等待锁：设备重新上线 / 清晰度变更时可立即打断长达 5 分钟的熔断等待。 */
+    private final Object backoffLock = new Object();
+    /** 由 {@link #wakeup} 置位，runUpstream 读到后清零退避并立即重连。 */
+    private volatile boolean wakeupRequested;
+    /** 当前上游是否收到过媒体包（云台控制要求会话可用）。 */
+    private volatile boolean healthy;
+    private volatile long lastFrameAt;
+    private volatile long lastErrorAt;
+    /** 连续「一个媒体包都没收到」的连接次数，用于重连熔断。 */
+    private volatile int consecutiveNoFrame;
+
     public CameraStream(String did, String model, MissOpener opener) {
         this.did = did;
         this.model = model;
@@ -185,8 +196,6 @@ public final class CameraStream {
 
     private void runUpstream() {
         int backoffIndex = 0;
-        /** 连续「一个媒体包都没收到」的连接次数，用于重连熔断。 */
-        int consecutiveNoFrame = 0;
         while (running) {
             MissClient client = null;
             int gen = 0;
@@ -205,13 +214,19 @@ public final class CameraStream {
                 }
                 log.info("[{}] 上游已连接并开始推流（generation={}，{}）", did, gen, client.protocol());
                 backoffIndex = 0;
+                healthy = false;
 
                 while (running) {
                     MissPacket pkt = client.readPacket();
                     if (pkt == null) {
                         continue;
                     }
+                    if (!gotFrame) {
+                        healthy = true;
+                        log.info("[{}] 首帧已到达，上游链路健康（generation={}）", did, gen);
+                    }
                     gotFrame = true;
+                    lastFrameAt = System.currentTimeMillis();
                     synchronized (deliverLock) {
                         if (pkt.isVideo()) {
                             cacheGop(pkt);
@@ -226,35 +241,60 @@ public final class CameraStream {
                 if (!running) {
                     break;
                 }
-                long wait = BACKOFF_MS[backoffIndex];
-                if (gotFrame) {
-                    // 曾经出过帧，说明链路可用，按常规退避尽快恢复
+                healthy = false;
+                lastErrorAt = System.currentTimeMillis();
+                // 设备重新上线、局域网 IP 变化、清晰度被修改时，不再继续等待熔断退避。
+                boolean woke;
+                synchronized (backoffLock) {
+                    woke = wakeupRequested;
+                    wakeupRequested = false;
+                }
+                long wait;
+                if (woke) {
+                    backoffIndex = 0;
                     consecutiveNoFrame = 0;
-                    opener.noteFrame();
+                    opener.resetFailures();
+                    wait = 0;
+                    log.info("[{}] 检测到设备状态变化，跳过熔断退避并立即重连（generation={}）", did, gen);
                 } else {
-                    consecutiveNoFrame++;
-                    opener.noteNoFrame();
+                    wait = BACKOFF_MS[backoffIndex];
+                    if (gotFrame) {
+                        // 曾经出过帧，说明链路可用，按常规退避尽快恢复
+                        consecutiveNoFrame = 0;
+                        opener.noteFrame();
+                    } else {
+                        consecutiveNoFrame++;
+                        opener.noteNoFrame();
+                    }
+                    // 连续「设备接受会话却一个媒体包都不给」时，立刻重连只会不停新建
+                    // 上游会话。摄像头并发取流通道有限，必须逐步降频，等旧会话释放。
+                    if (consecutiveNoFrame >= 12) {
+                        wait = Math.max(wait, 300_000L);
+                    } else if (consecutiveNoFrame >= 6) {
+                        wait = Math.max(wait, 60_000L);
+                    } else if (consecutiveNoFrame >= 3) {
+                        wait = Math.max(wait, 10_000L);
+                    }
+                    log.warn("[{}] 上游取流中断（generation={}，连续无帧 {} 次）：{}；{}s 后自动重连（将重新协商）",
+                            did, gen, consecutiveNoFrame, e.toString(), wait / 1000);
                 }
-                // 连续「设备接受会话却一个媒体包都不给」时，立刻重连只会不停新建
-                // 上游会话。摄像头并发取流通道有限，必须逐步降频，等旧会话释放。
-                if (consecutiveNoFrame >= 12) {
-                    wait = Math.max(wait, 300_000L);
-                } else if (consecutiveNoFrame >= 6) {
-                    wait = Math.max(wait, 60_000L);
-                } else if (consecutiveNoFrame >= 3) {
-                    wait = Math.max(wait, 10_000L);
-                }
-                log.warn("[{}] 上游取流中断（generation={}，连续无帧 {} 次）：{}；{}s 后自动重连（将重新协商）",
-                        did, gen, consecutiveNoFrame, e.toString(), wait / 1000);
                 closeQuietly(client);
                 client = null;
                 current = null;
-                try {
-                    Thread.sleep(wait);
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                    if (!running) {
-                        break;
+                if (wait > 0) {
+                    synchronized (backoffLock) {
+                        try {
+                            if (!wakeupRequested) {
+                                backoffLock.wait(wait);
+                            }
+                        } catch (InterruptedException ie) {
+                            Thread.currentThread().interrupt();
+                            if (!running) {
+                                break;
+                            }
+                        }
+                        // 无论是等待超时还是被 wakeup 唤醒，本次唤醒都已在重连中兑现
+                        wakeupRequested = false;
                     }
                 }
                 if (backoffIndex < BACKOFF_MS.length - 1) {
@@ -270,6 +310,70 @@ public final class CameraStream {
             }
         }
         log.info("[{}] 上游取流线程退出", did);
+    }
+
+    /**
+     * 外部事件（设备上线、局域网可达性恢复、局域网 IP 变化、清晰度变更）触发的立即重连。
+     *
+     * <p>v1.1.8 引入的熔断退避最长 5 分钟，若设备在此期间恢复上线，预览窗口会一直黑屏到
+     * 退避结束。这里打断等待、清零计数，并在需要时断开当前会话，让取流线程立刻重新协商。</p>
+     *
+     * @param reason          触发原因（写日志）
+     * @param forceReconnect  true=连当前的会话也一并断开（设备刚上线 / IP 变了 / 档位改了时必须）
+     */
+    public void wakeup(String reason, boolean forceReconnect) {
+        if (!running) {
+            // 没有订阅者时无需唤醒：下次打开预览本来就是全新连接
+            return;
+        }
+        log.info("[{}] 触发立即重连：{}（force={}）", did, reason, forceReconnect);
+        synchronized (backoffLock) {
+            wakeupRequested = true;
+            backoffLock.notifyAll();
+        }
+        if (forceReconnect) {
+            MissClient c = current;
+            if (c != null) {
+                // 断开会让 readPacket 抛错，取流线程随即走「立即重连」分支
+                closeQuietly(c);
+            }
+        }
+    }
+
+    /**
+     * 在现有上游会话上发送云台控制命令（不新建取流连接，不额外占用摄像头通道）。
+     *
+     * @return false 表示当前没有可用会话，调用方应提示先打开预览
+     */
+    public boolean motor(String direction, int speed, String mode) {
+        MissClient c = current;
+        if (c == null || !healthy) {
+            return false;
+        }
+        try {
+            c.motor(direction, speed, mode);
+            return true;
+        } catch (Exception e) {
+            log.warn("[{}] 云台命令发送失败（{}）：{}", did, direction, e.toString());
+            return false;
+        }
+    }
+
+    /** 当前上游是否可用（有订阅者且已收到媒体包）。 */
+    public boolean isHealthy() {
+        return healthy && !subscriptions.isEmpty();
+    }
+
+    public long lastFrameAt() {
+        return lastFrameAt;
+    }
+
+    public long lastErrorAt() {
+        return lastErrorAt;
+    }
+
+    public int noFrameStreak() {
+        return consecutiveNoFrame;
     }
 
     private void cacheGop(MissPacket p) {

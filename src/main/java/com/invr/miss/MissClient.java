@@ -166,10 +166,7 @@ public final class MissClient implements AutoCloseable {
         }
         byte[] jsonBytes = json.getBytes(StandardCharsets.UTF_8);
         byte[] outer = new byte[4 + jsonBytes.length];
-        outer[0] = (byte) ((MissCommands.CMD_VIDEO_START >>> 24) & 0xFF);
-        outer[1] = (byte) ((MissCommands.CMD_VIDEO_START >>> 16) & 0xFF);
-        outer[2] = (byte) ((MissCommands.CMD_VIDEO_START >>> 8) & 0xFF);
-        outer[3] = (byte) (MissCommands.CMD_VIDEO_START & 0xFF);
+        putBe32(outer, MissCommands.CMD_VIDEO_START);
         System.arraycopy(jsonBytes, 0, outer, 4, jsonBytes.length);
         writeEncrypted(outer);
     }
@@ -178,12 +175,56 @@ public final class MissClient implements AutoCloseable {
      * 停止取流（VideoStop 0x103，无 body）。
      */
     public void stopMedia() throws IOException {
-        byte[] outer = {
-                (byte) ((MissCommands.CMD_VIDEO_STOP >>> 24) & 0xFF),
-                (byte) ((MissCommands.CMD_VIDEO_STOP >>> 16) & 0xFF),
-                (byte) ((MissCommands.CMD_VIDEO_STOP >>> 8) & 0xFF),
-                (byte) (MissCommands.CMD_VIDEO_STOP & 0xFF)};
+        byte[] outer = new byte[4];
+        putBe32(outer, MissCommands.CMD_VIDEO_STOP);
         writeEncrypted(outer);
+    }
+
+    /**
+     * 云台控制（MISS CmdMotorReq 0x112），复用当前取流会话，不新建连接、不占用额外通道。
+     *
+     * <p>命令与 VideoStart 一样封装为 {@code BE32(cmd) + JSON}，ChaCha20 加密后以 0x1001 发送。
+     * 两种载荷格式来自不同的实测实现：</p>
+     * <ul>
+     *   <li>{@code direction}（默认）：{@code {"direction":"left","speed":5}}，
+     *       与 go2rtc / lalmax-nvr 现行实现一致，支持 stop；</li>
+     *   <li>{@code operation}：{@code {"operation":1}}，1 左 / 2 右 / 3 上 / 4 下 / 0 停，
+     *       部分旧固件用这种步进式命令。</li>
+     * </ul>
+     *
+     * <p>注意：协议本身不提供「设备是否带云台电机」的可靠查询，部分机型会静默忽略该命令。
+     * 设备若有应答会由命令通道排空线程写入日志，可据此现场确认兼容性。</p>
+     */
+    public void motor(String direction, int speed, String mode) throws IOException {
+        String d = direction == null ? "stop" : direction.toLowerCase();
+        int op;
+        switch (d) {
+            case "left" -> op = 1;
+            case "right" -> op = 2;
+            case "up" -> op = 3;
+            case "down" -> op = 4;
+            case "stop" -> op = 0;
+            default -> throw new IOException("不支持的云台方向：" + direction);
+        }
+        int s = Math.max(0, Math.min(100, speed));
+        String json = "operation".equalsIgnoreCase(mode)
+                ? "{\"operation\":" + op + "}"
+                : "{\"direction\":\"" + d + "\",\"speed\":" + s + "}";
+        byte[] jsonBytes = json.getBytes(StandardCharsets.UTF_8);
+        byte[] outer = new byte[4 + jsonBytes.length];
+        putBe32(outer, MissCommands.CMD_MOTOR_REQ);
+        System.arraycopy(jsonBytes, 0, outer, 4, jsonBytes.length);
+        writeEncrypted(outer);
+        log.info("MISS 云台命令 0x112 已发送：{}（mode={}）", json,
+                "operation".equalsIgnoreCase(mode) ? "operation" : "direction");
+    }
+
+    /** 写入大端 32 位命令字。 */
+    private static void putBe32(byte[] dst, int cmd) {
+        dst[0] = (byte) ((cmd >>> 24) & 0xFF);
+        dst[1] = (byte) ((cmd >>> 16) & 0xFF);
+        dst[2] = (byte) ((cmd >>> 8) & 0xFF);
+        dst[3] = (byte) (cmd & 0xFF);
     }
 
     /**
@@ -226,16 +267,19 @@ public final class MissClient implements AutoCloseable {
 
     @Override
     public void close() throws IOException {
-        if (!closed) {
-            closed = true;
-            // 对齐 go2rtc Producer.Stop()：先显式通知设备停止取流，释放设备侧会话。
-            // 只关 socket 而不发 VideoStop 时，设备侧会话需等自身超时才回收；
-            // 叠加无限重连会迅速占满摄像头仅有的几路并发通道（小米机型尤甚）。
-            try {
-                stopMedia();
-            } catch (Exception e) {
-                log.debug("关闭前发送 VideoStop 失败（忽略）：{}", e.toString());
-            }
+        // 幂等：wakeup() 与取流线程的 finally 可能同时关闭同一个会话，
+        // 重复发 VideoStop / 重复关 socket 会让设备侧收到多余的停止命令。
+        if (closed) {
+            return;
+        }
+        closed = true;
+        // 对齐 go2rtc Producer.Stop()：先显式通知设备停止取流，释放设备侧会话。
+        // 只关 socket 而不发 VideoStop 时，设备侧会话需等自身超时才回收；
+        // 叠加无限重连会迅速占满摄像头仅有的几路并发通道（小米机型尤甚）。
+        try {
+            stopMedia();
+        } catch (Exception e) {
+            log.debug("关闭前发送 VideoStop 失败（忽略）：{}", e.toString());
         }
         conn.close();
     }
