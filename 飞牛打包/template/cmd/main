@@ -5,6 +5,7 @@ VAR_DIR="${TRIM_PKGVAR}"
 LOG_DIR="${VAR_DIR}/logs"
 PID_FILE="${VAR_DIR}/app.pid"
 SOCK_FILE="${TRIM_APPDEST}/app.sock"
+APP_PATH="/app/indsvr-invr/"
 
 if [ -f "${TRIM_PKGETC}/jvm.conf" ]; then
   source "${TRIM_PKGETC}/jvm.conf"
@@ -43,22 +44,47 @@ case $1 in
     # 幂等：先清掉可能残留的旧进程（含 pid 文件丢失的孤儿进程），释放 9099 / 9554
     stop_all
     if [ ! -f "$APP_JAR" ]; then
-      echo "jar not found: $APP_JAR" > "${TRIM_TEMP_LOGFILE}"
+      echo "jar not found: $APP_JAR" > "${TRIM_TEMP_LOGFILE:-/dev/stderr}"
       exit 1
     fi
     chmod +x "${TRIM_APPDEST}/jre/bin/"* 2>/dev/null
+    # 顺序预读 fat jar 到页缓存，降低冷启动时组件扫描的随机 IO 延迟
+    cat "$APP_JAR" > /dev/null 2>/dev/null
     # 切换工作目录到持久化数据目录，这样应用写的 .invr/ 会落在 var 下
     cd "${TRIM_PKGVAR}"
-    nohup "${JAVA_BIN}" ${JAVA_OPTS} -jar "${APP_JAR}" ${SPRING_ARGS} > "${LOG_DIR}/app.log" 2>&1 &
-    echo $! > "$PID_FILE"
-    sleep 3
-    # 修正 socket 文件权限（系统 umask 会覆盖 Tomcat 设置，nginx 需要 666 才能访问）
+    # setsid 让 java 脱离启动脚本的会话：即使上层启用流程超时，也不会连带终止服务
+    if command -v setsid >/dev/null 2>&1; then
+      setsid nohup "${JAVA_BIN}" ${JAVA_OPTS} -jar "${APP_JAR}" ${SPRING_ARGS} > "${LOG_DIR}/app.log" 2>&1 &
+    else
+      nohup "${JAVA_BIN}" ${JAVA_OPTS} -jar "${APP_JAR}" ${SPRING_ARGS} > "${LOG_DIR}/app.log" 2>&1 &
+    fi
+    sleep 1
+    # setsid 可能 fork，用真实 java pid 回写 pid 文件
+    for p in $(app_pids); do echo "$p" > "$PID_FILE"; done
+    sleep 2
     chmod 666 "$SOCK_FILE" 2>/dev/null
     pid=$(cat "$PID_FILE" | tr -d '[:space:]')
-    if ! kill -0 "$pid" 2>/dev/null; then
-      echo "App failed to start. Check log: ${LOG_DIR}/app.log" > "${TRIM_TEMP_LOGFILE}"
+    if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
+      echo "App failed to start. Check log: ${LOG_DIR}/app.log" > "${TRIM_TEMP_LOGFILE:-/dev/stderr}"
       exit 1
     fi
+    # 关键：等应用真正能响应 HTTP 再返回。
+    # 冷启动可能长达 100s 以上；若只 sleep 3 就返回，fnOS 会立刻把应用标为
+    # 「已启用」，用户此时点开，网关连尚未创建的 UDS socket 必然 502 Bad Gateway。
+    # 同时 socket 是启动后期才创建的，这里再修一次 666 权限（nginx 需要）。
+    # 超时也返回成功：java 已由 setsid 独立运行，不会被上层超时连带杀掉。
+    CURL_BIN=$(command -v curl 2>/dev/null || echo /usr/bin/curl)
+    READY_MAX=120
+    for i in $(seq 1 60); do
+      if [ -S "$SOCK_FILE" ]; then
+        chmod 666 "$SOCK_FILE" 2>/dev/null
+        if [ ! -x "$CURL_BIN" ] || "$CURL_BIN" --unix-socket "$SOCK_FILE" -s -o /dev/null --max-time 2 "http://localhost${APP_PATH}" 2>/dev/null; then
+          exit 0
+        fi
+      fi
+      sleep 2
+    done
+    echo "[main] app not ready within ${READY_MAX}s; java kept running, check app.log" >> "${LOG_DIR}/app.log"
     exit 0
     ;;
   stop)
