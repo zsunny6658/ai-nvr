@@ -27,6 +27,10 @@ public final class MissClient implements AutoCloseable {
     private final String model;
     private volatile boolean closed;
 
+    /** 最近一次云台命令的设备应答（0x113 明文），由命令通道排空线程写入。 */
+    private volatile String lastMotorReply;
+    private volatile long lastMotorReplyAt;
+
     private MissClient(Cs2Connection conn, byte[] sharedKey, String model) {
         this.conn = conn;
         this.sharedKey = sharedKey;
@@ -84,8 +88,20 @@ public final class MissClient implements AutoCloseable {
                         try {
                             byte[] plain = ChaCha20Cipher.decode(sharedKey,
                                     Arrays.copyOfRange(raw, 4, raw.length));
+                            int inner = plain.length >= 4 ? be32(plain, 0) : -1;
                             detail = String.format(" -> 内部命令 0x%x（%d 字节）",
-                                    be32(plain, 0), Math.max(0, plain.length - 4));
+                                    inner, Math.max(0, plain.length - 4));
+                            if (inner == MissCommands.CMD_MOTOR_RES) {
+                                // 云台命令的设备应答：以前只记录长度，界面无从判断「发出去了但设备不理」。
+                                // 这里把明文内容记下来并交给请求线程回传前端。
+                                String reply = readableUtf8(plain, 4);
+                                lastMotorReply = reply;
+                                lastMotorReplyAt = System.currentTimeMillis();
+                                detail += " 云台应答：" + reply;
+                                log.info("MISS 云台设备应答 0x113：{}", reply);
+                            } else if (inner != 0x114 && plain.length > 4) {
+                                detail += " 明文：" + readableUtf8(plain, 4);
+                            }
                         } catch (Exception de) {
                             detail = " -> 解密失败：" + de;
                         }
@@ -195,7 +211,7 @@ public final class MissClient implements AutoCloseable {
      * <p>注意：协议本身不提供「设备是否带云台电机」的可靠查询，部分机型会静默忽略该命令。
      * 设备若有应答会由命令通道排空线程写入日志，可据此现场确认兼容性。</p>
      */
-    public void motor(String direction, int speed, String mode) throws IOException {
+    public String motor(String direction, int speed, String mode) throws IOException {
         String d = direction == null ? "stop" : direction.toLowerCase();
         int op;
         switch (d) {
@@ -214,9 +230,26 @@ public final class MissClient implements AutoCloseable {
         byte[] outer = new byte[4 + jsonBytes.length];
         putBe32(outer, MissCommands.CMD_MOTOR_REQ);
         System.arraycopy(jsonBytes, 0, outer, 4, jsonBytes.length);
+        // 清空上一条应答，再等待设备回 0x113。没有应答时返回 null，由调用方
+        // 明确提示「命令已送达但设备不理」，而不是让界面沉默。
+        lastMotorReply = null;
+        lastMotorReplyAt = 0L;
         writeEncrypted(outer);
         log.info("MISS 云台命令 0x112 已发送：{}（mode={}）", json,
                 "operation".equalsIgnoreCase(mode) ? "operation" : "direction");
+        long deadline = System.currentTimeMillis() + 800L;
+        while (lastMotorReply == null && System.currentTimeMillis() < deadline) {
+            try {
+                Thread.sleep(40L);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        if (lastMotorReply == null && lastMotorReplyAt == 0L) {
+            log.info("MISS 云台命令 0x112 未收到设备应答（机型无云台电机或命令格式不被接受）");
+        }
+        return lastMotorReply;
     }
 
     /** 写入大端 32 位命令字。 */
@@ -287,6 +320,19 @@ public final class MissClient implements AutoCloseable {
     private static int be32(byte[] b, int off) {
         return ((b[off] & 0xFF) << 24) | ((b[off + 1] & 0xFF) << 16)
                 | ((b[off + 2] & 0xFF) << 8) | (b[off + 3] & 0xFF);
+    }
+
+    /** 把设备应答体按 UTF-8 转成可写进日志/界面的文本，过滤控制字符并限长。 */
+    private static String readableUtf8(byte[] b, int off) {
+        if (b == null || off >= b.length) {
+            return "";
+        }
+        String text = new String(b, off, Math.min(b.length - off, 400), StandardCharsets.UTF_8);
+        StringBuilder sb = new StringBuilder(text.length());
+        for (char c : text.toCharArray()) {
+            sb.append(c >= 0x20 || c == '\n' || c == '\t' ? c : ' ');
+        }
+        return sb.toString().trim();
     }
 
     private static int le32(byte[] b, int off) {

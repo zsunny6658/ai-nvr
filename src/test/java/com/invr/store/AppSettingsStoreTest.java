@@ -32,13 +32,17 @@ class AppSettingsStoreTest {
     }
 
     @Test
-    void ptzModeDefaultsToDirection() {
+    void ptzModeDefaultsToAutoAndSupportsOverride() {
         AppSettingsStore store = new AppSettingsStore(dir);
-        assertEquals("direction", store.ptzMode());
+        assertEquals("auto", store.ptzMode());
         store.savePtzMode("operation");
         assertEquals("operation", new AppSettingsStore(dir).ptzMode());
         store.savePtzMode("direction");
         assertEquals("direction", new AppSettingsStore(dir).ptzMode());
+        store.savePtzMode("auto");
+        assertEquals("auto", new AppSettingsStore(dir).ptzMode());
+        store.savePtzMode("bad-value");
+        assertEquals("auto", new AppSettingsStore(dir).ptzMode());
     }
 
     @Test

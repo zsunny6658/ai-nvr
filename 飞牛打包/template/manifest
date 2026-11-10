@@ -3,7 +3,7 @@
 # ============================================================
 
 appname=indsvr-invr
-version=1.1.9
+version=1.2.0
 display_name=iNVR
 desc=iNVR 是一款纯 Java 自研的小米 / 米家摄像头网络录像服务（NVR）。通过小米私有 miss/mess + CS2 协议直连接入摄像头，无需开启 RTSP/ONVIF、无需刷固件、不依赖云录像，在 NAS 上提供网页实时预览、标准 RTSP 下行、分段录像与时间轴回放，且不限制摄像头路数。<br /><br /><strong>核心特性</strong><br />· <strong>单通道复用</strong>：网页预览、RTSP、录像任意组合，同一摄像头始终只占用 1 条上游连接，内置 GOP 缓存秒开、断流自动重连<br />· <strong>米家账号登录</strong>：网页端完成登录，凭据加密本地存储、重启免密<br />· <strong>网页实时预览</strong>：HLS over fMP4（CMAF），HEVC/H.264 画面原样、音频转 AAC，浏览器原生播放，约 2–4 秒延迟<br />· <strong>标准 RTSP 下行</strong>：rtsp://主机:9554/摄像头DID，VLC / ffplay 等第三方播放器直接拉流<br />· <strong>分段录像</strong>：fMP4 默认 2 分钟一段、按 IDR 边界对齐，边录边播，崩溃 / 断电只丢最后约 1 个 GOP；服务重启后自动续录<br />· <strong>时间轴回放</strong>：按天时间轴展示录像段，点击任意位置连续播放，支持全天 / 6 小时 / 1 小时缩放与翻页<br />· <strong>访问安全</strong>：访问密码门禁（PBKDF2 加盐哈希），支持一键解锁链接，会话与密码均加密落盘<br />
 platform=x86
@@ -16,4 +16,4 @@ os_min_version=0.9.0
 desktop_uidir=ui
 desktop_applaunchname=indsvr-invr.main
 ctl_stop=true
-changelog=Release 1.1.9 设备上线自动恢复、清晰度可选与云台控制：① 设备由离线转在线、云端局域网 IP 变化，或局域网 CS2 服务恢复可达时，自动打断最长 5 分钟的重连退避并立即重建取流；新增每 30 秒一次的轻量 UDP LAN_SEARCH 探测，纠正米家云在线状态与局域网实况脱节；② 重连时改为动态读取最新设备信息与 Web 档位设置，修复设备换 IP 后仍沿用订阅建立时旧对象而始终连不通的隐患；③ 设置页新增「按设备取流清晰度」，可选自动/自适应/标清/高清/超清，保存后立即重建连接生效，手动固定档位不再被自动降级改写；④ 新增云台（PTZ）方向控制，复用当前取流会话发送 MISS 0x112 命令、不额外占用摄像头连接，支持 direction / operation 两种载荷格式；⑤ MissClient.close 幂等化，避免唤醒重连时重复发送 VideoStop
+changelog=Release 1.2.0 预览控制可用性与反馈修复：① 云台方向键此前「点击无效果」——命令其实已送达设备，但界面成功后无任何提示，且设备的 0x113 云台应答只记录了长度、未解析内容；现在把设备应答明文写入日志并回传前端，预览窗口直接显示「设备已应答」或「命令已送达但设备未应答（机型可能无云台电机 / 命令格式不匹配）」，并给出切换格式的明确指引；② 清晰度与云台命令格式从设置页搬到实时预览窗口，可就地切换：清晰度保存后立即重建取流，命令格式可在本次预览中现场试 direction / operation / 自动，不必先去设置页；③ 云台格式默认「自动（按型号）」，对照 lalmax-nvr motor.go 的 fixedStepMotorModel 型号表，CW400(hlc8a)、CW500、MJSXJ10CM、米家 360 2K 等步进式机型自动改用 operation 载荷，避免被设备静默忽略；④ 静态页面资源统一加 no-store 并递增资源版本号，修复 fpk 升级后浏览器缓存旧 app.js 导致「HTML 是新版、按钮无反应、设置项空白」的错位；⑤ 新增设备控制信息接口，预览窗口显示型号、默认档位、取流状态与推荐命令格式

@@ -81,10 +81,10 @@ public final class StreamHub {
         return true;
     }
 
-    /** 在已有上游会话上发送云台命令；无可用会话返回 false（绝不为此新建取流连接）。 */
-    public boolean motor(String did, String direction, int speed, String mode) {
+    /** 在已有上游会话上发送云台命令；无可用会话返回 noSession（绝不为此新建取流连接）。 */
+    public MotorResult motor(String did, String direction, int speed, String mode) {
         CameraStream cs = streams.get(did);
-        return cs != null && cs.motor(direction, speed, mode);
+        return cs == null ? MotorResult.noSession(mode) : cs.motor(direction, speed, mode);
     }
 
     /** 该设备当前是否有一条健康的上游取流会话。 */

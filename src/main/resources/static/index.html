@@ -7,7 +7,7 @@
     <base href="./">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230891b2'/%3E%3C/svg%3E">
     <title>iNvr · 小米摄像头 NVR</title>
-    <link rel="stylesheet" href="style.css?v=18">
+    <link rel="stylesheet" href="style.css?v=20">
 </head>
 <body>
 <header class="topbar">
@@ -309,11 +309,12 @@
                         <button class="btn" id="btnRefreshQuality" type="button">刷新状态</button>
                     </div>
                     <div class="set-divider"></div>
-                    <label>云台命令格式（仅当方向键无反应时切换）</label>
+                    <label>云台命令格式（预览窗口也可就地切换并立即试用）</label>
                     <div class="set-edit">
                         <select id="setPtzMode">
-                            <option value="direction">direction（现行实现，推荐）</option>
-                            <option value="operation">operation（部分旧固件步进式）</option>
+                            <option value="auto">自动（按型号，推荐）</option>
+                            <option value="direction">direction（连续转动）</option>
+                            <option value="operation">operation（步进式机型）</option>
                         </select>
                         <button class="btn" id="btnSavePtzMode" type="button">保存</button>
                     </div>
@@ -362,8 +363,8 @@
         </div>
         <div class="ptz-bar">
             <div class="ptz-info">
-                <b>云台控制</b>
-                <span class="muted small">复用当前预览连接，不新增摄像头通道；固定镜头机型可能忽略命令</span>
+                <b>画面控制</b>
+                <span class="muted small">清晰度切换会重建取流（短暂中断）；云台命令复用当前连接，不新增摄像头通道</span>
             </div>
             <div class="ptz-pad" id="ptzPad">
                 <span></span><button class="btn tiny" data-dir="up" title="向上">↑</button><span></span>
@@ -373,6 +374,12 @@
                 <span></span><button class="btn tiny" data-dir="down" title="向下">↓</button><span></span>
             </div>
             <div class="ptz-speed">
+                <label class="muted small" for="previewQuality">清晰度</label>
+                <select id="previewQuality">
+                    <option value="default">加载中…</option>
+                </select>
+            </div>
+            <div class="ptz-speed">
                 <label class="muted small" for="ptzSpeed">速度</label>
                 <select id="ptzSpeed">
                     <option value="3">慢</option>
@@ -380,6 +387,15 @@
                     <option value="10">快</option>
                 </select>
             </div>
+            <div class="ptz-speed">
+                <label class="muted small" for="previewPtzMode">云台格式</label>
+                <select id="previewPtzMode">
+                    <option value="auto" selected>自动（按型号）</option>
+                    <option value="direction">direction（连续转动）</option>
+                    <option value="operation">operation（步进式）</option>
+                </select>
+            </div>
+            <div class="ptz-status muted small" id="ptzStatus">正在读取设备控制信息…</div>
         </div>
         <div class="modal-foot">
             <div class="rtsp-line">
@@ -471,7 +487,7 @@
 <div id="toast" class="toast"></div>
 
 <script src="vendor/hls.min.js"></script>
-<script src="watchdog.js?v=17"></script>
-<script src="app.js?v=18"></script>
+<script src="watchdog.js?v=20"></script>
+<script src="app.js?v=20"></script>
 </body>
 </html>

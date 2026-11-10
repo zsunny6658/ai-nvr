@@ -862,7 +862,7 @@
         if (!box) return;
         var opts = (q && q.options) || [];
         var list = (q && q.devices) || [];
-        $('setPtzMode').value = (q && q.ptzMode) || 'direction';
+        $('setPtzMode').value = (q && q.ptzMode) || 'auto';
         $('setQualityHint').textContent = '设备由离线转在线、局域网 CS2 服务恢复可达或云端 IP 变化时，'
             + '系统会自动打断重连退避并立即重建取流，无需手动刷新页面。';
         if (!list.length) {
@@ -898,7 +898,9 @@
             });
             state.settings = s;
             renderQualitySettings(s.quality);
-            toast(s.reconnected ? '清晰度已应用，正在重建取流连接' : '清晰度已保存，下次取流时生效', 'ok');
+            var msg = s.reconnected ? '清晰度已应用，正在重建取流连接' : '清晰度已保存，下次取流时生效';
+            setPtzStatus(msg + '（画面会短暂中断数秒）', s.reconnected ? 'warn' : '');
+            toast(msg, 'ok');
         } catch (e) {
             toast('保存失败：' + e.message, 'err');
         }
@@ -918,20 +920,61 @@
         }
     }
 
-    /* 云台命令复用当前预览会话；没有会话时服务端返回 503，明确提示而不新建连接。 */
+    function setPtzStatus(text, kind) {
+        var el = $('ptzStatus');
+        if (!el) return;
+        el.textContent = text;
+        el.className = 'ptz-status muted small' + (kind ? ' ' + kind : '');
+    }
+
+    /* 打开预览时拉取该设备的清晰度档位、当前配置、推荐云台格式与取流状态。 */
+    async function loadPreviewControls(did) {
+        setPtzStatus('正在读取设备控制信息…');
+        try {
+            var c = await api('api/ptz/' + encodeURIComponent(did) + '/capabilities');
+            $('previewQuality').innerHTML = (c.qualityOptions || []).map(function (o) {
+                return '<option value="' + esc(o.value) + '"' + (o.value === c.quality ? ' selected' : '')
+                    + '>' + esc(o.label) + '</option>';
+            }).join('');
+            $('previewPtzMode').value = c.mode || 'auto';
+            setPtzStatus('型号 ' + esc(c.model) + ' · 默认档位 ' + esc(c.modelDefault)
+                + ' · ' + esc(c.sessionHealthy ? '取流正常' : (c.streamState || '未取流'))
+                + ' · 推荐云台格式 ' + esc(c.recommendedMode || 'direction')
+                + '（MISS 不提供云台能力查询，是否可转动需实测）');
+        } catch (e) {
+            setPtzStatus('控制信息加载失败：' + e.message, 'warn');
+        }
+    }
+
+    /* 云台命令复用当前预览会话；没有会话时服务端返回 503，明确提示而不新建连接。
+       v1.2.0：把设备 0x113 应答直接显示在预览窗口，点击后不再「毫无反应」。 */
     async function ptzMove(direction) {
         var did = state.previewDid;
         if (!did) { toast('请先打开实时预览', 'err'); return; }
         var speed = parseInt($('ptzSpeed').value, 10) || 5;
+        var mode = $('previewPtzMode').value || 'auto';
+        setPtzStatus('正在发送云台命令 ' + direction + '（' + mode + '）…');
         try {
-            await api('api/ptz/' + encodeURIComponent(did), {
+            var r = await api('api/ptz/' + encodeURIComponent(did), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ direction: direction, speed: speed })
+                body: JSON.stringify({ direction: direction, speed: speed, mode: mode })
             });
+            if (r.deviceReplied) {
+                setPtzStatus('设备已应答（' + r.effectiveMode + '）：'
+                    + String(r.deviceReply).slice(0, 160), 'ok');
+                toast('云台命令已执行', 'ok');
+            } else {
+                setPtzStatus('命令已送达（' + r.effectiveMode
+                    + '），但设备未应答：该机型可能不带云台电机，或命令格式不被接受。'
+                    + '可在「云台格式」切换 operation / direction 后再点方向键试。', 'warn');
+                toast('命令已发送，设备未应答', 'err');
+            }
         } catch (e) {
-            toast(e.status === 503 ? '画面尚未就绪，请等待预览出图后再控制云台'
-                : ('云台控制失败：' + e.message), 'err');
+            var msg = e.status === 503 ? '画面尚未就绪，请等待预览出图后再控制云台'
+                : ('云台控制失败：' + e.message);
+            setPtzStatus(msg, 'warn');
+            toast(msg, 'err');
         }
     }
 
@@ -1467,6 +1510,7 @@
         $('previewModal').hidden = false;
         $('previewHint').hidden = true;
         $('previewLoading').hidden = false;
+        loadPreviewControls(did);
         var video = $('previewVideo');
         video.style.visibility = 'visible';
         state.recoveredOnce = false;
@@ -1914,6 +1958,16 @@
         $('ptzPad').addEventListener('click', function (e) {
             var b = e.target.closest('button[data-dir]');
             if (b) ptzMove(b.getAttribute('data-dir'));
+        });
+        $('previewQuality').addEventListener('change', function () {
+            var did = state.previewDid;
+            if (!did) return;
+            setPtzStatus('正在应用清晰度并重建取流（画面会短暂中断）…');
+            saveQuality(did, $('previewQuality').value);
+        });
+        $('previewPtzMode').addEventListener('change', function () {
+            setPtzStatus('云台格式已切为 ' + $('previewPtzMode').value
+                + '，点方向键即可试用；确认有效后可到设置页保存为全局默认值。', 'warn');
         });
 
         // 开放接口 API 密钥

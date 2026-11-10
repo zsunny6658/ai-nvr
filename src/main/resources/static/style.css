@@ -350,6 +350,11 @@ body {
 .ptz-pad .ptz-stop { font-size: 11px; }
 .ptz-speed { display: flex; align-items: center; gap: 6px; }
 .ptz-speed select { padding: 5px 8px; }
+/* 预览窗口整行状态：清晰度/取流状态、云台命令与设备应答 */
+.ptz-status { flex: 0 0 100%; border-top: 1px solid var(--border, #e2e8f0);
+    padding-top: 7px; line-height: 1.6; word-break: break-word; }
+.ptz-status.ok { color: #15803d; }
+.ptz-status.warn { color: #b45309; }
 @media (max-width: 640px) {
     .ptz-bar { gap: 10px; }
     .ptz-info { min-width: 100%; }

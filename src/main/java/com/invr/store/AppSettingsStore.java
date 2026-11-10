@@ -259,19 +259,27 @@ public class AppSettingsStore {
         persist(m);
     }
 
-    /** 云台命令载荷格式，默认 direction。 */
+    /**
+     * 云台命令载荷格式：{@code auto}（默认，按型号自动选择）、{@code direction}、
+     * {@code operation}。步进式机型（CW400/CW500 等）必须用 operation，早先统一用
+     * direction 会被设备静默忽略。
+     */
     public String ptzMode() {
         Object v = all().get(KEY_PTZ_MODE);
-        return (v != null && "operation".equalsIgnoreCase(String.valueOf(v).trim()))
-                ? "operation" : "direction";
+        if (v == null) {
+            return "auto";
+        }
+        String s = String.valueOf(v).trim().toLowerCase();
+        return ("direction".equals(s) || "operation".equals(s)) ? s : "auto";
     }
 
     public synchronized void savePtzMode(String mode) {
         Map<String, Object> m = all();
-        if (mode != null && "operation".equalsIgnoreCase(mode.trim())) {
-            m.put(KEY_PTZ_MODE, "operation");
+        String s = mode == null ? "" : mode.trim().toLowerCase();
+        if ("direction".equals(s) || "operation".equals(s)) {
+            m.put(KEY_PTZ_MODE, s);
         } else {
-            m.remove(KEY_PTZ_MODE);
+            m.remove(KEY_PTZ_MODE); // auto 作为默认值不落盘
         }
         persist(m);
     }

@@ -1,11 +1,36 @@
 package com.invr.miss;
 
+import java.util.Set;
+
 /**
  * MISS 命令字与媒体 codec 标识（1:1 对照 go2rtc pkg/xiaomi/miss/client.go）。
  */
 public final class MissCommands {
 
     private MissCommands() {
+    }
+
+    /**
+     * 步进式云台（fixed-step）机型：命令载荷必须是 {@code {"operation":1..4}}，
+     * 而不是通用机型的 {@code {"direction":"left","speed":5}}。
+     * 型号表来自 lalmax-nvr internal/xiaomi/motor.go（MotorProfileForModel）。
+     */
+    private static final Set<String> FIXED_STEP_MOTOR_MODELS = Set.of(
+            "isa.camera.hlc8a",          // CW400
+            "isa.camera.500dh",          // CW500
+            "chuangmi.camera.026c05",    // MJSXJ10CM
+            "chuangmi.camera.029a02",    // 米家 360 2K
+            "xiaomi.camera.c01a01",
+            "xiaomi.camera.082ac1");     // 已实测验证
+
+    /**
+     * 按型号给出应当使用的云台命令格式：{@code operation}（步进式）或
+     * {@code direction}（通用连续转动）。dafang 私有 TUTK 协议本项目不支持，
+     * 归到 direction 并由设备自行忽略。
+     */
+    public static String motorModeFor(String model) {
+        return FIXED_STEP_MOTOR_MODELS.contains(model == null ? "" : model)
+                ? "operation" : "direction";
     }
 
     public static final int CMD_AUTH_REQ = 0x100;

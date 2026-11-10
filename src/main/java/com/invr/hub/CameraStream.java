@@ -345,17 +345,17 @@ public final class CameraStream {
      *
      * @return false 表示当前没有可用会话，调用方应提示先打开预览
      */
-    public boolean motor(String direction, int speed, String mode) {
+    public MotorResult motor(String direction, int speed, String mode) {
         MissClient c = current;
         if (c == null || !healthy) {
-            return false;
+            return MotorResult.noSession(mode);
         }
         try {
-            c.motor(direction, speed, mode);
-            return true;
+            String reply = c.motor(direction, speed, mode);
+            return new MotorResult(true, reply, mode);
         } catch (Exception e) {
             log.warn("[{}] 云台命令发送失败（{}）：{}", did, direction, e.toString());
-            return false;
+            return MotorResult.noSession(mode);
         }
     }
 

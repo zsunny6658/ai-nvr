@@ -130,15 +130,16 @@ public class SettingsController {
         return m;
     }
 
-    /** 切换云台命令载荷格式（direction 为现行实现，operation 用于部分旧固件）。 */
+    /** 切换云台命令载荷格式（auto 按型号自动；direction 通用；operation 步进式旧固件）。 */
     @PutMapping("/settings/ptz")
     public Map<String, Object> updatePtzMode(@RequestBody(required = false) PtzModeRequest req) {
         if (req == null) {
             throw ApiException.badRequest("缺少请求体");
         }
-        String mode = req.mode() == null ? "" : req.mode().trim().toLowerCase();
-        if (!"direction".equals(mode) && !"operation".equals(mode)) {
-            throw ApiException.badRequest("云台命令格式仅支持 direction / operation");
+        String mode = req.mode() == null || req.mode().isBlank()
+                ? "auto" : req.mode().trim().toLowerCase();
+        if (!List.of("auto", "direction", "operation").contains(mode)) {
+            throw ApiException.badRequest("云台命令格式仅支持 auto / direction / operation");
         }
         settingsStore.savePtzMode(mode);
         return getSettings();

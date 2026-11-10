@@ -45,6 +45,20 @@ class MissCommandsTest {
         assertEquals(0x102, MissCommands.CMD_VIDEO_START);
         assertEquals(0x103, MissCommands.CMD_VIDEO_STOP);
         assertEquals(0x112, MissCommands.CMD_MOTOR_REQ);
+        assertEquals(0x113, MissCommands.CMD_MOTOR_RES);
         assertEquals(0x1001, MissCommands.CMD_ENCODED);
+    }
+
+    @Test
+    void fixedStepModelsUseOperationPayload() {
+        // lalmax-nvr internal/xiaomi/motor.go 的 fixedStepMotorModel 型号表
+        assertEquals("operation", MissCommands.motorModeFor("isa.camera.hlc8a"));
+        assertEquals("operation", MissCommands.motorModeFor("isa.camera.500dh"));
+        assertEquals("operation", MissCommands.motorModeFor("chuangmi.camera.026c05"));
+        assertEquals("operation", MissCommands.motorModeFor("xiaomi.camera.082ac1"));
+        // 通用机型（含本机两台）走 direction
+        assertEquals("direction", MissCommands.motorModeFor("isa.camera.hlc8"));
+        assertEquals("direction", MissCommands.motorModeFor("chuangmi.camera.079ac1"));
+        assertEquals("direction", MissCommands.motorModeFor(null));
     }
 }
