@@ -88,8 +88,8 @@ public class NvrProperties {
         private int window = 6;
         private int idleSec = 25;
         private boolean audio = true;
-        /** 是否对在线摄像头预热并保持常驻（点击即播、降低首帧延迟）。 */
-        private boolean prewarm = true;
+        /** 是否对在线摄像头预热并保持常驻（点击即播，但会长期占用上游连接，默认关闭）。 */
+        private boolean prewarm = false;
 
         public int getTargetSec() {
             return targetSec;

@@ -124,7 +124,11 @@ public class HlsService {
                         if (prewarm) {
                             shouldRemove = !isOnline(did);
                         } else {
-                            long last = lastAccess.getOrDefault(did, now);
+                            // 无访问记录（预热建立或重建后从未播放）时不能默认成 now，
+                            // 否则每轮都被判定为「刚刚访问」，sink 永远无法空闲回收，
+                            // 上游连接会一直占着摄像头，挤掉米家 App 等其它终端的观看。
+                            // 用 0 表示「从未访问」，交由 janitorSeen 的宽限期决定回收时机。
+                            long last = lastAccess.getOrDefault(did, 0L);
                             long seen = janitorSeen.getOrDefault(did, now);
                             if (now - last < idleMs) {
                                 janitorSeen.put(did, now);

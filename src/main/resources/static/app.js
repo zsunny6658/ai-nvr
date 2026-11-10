@@ -1253,6 +1253,22 @@
         return /Chrome\//.test(navigator.userAgent);
     }
 
+    /* 显式探测 HEVC 解码能力。Windows 上的 Chrome/Edge 依赖系统「HEVC 视频扩展」+ 硬件解码，
+       macOS Safari / Apple Silicon 上的 Chrome 通常原生支持。仅用于诊断文案，不改变播放路径。
+       多个常见 profile 任一命中即视为支持，避免因 level 写法差异把能播的浏览器误判为不支持。 */
+    function hevcDecodeSupported() {
+        try {
+            var codecs = ['hvc1.1.6.L93.B0', 'hev1.1.6.L93.B0', 'hvc1.1.6.L153.B0'];
+            var probe = document.createElement('video');
+            for (var i = 0; i < codecs.length; i++) {
+                var mime = 'video/mp4; codecs="' + codecs[i] + '"';
+                if (window.MediaSource && MediaSource.isTypeSupported && MediaSource.isTypeSupported(mime)) return true;
+                if (probe.canPlayType(mime)) return true;
+            }
+            return false;
+        } catch (e) { return false; }
+    }
+
     /* 预览 hls.js（MSE）挂载：低延迟调优 + 令牌注入 + 致命错误恢复，返回 hls 实例 */
     function mountPreviewMse(video, url) {
         // 除 m3u8 内 URI 携带令牌外，所有 XHR 再注入 Authorization 头（双保险）
@@ -1289,7 +1305,7 @@
                 var codecFail = data.details === Hls.ErrorDetails.MANIFEST_INCOMPATIBLE_CODECS_ERROR ||
                     data.details === Hls.ErrorDetails.BUFFER_ADD_CODEC_ERROR;
                 if (codecFail) {
-                    showPreviewHint('当前浏览器无法解码 H.265(HEVC)。\n请使用 Edge / 安装「HEVC 视频扩展」，或复制下方 RTSP 地址用 VLC 播放。');
+                    showPreviewHint('当前浏览器无法解码 H.265(HEVC)。\nWindows 上的 Chrome / Edge 需安装「HEVC 视频扩展」且显卡支持硬解；macOS 可用 Safari。\n也可复制下方 RTSP 地址用 VLC 播放。');
                     hls.destroy();
                 } else if (!state.recoveredOnce) {
                     state.recoveredOnce = true;
@@ -1375,25 +1391,47 @@
         var clearWatch = function () {
             if (state.previewWatch) { clearTimeout(state.previewWatch); state.previewWatch = null; }
         };
-        var codecHint = '当前浏览器无法解码 H.265(HEVC) 或取流未成功。\n请用 Edge 并安装「HEVC 视频扩展」，或复制下方 RTSP 地址用 VLC 播放。';
-        // 看门狗：预热攒片（最多约15s）+ 首片加载/3.5K 软解后，26s 内仍未解码出画面则明确提示
+        // 媒体 URL 追加令牌查询参数（原生 HLS 子资源由服务端 m3u8 注入令牌，此处先覆盖 m3u8 本身）
+        var url = withToken(c.hlsUrl);
+        var diagnosed = false;
+
+        /* 首帧失败时先分辨「服务端没取到流」与「浏览器解不了 HEVC」，不再一律归因为解码问题。
+           主动探一次播放列表：非 2xx 说明取流/首片未就绪；2xx 但无画面再看客户端解码能力。 */
+        function diagnoseFirstFrame(reason) {
+            if (diagnosed) return;
+            diagnosed = true;
+            fetch(url, { cache: 'no-store' }).then(function (r) {
+                var lines = ['预览' + reason + '（readyState=' + video.readyState +
+                    '，videoWidth=' + (video.videoWidth || 0) + '）。'];
+                if (!r.ok) {
+                    lines.push('播放列表返回 HTTP ' + r.status + '：取流或首片尚未就绪。请确认摄像头在线、稍后重试。');
+                } else if (!hevcDecodeSupported()) {
+                    lines.push('播放列表正常，但本机缺少 H.265(HEVC) 解码支持：Windows 上的 Chrome / Edge 需安装「HEVC 视频扩展」且显卡支持硬解，macOS 可改用 Safari。');
+                } else {
+                    lines.push('播放列表正常且浏览器声明支持 HEVC，仍无画面：可能是码流参数集或分片异常，请刷新重试或查看应用日志。');
+                }
+                lines.push('也可复制下方 RTSP 地址用 VLC 播放。');
+                showPreviewHint(lines.join('\n'));
+            }).catch(function () {
+                showPreviewHint('预览' + reason + '，且播放列表请求失败（网络或登录态失效）。请刷新页面重新登录，或用下方 RTSP 地址在 VLC 播放。');
+            });
+        }
+
+        // 看门狗：预热攒片（最多约15s）+ 首片加载后，26s 内仍未解码出画面则给出分类诊断
         clearWatch();
         state.previewWatch = setTimeout(function () {
             state.previewWatch = null;
             if ($('previewModal').hidden) return;
             if (!video.videoWidth || video.readyState < 2) {
                 if (state.hls) { try { state.hls.destroy(); } catch (e) {} state.hls = null; }
-                showPreviewHint(codecHint);
+                diagnoseFirstFrame('超时未出画面');
             }
         }, 26000);
         video.addEventListener('loadeddata', clearWatch, { once: true });
         video.addEventListener('playing', clearWatch, { once: true });
         video.addEventListener('error', function () {
-            if (!$('previewModal').hidden && !video.videoWidth) showPreviewHint(codecHint);
+            if (!$('previewModal').hidden && !video.videoWidth) diagnoseFirstFrame('播放出错');
         }, { once: true });
-
-        // 媒体 URL 追加令牌查询参数（原生 HLS 子资源由服务端 m3u8 注入令牌，此处先覆盖 m3u8 本身）
-        var url = withToken(c.hlsUrl);
         if (state.hls) { try { state.hls.destroy(); } catch (e) {} state.hls = null; }
 
         // 按浏览器能力选择路径：Chromium 优先 hls.js(MSE)，原生降级；不支持则明确提示
