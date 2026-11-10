@@ -4,6 +4,7 @@ JAVA_BIN="${TRIM_APPDEST}/jre/bin/java"
 VAR_DIR="${TRIM_PKGVAR}"
 LOG_DIR="${VAR_DIR}/logs"
 PID_FILE="${VAR_DIR}/app.pid"
+SOCK_FILE="${TRIM_APPDEST}/app.sock"
 
 if [ -f "${TRIM_PKGETC}/jvm.conf" ]; then
   source "${TRIM_PKGETC}/jvm.conf"
@@ -14,15 +15,33 @@ fi
 SPRING_ARGS="--spring.config.additional-location=file:${TRIM_PKGETC}/ --spring.profiles.active=fnos"
 mkdir -p "${LOG_DIR}"
 
+# 按「java 进程 + 完整 jar 路径」列出本应用的进程。
+# 不能只依赖 app.pid：覆盖安装 / 升级会重建应用目录，pid 文件可能丢失，
+# 旧进程随即变成孤儿继续占用 service_port，导致 fnOS checkport 报「端口被占用」。
+app_pids() {
+  ps -eo pid=,comm=,args= 2>/dev/null \
+    | awk -v jar="${APP_JAR}" '$2=="java" && index($0, jar)>0 {print $1}'
+}
+
+stop_all() {
+  local p
+  for p in $(app_pids); do
+    kill "$p" 2>/dev/null
+  done
+  for i in $(seq 1 10); do
+    [ -z "$(app_pids)" ] && break
+    sleep 1
+  done
+  for p in $(app_pids); do
+    kill -9 "$p" 2>/dev/null
+  done
+  rm -f "$PID_FILE" "$SOCK_FILE"
+}
+
 case $1 in
   start)
-    if [ -f "$PID_FILE" ]; then
-      old_pid=$(cat "$PID_FILE" | tr -d '[:space:]')
-      if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
-        exit 0
-      fi
-      rm -f "$PID_FILE"
-    fi
+    # 幂等：先清掉可能残留的旧进程（含 pid 文件丢失的孤儿进程），释放 9099 / 9554
+    stop_all
     if [ ! -f "$APP_JAR" ]; then
       echo "jar not found: $APP_JAR" > "${TRIM_TEMP_LOGFILE}"
       exit 1
@@ -30,13 +49,11 @@ case $1 in
     chmod +x "${TRIM_APPDEST}/jre/bin/"* 2>/dev/null
     # 切换工作目录到持久化数据目录，这样应用写的 .invr/ 会落在 var 下
     cd "${TRIM_PKGVAR}"
-    # 清理上次残留的 Unix Socket 文件（Tomcat 不允许覆盖已存在的 socket）
-    rm -f "${TRIM_APPDEST}/app.sock"
     nohup "${JAVA_BIN}" ${JAVA_OPTS} -jar "${APP_JAR}" ${SPRING_ARGS} > "${LOG_DIR}/app.log" 2>&1 &
     echo $! > "$PID_FILE"
     sleep 3
     # 修正 socket 文件权限（系统 umask 会覆盖 Tomcat 设置，nginx 需要 666 才能访问）
-    chmod 666 "${TRIM_APPDEST}/app.sock" 2>/dev/null
+    chmod 666 "$SOCK_FILE" 2>/dev/null
     pid=$(cat "$PID_FILE" | tr -d '[:space:]')
     if ! kill -0 "$pid" 2>/dev/null; then
       echo "App failed to start. Check log: ${LOG_DIR}/app.log" > "${TRIM_TEMP_LOGFILE}"
@@ -48,17 +65,11 @@ case $1 in
     if [ -f "$PID_FILE" ]; then
       pid=$(cat "$PID_FILE" | tr -d '[:space:]')
       if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-        kill "$pid"
-        for i in $(seq 1 15); do
-          if ! kill -0 "$pid" 2>/dev/null; then break; fi
-          sleep 1
-        done
-        if kill -0 "$pid" 2>/dev/null; then
-          kill -9 "$pid"
-        fi
+        kill "$pid" 2>/dev/null
       fi
-      rm -f "$PID_FILE"
     fi
+    # 兜底清理：即使 pid 文件丢失，也要按 jar 路径杀掉孤儿进程
+    stop_all
     exit 0
     ;;
   status)
@@ -69,6 +80,8 @@ case $1 in
       fi
       rm -f "$PID_FILE"
     fi
+    # pid 文件丢失但进程仍在时如实上报，便于 fnOS 先执行 stop 再启用
+    [ -n "$(app_pids)" ] && exit 0
     exit 3
     ;;
   *)
