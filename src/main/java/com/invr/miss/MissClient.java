@@ -25,6 +25,7 @@ public final class MissClient implements AutoCloseable {
     private final Cs2Connection conn;
     private final byte[] sharedKey;
     private final String model;
+    private volatile boolean closed;
 
     private MissClient(Cs2Connection conn, byte[] sharedKey, String model) {
         this.conn = conn;
@@ -52,7 +53,60 @@ public final class MissClient implements AutoCloseable {
             throw e;
         }
         log.info("MISS 会话登录成功（model={}）", params.model());
-        return new MissClient(conn, sharedKey, params.model());
+        MissClient client = new MissClient(conn, sharedKey, params.model());
+        client.startCommandDrain();
+        return client;
+    }
+
+    /**
+     * 持续消费 CS2 命令通道（ch0）。
+     *
+     * <p>设备在取流期间会周期性（实测约每 10 秒）回加密命令（流控/保活/状态）。
+     * 本项目原先只在 login 时读一次 AuthRes，之后 ch0 再无人消费；ch0 队列容量仅 10，
+     * 约 100 秒后必然溢出，worker 抛 "pop buffer is full" 并把整条连接判为断流 ——
+     * 这正是正常出画面的摄像头也会每约 2 分钟无条件重连一次的根因。</p>
+     *
+     * <p>这里用独立后台线程持续排空 ch0，同时把设备返回的命令字解密后写入日志，
+     * 便于直接看到「设备明确拒绝推流」这类以往被静默丢弃的响应。</p>
+     */
+    private void startCommandDrain() {
+        Thread drain = new Thread(() -> {
+            int seen = 0;
+            while (!closed && !Thread.currentThread().isInterrupted()) {
+                try {
+                    byte[] raw = conn.readCommandRaw();
+                    if (raw == null || raw.length < 4) {
+                        continue;
+                    }
+                    int cmd = be32(raw, 0);
+                    String detail = "";
+                    if (cmd == MissCommands.CMD_ENCODED && raw.length > 4) {
+                        try {
+                            byte[] plain = ChaCha20Cipher.decode(sharedKey,
+                                    Arrays.copyOfRange(raw, 4, raw.length));
+                            detail = String.format(" -> 内部命令 0x%x（%d 字节）",
+                                    be32(plain, 0), Math.max(0, plain.length - 4));
+                        } catch (Exception de) {
+                            detail = " -> 解密失败：" + de;
+                        }
+                    }
+                    seen++;
+                    if (seen <= 3 || seen % 60 == 0) {
+                        log.info("MISS 设备命令 ch0=0x{}{}（第 {} 条）",
+                                Integer.toHexString(cmd), detail, seen);
+                    } else {
+                        log.debug("MISS 设备命令 ch0=0x{}{}", Integer.toHexString(cmd), detail);
+                    }
+                } catch (Exception e) {
+                    if (!closed) {
+                        log.debug("MISS 命令通道消费线程退出：{}", e.toString());
+                    }
+                    break;
+                }
+            }
+        }, "miss-cmd-drain-" + model);
+        drain.setDaemon(true);
+        drain.start();
     }
 
     public String protocol() {
@@ -172,7 +226,23 @@ public final class MissClient implements AutoCloseable {
 
     @Override
     public void close() throws IOException {
+        if (!closed) {
+            closed = true;
+            // 对齐 go2rtc Producer.Stop()：先显式通知设备停止取流，释放设备侧会话。
+            // 只关 socket 而不发 VideoStop 时，设备侧会话需等自身超时才回收；
+            // 叠加无限重连会迅速占满摄像头仅有的几路并发通道（小米机型尤甚）。
+            try {
+                stopMedia();
+            } catch (Exception e) {
+                log.debug("关闭前发送 VideoStop 失败（忽略）：{}", e.toString());
+            }
+        }
         conn.close();
+    }
+
+    private static int be32(byte[] b, int off) {
+        return ((b[off] & 0xFF) << 24) | ((b[off + 1] & 0xFF) << 16)
+                | ((b[off + 2] & 0xFF) << 8) | (b[off + 3] & 0xFF);
     }
 
     private static int le32(byte[] b, int off) {

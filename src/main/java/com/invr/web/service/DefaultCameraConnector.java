@@ -33,7 +33,7 @@ public class DefaultCameraConnector implements CameraConnector {
 
     @Override
     public MissOpener openerFor(CameraDevice device) {
-        String quality = MissCommands.defaultQuality(device.model());
+        String quality = MissCommands.qualityFor(device.did(), device.model());
         return new CloudMissOpener(sessionStore, sessionHolder.ref(), device, "", quality, "1");
     }
 }

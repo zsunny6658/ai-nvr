@@ -3,7 +3,7 @@
 # ============================================================
 
 appname=indsvr-invr
-version=1.1.7
+version=1.1.8
 display_name=iNVR
 desc=iNVR 是一款纯 Java 自研的小米 / 米家摄像头网络录像服务（NVR）。通过小米私有 miss/mess + CS2 协议直连接入摄像头，无需开启 RTSP/ONVIF、无需刷固件、不依赖云录像，在 NAS 上提供网页实时预览、标准 RTSP 下行、分段录像与时间轴回放，且不限制摄像头路数。<br /><br /><strong>核心特性</strong><br />· <strong>单通道复用</strong>：网页预览、RTSP、录像任意组合，同一摄像头始终只占用 1 条上游连接，内置 GOP 缓存秒开、断流自动重连<br />· <strong>米家账号登录</strong>：网页端完成登录，凭据加密本地存储、重启免密<br />· <strong>网页实时预览</strong>：HLS over fMP4（CMAF），HEVC/H.264 画面原样、音频转 AAC，浏览器原生播放，约 2–4 秒延迟<br />· <strong>标准 RTSP 下行</strong>：rtsp://主机:9554/摄像头DID，VLC / ffplay 等第三方播放器直接拉流<br />· <strong>分段录像</strong>：fMP4 默认 2 分钟一段、按 IDR 边界对齐，边录边播，崩溃 / 断电只丢最后约 1 个 GOP；服务重启后自动续录<br />· <strong>时间轴回放</strong>：按天时间轴展示录像段，点击任意位置连续播放，支持全天 / 6 小时 / 1 小时缩放与翻页<br />· <strong>访问安全</strong>：访问密码门禁（PBKDF2 加盐哈希），支持一键解锁链接，会话与密码均加密落盘<br />
 platform=x86
@@ -16,4 +16,4 @@ os_min_version=0.9.0
 desktop_uidir=ui
 desktop_applaunchname=indsvr-invr.main
 ctl_stop=true
-changelog=Release 1.1.7 连接占用与预览诊断修复：① HLS 默认关闭在线摄像头预热常驻（改为按需订阅、空闲回收），避免每路摄像头长期占用上游连接挤掉米家 App 等终端；② 修复空闲回收缺陷——预热/重建后从未播放的 sink 因 lastAccess 默认成 now 而永不回收，改为 0 并交由 janitorSeen 宽限期回收；③ 预览首帧失败不再一律归因为 HEVC 解码，改为显式探测解码能力 + 播放列表 HTTP 状态，分别提示「缺 HEVC 支持 / 取流未就绪 / 码流异常」，并更正 Chrome 在 Windows 装 HEVC 扩展后亦可播放的说明
+changelog=Release 1.1.8 设备侧会话生命周期与连接复用修复：① 修复 CS2 命令通道（ch0）只在登录时消费一次、设备周期性回令约 100 秒后队列溢出导致「pop buffer is full」并强制断流重连的问题，改为独立线程持续排空并把设备命令解密写入日志；② 关闭上游时对齐 go2rtc Producer.Stop()，先显式发送 VideoStop 释放设备侧会话再断开连接，并对设备 MSG_CLOSE 回 CLOSE_ACK，避免僵尸会话占满摄像头有限的并发取流通道；③ 对「设备接受会话却零媒体包」加入重连熔断（逐步降频至 1/5 分钟），杜绝无限 15 秒重连自我打爆设备；④ 连续零帧时 VideoStart 档位自动降级 HD→SD→auto 并关闭音频，hlc8（CW400 室外机）默认按 SD 取流，支持 -Dinvr.quality.<DID> 现场覆盖；⑤ 固定 JVM 输出编码为 UTF-8，修复 app.log 中文全部写成 '?' 的问题

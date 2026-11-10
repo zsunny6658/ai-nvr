@@ -185,9 +185,12 @@ public final class CameraStream {
 
     private void runUpstream() {
         int backoffIndex = 0;
+        /** 连续「一个媒体包都没收到」的连接次数，用于重连熔断。 */
+        int consecutiveNoFrame = 0;
         while (running) {
             MissClient client = null;
             int gen = 0;
+            boolean gotFrame = false;
             try {
                 log.info("[{}] 正在建立上游取流连接（重新协商+CS2+MISS+VideoStart）...", did);
                 client = opener.open();
@@ -208,6 +211,7 @@ public final class CameraStream {
                     if (pkt == null) {
                         continue;
                     }
+                    gotFrame = true;
                     synchronized (deliverLock) {
                         if (pkt.isVideo()) {
                             cacheGop(pkt);
@@ -223,8 +227,25 @@ public final class CameraStream {
                     break;
                 }
                 long wait = BACKOFF_MS[backoffIndex];
-                log.warn("[{}] 上游取流中断（generation={}）：{}；{}s 后自动重连（将重新协商）",
-                        did, gen, e.toString(), wait / 1000);
+                if (gotFrame) {
+                    // 曾经出过帧，说明链路可用，按常规退避尽快恢复
+                    consecutiveNoFrame = 0;
+                    opener.noteFrame();
+                } else {
+                    consecutiveNoFrame++;
+                    opener.noteNoFrame();
+                }
+                // 连续「设备接受会话却一个媒体包都不给」时，立刻重连只会不停新建
+                // 上游会话。摄像头并发取流通道有限，必须逐步降频，等旧会话释放。
+                if (consecutiveNoFrame >= 12) {
+                    wait = Math.max(wait, 300_000L);
+                } else if (consecutiveNoFrame >= 6) {
+                    wait = Math.max(wait, 60_000L);
+                } else if (consecutiveNoFrame >= 3) {
+                    wait = Math.max(wait, 10_000L);
+                }
+                log.warn("[{}] 上游取流中断（generation={}，连续无帧 {} 次）：{}；{}s 后自动重连（将重新协商）",
+                        did, gen, consecutiveNoFrame, e.toString(), wait / 1000);
                 closeQuietly(client);
                 client = null;
                 current = null;

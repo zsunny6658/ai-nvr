@@ -23,4 +23,15 @@ public interface MissOpener {
      * @throws IOException 协商/握手/登录/启动任一步骤失败（调用方据此退避重试）
      */
     MissClient open() throws IOException;
+
+    /**
+     * 本次连接一个媒体包都没收到（设备接受会话却拒绝推流）时由 {@link CameraStream} 回调。
+     * 支持自适应降级的实现可据此在下一次 {@link #open()} 中调整取流档位。
+     */
+    default void noteNoFrame() {
+    }
+
+    /** 本次连接已正常出帧，重置降级状态。 */
+    default void noteFrame() {
+    }
 }

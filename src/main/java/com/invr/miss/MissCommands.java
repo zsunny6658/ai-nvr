@@ -45,11 +45,35 @@ public final class MissCommands {
 
     /**
      * 默认质量档：绝大多数 2020 后型号为 2=hd；046c04/72ac1 需用 3。
+     * hlc8（CW400 室外机）在 HD 档位下实测鉴权通过却收不到任何媒体包，先按 1=sd 取流。
      */
     public static String defaultQuality(String model) {
         if ("chuangmi.camera.046c04".equals(model) || "chuangmi.camera.72ac1".equals(model)) {
             return "3";
         }
+        if ("isa.camera.hlc8".equals(model)) {
+            return "1";
+        }
         return "2";
+    }
+
+    /**
+     * 按 DID / 全局系统属性覆盖取流档位，便于现场在不改包的情况下试参数：
+     * {@code -Dinvr.quality.<did>=0|1|2|3} 或 {@code -Dinvr.quality=1}。
+     */
+    public static String qualityFor(String did, String model) {
+        String perDevice = did == null ? null : System.getProperty("invr.quality." + did);
+        if (isValidQuality(perDevice)) {
+            return perDevice;
+        }
+        String global = System.getProperty("invr.quality");
+        if (isValidQuality(global)) {
+            return global;
+        }
+        return defaultQuality(model);
+    }
+
+    private static boolean isValidQuality(String v) {
+        return v != null && v.length() == 1 && v.charAt(0) >= '0' && v.charAt(0) <= '3';
     }
 }

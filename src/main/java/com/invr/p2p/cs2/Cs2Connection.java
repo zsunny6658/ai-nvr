@@ -95,8 +95,19 @@ public final class Cs2Connection implements AutoCloseable {
                     }
                     case Cs2.MSG_PING -> transport.write(
                             new byte[]{(byte) Cs2.MAGIC, (byte) Cs2.MSG_PONG, 0, 0});
+                    case Cs2.MSG_CLOSE -> {
+                        // 设备主动结束会话：按 CS2 协议回 CLOSE_ACK，避免设备侧会话悬挂
+                        // 占用其有限的并发取流通道。
+                        try {
+                            transport.write(new byte[]{
+                                    (byte) Cs2.MAGIC, (byte) Cs2.MSG_CLOSE_ACK, 0, 0});
+                        } catch (IOException ignored) {
+                            // 连接已在断开过程中，忽略
+                        }
+                        log.debug("cs2: 收到设备 MSG_CLOSE，已回 CLOSE_ACK");
+                    }
                     case Cs2.MSG_PONG, Cs2.MSG_P2P_RDY_UDP, Cs2.MSG_P2P_RDY_TCP,
-                            Cs2.MSG_CLOSE, Cs2.MSG_CLOSE_ACK -> {
+                            Cs2.MSG_CLOSE_ACK -> {
                         // 忽略
                     }
                     case Cs2.MSG_DRW_ACK -> {

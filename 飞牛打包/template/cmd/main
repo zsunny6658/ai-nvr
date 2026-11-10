@@ -12,6 +12,10 @@ if [ -f "${TRIM_PKGETC}/jvm.conf" ]; then
 else
   JAVA_OPTS="-Xms128m -Xmx512m -Dfile.encoding=UTF-8 -Duser.timezone=Asia/Shanghai"
 fi
+# 日志重定向到 app.log 时，JDK 17/21 的 stdout/stderr 编码取自平台 locale；
+# fnOS 容器多为 C/POSIX，会把中文全部写成 '?'，排障时无法读日志。
+# 显式固定输出编码，且无论是否使用自定义 jvm.conf 都追加。
+JAVA_OPTS="${JAVA_OPTS} -Dfile.encoding=UTF-8 -Dsun.stdout.encoding=UTF-8 -Dsun.stderr.encoding=UTF-8 -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8"
 
 SPRING_ARGS="--spring.config.additional-location=file:${TRIM_PKGETC}/ --spring.profiles.active=fnos"
 mkdir -p "${LOG_DIR}"
