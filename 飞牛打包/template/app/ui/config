@@ -7,7 +7,7 @@
       "protocol": "",
       "gatewayPrefix": "/app/{{APP_NAME}}",
       "gatewaySocket": "app.sock",
-      "url": "/app/{{APP_NAME}}",
+      "url": "/app/{{APP_NAME}}/",
       "allUsers": true
     }
   }
