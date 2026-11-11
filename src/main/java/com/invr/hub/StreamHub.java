@@ -87,6 +87,12 @@ public final class StreamHub {
         return cs == null ? MotorResult.noSession(mode) : cs.motor(direction, speed, mode);
     }
 
+    /** 读取该设备最近一次云台命令与 0x113 应答的异步快照（前端延时轮询用）。 */
+    public MotorReply motorReply(String did) {
+        CameraStream cs = streams.get(did);
+        return cs == null ? MotorReply.none() : cs.motorReply();
+    }
+
     /** 该设备当前是否有一条健康的上游取流会话。 */
     public boolean isHealthy(String did) {
         CameraStream cs = streams.get(did);

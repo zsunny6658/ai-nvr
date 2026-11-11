@@ -18,6 +18,9 @@
         pollTimer: null,
         gateTimer: null,
         recoveredOnce: false,
+        // v1.2.1：延迟徽标定时器 / 云台点击序号（避免旧的异步应答覆盖新状态）
+        liveBadgeTimer: null,
+        ptzSeq: 0,
         // 门禁令牌（内存兜底；主存 localStorage，跨站 iframe 中为分区存储仍可读写）
         memToken: '',
         // 时间轴回放状态
@@ -924,7 +927,74 @@
         var el = $('ptzStatus');
         if (!el) return;
         el.textContent = text;
-        el.className = 'ptz-status muted small' + (kind ? ' ' + kind : '');
+        el.className = 'ptz-status small' + (kind ? ' ' + kind : '');
+    }
+
+    /* ---------- v1.2.1 低延迟：主动追到直播边缘 ----------
+       HLS 播放器会累积缓冲，看门狗原先要落后 15s 才追帧。云台转动是「此刻」发生的，
+       若画面还停在 10 秒前的缓冲里，用户就会觉得按了方向键半天没反应。这里在命令发出的
+       同时把播放位置拉到 liveSyncPosition（原生 HLS 用 seekable.end），把等待压到约 1 个分片。 */
+    function chaseLiveEdge(quiet) {
+        var v = $('previewVideo');
+        if (!v || $('previewModal').hidden) { return false; }
+        var target = null;
+        try {
+            if (state.hls && isFinite(state.hls.liveSyncPosition)) {
+                target = state.hls.liveSyncPosition;
+            } else if (v.seekable && v.seekable.length) {
+                target = v.seekable.end(v.seekable.length - 1) - 0.3;
+            }
+        } catch (e) { return false; }
+        if (target == null || !isFinite(target) || target <= 0) { return false; }
+        var lag = target - v.currentTime;
+        if (lag < 0.35) { return false; }
+        try {
+            v.currentTime = Math.max(0, target - 0.1);
+            if (!quiet) { toast('已跳到最新画面（追回 ' + lag.toFixed(1) + 's）', 'ok'); }
+            return true;
+        } catch (e) { return false; }
+    }
+
+    function currentLatency() {
+        if (state.hls && isFinite(state.hls.latency)) { return state.hls.latency; }
+        var v = $('previewVideo');
+        try {
+            if (v && v.seekable && v.seekable.length) {
+                return Math.max(0, v.seekable.end(v.seekable.length - 1) - v.currentTime);
+            }
+        } catch (e) { /* 原生 HLS 可能拿不到 seekable */ }
+        return null;
+    }
+
+    function updateLiveBadge() {
+        var el = $('liveBadge');
+        if (!el) { return; }
+        var txt = el.querySelector('span');
+        var lat = currentLatency();
+        if (!txt) { return; }
+        if (lat == null) {
+            el.className = 'live-badge idle';
+            txt.textContent = '直播';
+        } else {
+            el.className = 'live-badge' + (lat > 6 ? ' laggy' : '');
+            txt.textContent = '延迟 ' + lat.toFixed(1) + 's';
+        }
+    }
+
+    function startLiveBadge() {
+        stopLiveBadge();
+        updateLiveBadge();
+        state.liveBadgeTimer = setInterval(updateLiveBadge, 1000);
+    }
+
+    function stopLiveBadge() {
+        if (state.liveBadgeTimer) { clearInterval(state.liveBadgeTimer); state.liveBadgeTimer = null; }
+        var el = $('liveBadge');
+        if (el) {
+            el.className = 'live-badge idle';
+            var txt = el.querySelector('span');
+            if (txt) { txt.textContent = '直播'; }
+        }
     }
 
     /* 打开预览时拉取该设备的清晰度档位、当前配置、推荐云台格式与取流状态。 */
@@ -940,35 +1010,67 @@
             setPtzStatus('型号 ' + esc(c.model) + ' · 默认档位 ' + esc(c.modelDefault)
                 + ' · ' + esc(c.sessionHealthy ? '取流正常' : (c.streamState || '未取流'))
                 + ' · 推荐云台格式 ' + esc(c.recommendedMode || 'direction')
-                + '（MISS 不提供云台能力查询，是否可转动需实测）');
+                + '；点方向键后会自动追到最新画面。');
         } catch (e) {
             setPtzStatus('控制信息加载失败：' + e.message, 'warn');
         }
     }
 
+    /* 设备 0x113 应答由后端命令通道异步记录；这里延时回读，不阻塞按钮反馈。
+       连续点击时用 ptzSeq 让上一轮的轮询自动作废，避免旧结果覆盖新状态。 */
+    function pollMotorReply(did, seq, attempt) {
+        if (seq !== state.ptzSeq || state.previewDid !== did) { return; }
+        setTimeout(async function () {
+            if (seq !== state.ptzSeq || state.previewDid !== did) { return; }
+            try {
+                var c = await api('api/ptz/' + encodeURIComponent(did) + '/capabilities');
+                if (seq !== state.ptzSeq) { return; }
+                if (c.replyFresh && c.lastMotorReply) {
+                    setPtzStatus('设备已应答（命令被识别）：' + String(c.lastMotorReply).slice(0, 120), 'ok');
+                } else if (attempt < 2) {
+                    pollMotorReply(did, seq, attempt + 1);
+                } else {
+                    setPtzStatus('命令已发出、画面已追到最新；设备未返回 0x113 应答。'
+                        + '部分机型静默执行属正常，若画面未转动可切换云台格式重试。', 'warn');
+                }
+            } catch (e) { /* 查询失败不影响已发出的命令，保留「已发出」状态 */ }
+        }, attempt === 1 ? 450 : 900);
+    }
+
     /* 云台命令复用当前预览会话；没有会话时服务端返回 503，明确提示而不新建连接。
-       v1.2.0：把设备 0x113 应答直接显示在预览窗口，点击后不再「毫无反应」。 */
+       v1.2.1：服务端发完即返回（不再等 800ms 设备应答），点击瞬间就有反馈并立刻追帧；
+       设备应答改为异步回读，避免「画面已经在转、界面还在转圈」。 */
     async function ptzMove(direction) {
         var did = state.previewDid;
         if (!did) { toast('请先打开实时预览', 'err'); return; }
         var speed = parseInt($('ptzSpeed').value, 10) || 5;
         var mode = $('previewPtzMode').value || 'auto';
-        setPtzStatus('正在发送云台命令 ' + direction + '（' + mode + '）…');
+        var seq = ++state.ptzSeq;
+        var label = { left: '左', right: '右', up: '上', down: '下', stop: '停止' }[direction] || direction;
+
+        var key = $('ptzPad').querySelector('[data-dir="' + direction + '"]');
+        if (key) {
+            key.classList.add('fired');
+            setTimeout(function () { key.classList.remove('fired'); }, 180);
+        }
+        setPtzStatus('云台「' + label + '」已发出，正在同步最新画面…', 'ok');
+        // 立即丢弃滞后缓冲；1.2s 后再追一次，覆盖「追帧时新分片刚好还没生成」的情况
+        chaseLiveEdge(true);
+        setTimeout(function () { if (seq === state.ptzSeq) { chaseLiveEdge(true); } }, 1200);
+        updateLiveBadge();
+
         try {
             var r = await api('api/ptz/' + encodeURIComponent(did), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ direction: direction, speed: speed, mode: mode })
             });
+            if (seq !== state.ptzSeq) { return; }
             if (r.deviceReplied) {
                 setPtzStatus('设备已应答（' + r.effectiveMode + '）：'
-                    + String(r.deviceReply).slice(0, 160), 'ok');
-                toast('云台命令已执行', 'ok');
+                    + String(r.deviceReply).slice(0, 120), 'ok');
             } else {
-                setPtzStatus('命令已送达（' + r.effectiveMode
-                    + '），但设备未应答：该机型可能不带云台电机，或命令格式不被接受。'
-                    + '可在「云台格式」切换 operation / direction 后再点方向键试。', 'warn');
-                toast('命令已发送，设备未应答', 'err');
+                pollMotorReply(did, seq, 1);
             }
         } catch (e) {
             var msg = e.status === 503 ? '画面尚未就绪，请等待预览出图后再控制云台'
@@ -1397,15 +1499,16 @@
     /* 预览 hls.js（MSE）挂载：低延迟调优 + 令牌注入 + 致命错误恢复，返回 hls 实例 */
     function mountPreviewMse(video, url) {
         // 除 m3u8 内 URI 携带令牌外，所有 XHR 再注入 Authorization 头（双保险）
-        // 低延迟调优：同步点压到 1 个分片、超 2 个分片即追帧、收紧前后向缓冲（真机分片≈3.2s）
+        // v1.2.1 低延迟：同步点 1 个分片、落后 2 片即加速追帧、收紧前后向缓冲（真机分片≈3.2s）。
+        // 不把缓冲压到低于 2 个分片，避免弱网下频繁起播失败；真正的追帧由 chaseLiveEdge 主动触发。
         var hlsOpts = {
             liveSyncDurationCount: 1,
             liveMaxLatencyDurationCount: 2,
             lowLatencyMode: true,
-            maxLiveSyncPlaybackRate: 1.2,
-            backBufferLength: 30,
-            maxBufferLength: 10,
-            maxMaxBufferLength: 30,
+            maxLiveSyncPlaybackRate: 1.5,
+            backBufferLength: 15,
+            maxBufferLength: 8,
+            maxMaxBufferLength: 20,
             startPosition: -1,
             enableWorker: true
         };
@@ -1485,13 +1588,17 @@
         stopPreviewWatchdog();
         // getLatency/seekLive 闭包引用 state.hls，remount 后 state.hls 更新为新实例，回调始终读到当前会话
         state.previewWd = Watchdog.start(video, function () { remountPreview(video, url); }, {
+            // v1.2.1：原先 latencyLimitSec=15 才追帧，云台操作后要等十几秒才看到转动。
+            // 收紧到 6s（约 2 个分片）并加快检测，落后即主动追到直播边缘。
+            checkMs: 1000,
+            latencyLimitSec: 6,
+            seekConfirmMs: 3000,
             getLatency: function () {
-                return state.hls ? state.hls.latency : null;
+                // 原生 HLS 没有 hls.js 的 latency 语义，不参与墙钟延迟判定，避免误触发重挂载
+                return state.hls && isFinite(state.hls.latency) ? state.hls.latency : null;
             },
             seekLive: function () {
-                if (state.hls && isFinite(state.hls.liveSyncPosition)) {
-                    video.currentTime = state.hls.liveSyncPosition;
-                }
+                chaseLiveEdge(true);
             }
         });
         video.getWatchdogState = state.previewWd.getState; // 可观测性：便于 CDP 验收与运维排查
@@ -1569,6 +1676,7 @@
             // 长期运行看门狗：停滞/错误自动重新挂载（带退避），与首帧看门狗 previewWatch 相互独立
             startPreviewWatchdog(video, url);
         }
+        startLiveBadge();
     }
     function showPreviewHint(text) {
         var h = $('previewHint');
@@ -1579,10 +1687,12 @@
     }
     function stopPreviewOnly() {
         state.previewDid = null;
+        state.ptzSeq++;            // 作废在途的云台应答轮询
         $('previewModal').hidden = true;
         var video = $('previewVideo');
         if (state.previewWatch) { clearTimeout(state.previewWatch); state.previewWatch = null; }
         stopPreviewWatchdog();
+        stopLiveBadge();
         if (state.hls) { try { state.hls.destroy(); } catch (e) {} state.hls = null; }
         video.pause();
         video.removeAttribute('src');
@@ -1958,6 +2068,10 @@
         $('ptzPad').addEventListener('click', function (e) {
             var b = e.target.closest('button[data-dir]');
             if (b) ptzMove(b.getAttribute('data-dir'));
+        });
+        $('btnChaseLive').addEventListener('click', function () {
+            if (!chaseLiveEdge(false)) { toast('当前已是最新画面', 'ok'); }
+            updateLiveBadge();
         });
         $('previewQuality').addEventListener('change', function () {
             var did = state.previewDid;

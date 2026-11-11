@@ -126,11 +126,26 @@ body {
 .rec-table .acts .btn { margin-right: 6px; }
 .empty { padding: 40px; text-align: center; color: var(--muted); }
 
-/* 模态 */
-.modal-mask { position: fixed; inset: 0; background: rgba(15, 23, 42, .55); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 20px; }
+/* 模态 —— v1.2.1：飞牛应用全屏时 iframe 视口变矮，原先 align-items:center 会把超高弹窗
+   的顶部推到视口之外且无法滚动。改用 flex-start + margin-block:auto：空间够时居中，
+   空间不够时贴顶并可滚动，保证标题栏与底部按钮永远可见。 */
+.modal-mask { position: fixed; inset: 0; background: rgba(15, 23, 42, .55); display: flex;
+    align-items: flex-start; justify-content: center; z-index: 50; padding: 16px;
+    overflow-y: auto; overscroll-behavior: contain; }
 .modal-mask[hidden] { display: none; }
-.modal { background: var(--panel); border-radius: 14px; box-shadow: 0 20px 60px rgba(0,0,0,.35); width: 520px; max-width: 96vw; overflow: hidden; }
+.modal { background: var(--panel); border-radius: 14px; box-shadow: 0 20px 60px rgba(0,0,0,.35);
+    width: 520px; max-width: 96vw; max-height: calc(100dvh - 32px); margin-block: auto;
+    overflow-y: auto; }
 .modal-lg { width: 880px; }
+/* 预览弹窗：列式布局，视频区吃掉剩余高度，头/控制台/底部固定不参与压缩 */
+.modal-preview { width: min(1080px, 96vw); height: calc(100dvh - 40px);
+    max-height: calc(100dvh - 40px); display: flex; flex-direction: column;
+    overflow-y: auto; }
+.modal-preview .preview-head { flex: 0 0 auto; }
+.modal-preview .video-wrap { flex: 1 1 auto; min-height: 110px; aspect-ratio: auto; }
+.modal-preview .video-wrap video { position: absolute; inset: 0; }
+.modal-preview .ptz-console { flex: 0 0 auto; }
+.modal-preview .preview-foot { flex: 0 0 auto; }
 .modal-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--line); font-weight: 600; }
 .modal-x { border: none; background: none; font-size: 24px; line-height: 1; cursor: pointer; color: var(--muted); }
 .modal-x:hover { color: var(--ink); }
@@ -340,23 +355,88 @@ body {
 .q-state.bad { background: #fee2e2; color: #991b1b; }
 .q-empty { font-size: 13px; color: var(--muted); padding: 8px 0; }
 
-.ptz-bar { display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
-    padding: 10px 14px; border-top: 1px solid var(--line); background: #f8fafc; }
-.ptz-info { display: flex; flex-direction: column; min-width: 190px; flex: 1 1 190px; }
-.ptz-info b { font-size: 13px; }
-.ptz-pad { display: grid; grid-template-columns: repeat(3, 34px); grid-auto-rows: 34px; gap: 4px; }
-.ptz-pad button { padding: 0; font-size: 16px; line-height: 1;
-    display: flex; align-items: center; justify-content: center; }
-.ptz-pad .ptz-stop { font-size: 11px; }
-.ptz-speed { display: flex; align-items: center; gap: 6px; }
-.ptz-speed select { padding: 5px 8px; }
-/* 预览窗口整行状态：清晰度/取流状态、云台命令与设备应答 */
-.ptz-status { flex: 0 0 100%; border-top: 1px solid var(--border, #e2e8f0);
-    padding-top: 7px; line-height: 1.6; word-break: break-word; }
-.ptz-status.ok { color: #15803d; }
-.ptz-status.warn { color: #b45309; }
-@media (max-width: 640px) {
-    .ptz-bar { gap: 10px; }
-    .ptz-info { min-width: 100%; }
+/* ========== v1.2.1 预览控制区：深色控制台，与视频黑底衔接 ========== */
+.preview-head { background: #0d1524; color: #e2e8f0; border-bottom: 1px solid #1e293b;
+    justify-content: flex-start; gap: 12px; }
+.preview-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.preview-head .modal-x { color: #94a3b8; }
+.preview-head .modal-x:hover { color: #fff; }
+.live-badge { display: inline-flex; align-items: center; gap: 6px; flex: none;
+    font-size: 11px; color: #94a3b8; background: rgba(148, 163, 184, .10);
+    border: 1px solid rgba(148, 163, 184, .18); border-radius: 20px; padding: 3px 9px;
+    white-space: nowrap; font-variant-numeric: tabular-nums; }
+.live-badge i { width: 6px; height: 6px; border-radius: 50%; background: #10b981; box-shadow: 0 0 6px #10b981; }
+.live-badge.laggy { color: #fcd34d; border-color: rgba(245, 158, 11, .35); }
+.live-badge.laggy i { background: #f59e0b; box-shadow: 0 0 6px #f59e0b; }
+.live-badge.idle i { background: #64748b; box-shadow: none; }
+
+.ptz-console { display: flex; align-items: center; gap: 22px; padding: 13px 18px 12px;
+    background: linear-gradient(180deg, #111c2e, #0d1524); color: #e2e8f0;
+    border-top: 1px solid #1e293b; overflow-y: auto; max-height: 42dvh; }
+.ptz-pad-wrap { flex: 0 0 auto; }
+.ptz-label { font-size: 11px; color: #94a3b8; margin-bottom: 8px;
+    display: flex; align-items: baseline; gap: 8px; letter-spacing: .04em; }
+.ptz-label span { font-size: 10px; color: #64748b; letter-spacing: 0; }
+.ptz-pad { display: grid; grid-template-columns: repeat(3, 40px); grid-template-rows: repeat(3, 40px); gap: 5px; }
+.ptz-key { border: 1px solid rgba(148, 163, 184, .22); background: rgba(148, 163, 184, .08);
+    color: #cbd5e1; border-radius: 11px; cursor: pointer; padding: 0;
+    display: flex; align-items: center; justify-content: center;
+    transition: background .12s, border-color .12s, color .12s, transform .08s; }
+.ptz-key svg { width: 16px; height: 16px; fill: currentColor; }
+.ptz-key:hover { background: rgba(8, 145, 178, .24); border-color: var(--primary); color: #fff; }
+.ptz-key:active, .ptz-key.fired { transform: scale(.92); background: var(--primary); border-color: var(--primary); color: #fff;
+    box-shadow: 0 0 14px rgba(8, 145, 178, .45); }
+.ptz-key:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.ptz-key.k-up { grid-column: 2; grid-row: 1; }
+.ptz-key.k-left { grid-column: 1; grid-row: 2; }
+.ptz-key.k-stop { grid-column: 2; grid-row: 2; }
+.ptz-key.k-right { grid-column: 3; grid-row: 2; }
+.ptz-key.k-down { grid-column: 2; grid-row: 3; }
+.k-left svg { transform: rotate(-90deg); }
+.k-right svg { transform: rotate(90deg); }
+.k-down svg { transform: rotate(180deg); }
+.ptz-key.k-stop { flex-direction: column; gap: 1px; color: #fca5a5;
+    background: rgba(248, 113, 113, .10); border-color: rgba(248, 113, 113, .32); }
+.ptz-key.k-stop:hover { background: rgba(220, 38, 38, .30); border-color: var(--red); color: #fff; }
+.stop-glyph { font-size: 10px; line-height: 1; }
+.k-stop small { font-size: 9px; line-height: 1.1; }
+
+.ptz-controls { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.ptz-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.ptz-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.ptz-field > span { font-size: 11px; color: #94a3b8; }
+.ptz-field select { width: 100%; height: 32px; padding: 0 8px; font-size: 12px;
+    color: #e2e8f0; background: #0b1424; border: 1px solid rgba(148, 163, 184, .25);
+    border-radius: 8px; cursor: pointer; }
+.ptz-field select:focus { outline: none; border-color: var(--primary); }
+.ptz-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.btn.tiny.chase { background: rgba(8, 145, 178, .14); border-color: rgba(8, 145, 178, .5);
+    color: #67e8f9; padding: 5px 10px; }
+.btn.tiny.chase:hover { background: var(--primary); border-color: var(--primary); color: #fff; }
+.ptz-tip { font-size: 11px; color: #64748b; }
+.ptz-status { display: flex; align-items: flex-start; gap: 7px; min-height: 17px;
+    font-size: 11px; color: #94a3b8; line-height: 1.5; word-break: break-word; }
+.ptz-status::before { content: ''; width: 7px; height: 7px; border-radius: 50%;
+    background: #64748b; flex: none; margin-top: 4px; }
+.ptz-status.ok { color: #6ee7b7; }
+.ptz-status.ok::before { background: #10b981; box-shadow: 0 0 7px #10b981; }
+.ptz-status.warn { color: #fcd34d; }
+.ptz-status.warn::before { background: #f59e0b; box-shadow: 0 0 7px #f59e0b; }
+
+.preview-foot { padding: 10px 18px 12px; }
+.preview-foot .rtsp-line { margin-bottom: 6px; }
+.preview-foot .muted.small { font-size: 11px; line-height: 1.5; }
+
+@media (max-width: 760px) {
+    .ptz-console { flex-direction: column; align-items: stretch; gap: 12px; }
+    .ptz-pad-wrap { display: flex; align-items: center; gap: 16px; }
+    .ptz-label { flex-direction: column; align-items: flex-start; gap: 2px; margin-bottom: 0; }
+    .ptz-fields { gap: 6px; }
     .q-row { grid-template-columns: 1fr; }
+}
+@media (max-height: 620px) {
+    .ptz-console { padding: 8px 14px; gap: 14px; max-height: 38dvh; }
+    .ptz-pad { grid-template-columns: repeat(3, 34px); grid-template-rows: repeat(3, 34px); }
+    .ptz-label { margin-bottom: 4px; }
+    .preview-foot { padding: 6px 14px 8px; }
 }

@@ -1,5 +1,6 @@
 package com.invr.web.api;
 
+import com.invr.hub.MotorReply;
 import com.invr.hub.MotorResult;
 import com.invr.hub.StreamHub;
 import com.invr.miss.MissCommands;
@@ -98,8 +99,11 @@ public class PtzController {
             throw new ApiException(503,
                     "该摄像头当前没有可用的取流会话，请先打开实时预览或开始录像，再使用云台控制");
         }
-        log.info("云台命令 did={} dir={} mode={} 设备应答={}", did, direction, effective,
-                r.deviceReplied() ? r.deviceReply() : "（无应答）");
+        // v1.2.1：不等设备 0x113 应答，命令发出即返回。设备应答由命令通道排空线程异步
+        // 记录，前端在 ~400ms / ~1s 后通过 capabilities 轮询读取，点击到界面反馈不再有固定 800ms。
+        MotorReply snapshot = hub.motorReply(did);
+        boolean replied = snapshot.fresh();
+        log.debug("云台命令已即时返回 did={} dir={} mode={}（应答异步）", did, direction, effective);
 
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("ok", true);
@@ -109,11 +113,13 @@ public class PtzController {
         m.put("mode", requested);
         m.put("effectiveMode", effective);
         m.put("reusedSession", true);
-        m.put("deviceReply", r.deviceReply());
-        m.put("deviceReplied", r.deviceReplied());
-        m.put("hint", r.deviceReplied()
+        m.put("deviceReply", replied ? snapshot.reply() : null);
+        m.put("deviceReplied", replied);
+        m.put("replyPending", !replied);
+        m.put("sentAt", snapshot.commandAt());
+        m.put("hint", replied
                 ? "设备已返回云台应答，命令被识别"
-                : "命令已送达，但设备未应答：该机型可能不带云台电机，或命令格式不被接受（可切换 direction / operation 重试）");
+                : "命令已发出（无需等待设备应答）；若画面未转动可切换 direction / operation 重试");
         return m;
     }
 
@@ -141,7 +147,13 @@ public class PtzController {
         m.put("streamState", hub.isHealthy(did) ? "有画面"
                 : (hub.activeDids().contains(did) ? "连接中" : "未取流"));
         m.put("lanReachable", deviceProbe.reachable(did));
-        m.put("note", "MISS 协议不提供云台能力查询；固定镜头机型可能静默忽略命令。命令与设备应答均写入应用日志，预览窗口会直接显示设备是否应答。");
+        // v1.2.1：前端发完命令后延时轮询本接口，读取异步到达的 0x113 应答
+        MotorReply reply = hub.motorReply(did);
+        m.put("lastMotorReply", reply.reply());
+        m.put("lastMotorReplyAt", reply.replyAt());
+        m.put("lastMotorCommandAt", reply.commandAt());
+        m.put("replyFresh", reply.fresh());
+        m.put("note", "MISS 协议不提供云台能力查询；固定镜头机型可能静默忽略命令。命令与设备应答均写入应用日志，预览窗口会显示设备是否应答。");
         return m;
     }
 

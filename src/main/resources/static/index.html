@@ -7,7 +7,7 @@
     <base href="./">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230891b2'/%3E%3C/svg%3E">
     <title>iNvr · 小米摄像头 NVR</title>
-    <link rel="stylesheet" href="style.css?v=20">
+    <link rel="stylesheet" href="style.css?v=21">
 </head>
 <body>
 <header class="topbar">
@@ -349,61 +349,64 @@
     </section>
 </main>
 
-<!-- 实时预览模态 -->
+<!-- 实时预览模态：v1.2.1 深色控制台 + 视口内自适应，全屏不裁切 -->
 <div class="modal-mask" id="previewModal" hidden>
-    <div class="modal modal-lg">
-        <div class="modal-head">
-            <span id="previewTitle">实时预览</span>
-            <button class="modal-x" id="previewClose">×</button>
+    <div class="modal modal-lg modal-preview">
+        <div class="modal-head preview-head">
+            <span class="preview-title" id="previewTitle">实时预览</span>
+            <span class="live-badge" id="liveBadge" title="网页 HLS 相对摄像头的画面延迟"><i></i><span>直播</span></span>
+            <button class="modal-x" id="previewClose" aria-label="关闭预览">×</button>
         </div>
         <div class="video-wrap">
             <video id="previewVideo" muted autoplay playsinline controls></video>
             <div id="previewHint" class="video-hint" hidden></div>
             <div class="video-loading" id="previewLoading">正在连接摄像头，首次取流约需数秒…</div>
         </div>
-        <div class="ptz-bar">
-            <div class="ptz-info">
-                <b>画面控制</b>
-                <span class="muted small">清晰度切换会重建取流（短暂中断）；云台命令复用当前连接，不新增摄像头通道</span>
+        <div class="ptz-console">
+            <div class="ptz-pad-wrap">
+                <div class="ptz-label">云台方向 <span>点按转动</span></div>
+                <div class="ptz-pad" id="ptzPad">
+                    <button class="ptz-key k-up" data-dir="up" title="向上" aria-label="向上"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5.5 19 18.5H5Z"/></svg></button>
+                    <button class="ptz-key k-left" data-dir="left" title="向左" aria-label="向左"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5.5 19 18.5H5Z"/></svg></button>
+                    <button class="ptz-key k-stop" data-dir="stop" title="停止" aria-label="停止"><span class="stop-glyph">■</span><small>停止</small></button>
+                    <button class="ptz-key k-right" data-dir="right" title="向右" aria-label="向右"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5.5 19 18.5H5Z"/></svg></button>
+                    <button class="ptz-key k-down" data-dir="down" title="向下" aria-label="向下"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5.5 19 18.5H5Z"/></svg></button>
+                </div>
             </div>
-            <div class="ptz-pad" id="ptzPad">
-                <span></span><button class="btn tiny" data-dir="up" title="向上">↑</button><span></span>
-                <button class="btn tiny" data-dir="left" title="向左">←</button>
-                <button class="btn tiny ptz-stop" data-dir="stop" title="停止">■</button>
-                <button class="btn tiny" data-dir="right" title="向右">→</button>
-                <span></span><button class="btn tiny" data-dir="down" title="向下">↓</button><span></span>
+            <div class="ptz-controls">
+                <div class="ptz-fields">
+                    <label class="ptz-field"><span>清晰度</span>
+                        <select id="previewQuality"><option value="default">加载中…</option></select>
+                    </label>
+                    <label class="ptz-field"><span>速度</span>
+                        <select id="ptzSpeed">
+                            <option value="3">慢</option>
+                            <option value="5" selected>中</option>
+                            <option value="10">快</option>
+                        </select>
+                    </label>
+                    <label class="ptz-field"><span>云台格式</span>
+                        <select id="previewPtzMode">
+                            <option value="auto" selected>自动（按型号）</option>
+                            <option value="direction">direction（连续转动）</option>
+                            <option value="operation">operation（步进式）</option>
+                        </select>
+                    </label>
+                </div>
+                <div class="ptz-actions">
+                    <button class="btn tiny chase" id="btnChaseLive" type="button">同步到最新</button>
+                    <span class="ptz-tip">云台命令复用当前连接，不新增摄像头通道</span>
+                </div>
+                <div class="ptz-status muted small" id="ptzStatus">正在读取设备控制信息…</div>
             </div>
-            <div class="ptz-speed">
-                <label class="muted small" for="previewQuality">清晰度</label>
-                <select id="previewQuality">
-                    <option value="default">加载中…</option>
-                </select>
-            </div>
-            <div class="ptz-speed">
-                <label class="muted small" for="ptzSpeed">速度</label>
-                <select id="ptzSpeed">
-                    <option value="3">慢</option>
-                    <option value="5" selected>中</option>
-                    <option value="10">快</option>
-                </select>
-            </div>
-            <div class="ptz-speed">
-                <label class="muted small" for="previewPtzMode">云台格式</label>
-                <select id="previewPtzMode">
-                    <option value="auto" selected>自动（按型号）</option>
-                    <option value="direction">direction（连续转动）</option>
-                    <option value="operation">operation（步进式）</option>
-                </select>
-            </div>
-            <div class="ptz-status muted small" id="ptzStatus">正在读取设备控制信息…</div>
         </div>
-        <div class="modal-foot">
+        <div class="modal-foot preview-foot">
             <div class="rtsp-line">
                 <span class="muted">RTSP（VLC / ffplay 低延迟）：</span>
                 <code id="previewRtsp"></code>
                 <button class="btn tiny" id="btnCopyRtsp">复制</button>
             </div>
-            <div class="muted small" id="previewNote">网页预览为 HLS（H.265，约 2–4 秒延迟）；多端预览 / 录像 / RTSP 共用一条摄像头连接。</div>
+            <div class="muted small" id="previewNote">网页预览为 HLS（H.265，约 1 个分片延迟），云台操作会自动追到最新画面；多端预览 / 录像 / RTSP 共用一条摄像头连接。</div>
         </div>
     </div>
 </div>
@@ -487,7 +490,7 @@
 <div id="toast" class="toast"></div>
 
 <script src="vendor/hls.min.js"></script>
-<script src="watchdog.js?v=20"></script>
-<script src="app.js?v=20"></script>
+<script src="watchdog.js?v=21"></script>
+<script src="app.js?v=21"></script>
 </body>
 </html>

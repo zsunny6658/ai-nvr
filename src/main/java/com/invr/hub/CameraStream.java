@@ -359,6 +359,15 @@ public final class CameraStream {
         }
     }
 
+    /** 云台命令/应答的异步快照；当前会话不存在时返回空快照。 */
+    public MotorReply motorReply() {
+        MissClient c = current;
+        if (c == null) {
+            return MotorReply.none();
+        }
+        return new MotorReply(c.motorReply(), c.motorReplyAt(), c.motorCommandAt());
+    }
+
     /** 当前上游是否可用（有订阅者且已收到媒体包）。 */
     public boolean isHealthy() {
         return healthy && !subscriptions.isEmpty();

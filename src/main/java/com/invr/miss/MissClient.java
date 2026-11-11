@@ -30,6 +30,8 @@ public final class MissClient implements AutoCloseable {
     /** 最近一次云台命令的设备应答（0x113 明文），由命令通道排空线程写入。 */
     private volatile String lastMotorReply;
     private volatile long lastMotorReplyAt;
+    /** 最近一次云台命令的发出时刻，用于判断 0x113 是否是本次命令的应答。 */
+    private volatile long lastMotorCommandAt;
 
     private MissClient(Cs2Connection conn, byte[] sharedKey, String model) {
         this.conn = conn;
@@ -210,6 +212,11 @@ public final class MissClient implements AutoCloseable {
      *
      * <p>注意：协议本身不提供「设备是否带云台电机」的可靠查询，部分机型会静默忽略该命令。
      * 设备若有应答会由命令通道排空线程写入日志，可据此现场确认兼容性。</p>
+     *
+     * <p>v1.2.1：命令发出后立即返回，不再阻塞等待 0x113。此前每次点击都要等满 800ms
+     * 让前端拿到「设备是否应答」，即使设备已经转动，界面也要晚近 1 秒才有反应；而不回
+     * 0x113 的机型每次都要白等满 800ms。应答改由 {@link #motorReplyAt()} /
+     * {@link #motorCommandAt()} 异步查询，云端控制接口得以毫秒级返回。</p>
      */
     public String motor(String direction, int speed, String mode) throws IOException {
         String d = direction == null ? "stop" : direction.toLowerCase();
@@ -230,26 +237,28 @@ public final class MissClient implements AutoCloseable {
         byte[] outer = new byte[4 + jsonBytes.length];
         putBe32(outer, MissCommands.CMD_MOTOR_REQ);
         System.arraycopy(jsonBytes, 0, outer, 4, jsonBytes.length);
-        // 清空上一条应答，再等待设备回 0x113。没有应答时返回 null，由调用方
-        // 明确提示「命令已送达但设备不理」，而不是让界面沉默。
-        lastMotorReply = null;
-        lastMotorReplyAt = 0L;
+        // 只打时间戳、发命令，立刻返回。0x113 应答由命令通道排空线程异步写入，
+        // 前端可用 capabilities 接口读到「本次命令之后是否收到应答」。
+        lastMotorCommandAt = System.currentTimeMillis();
         writeEncrypted(outer);
         log.info("MISS 云台命令 0x112 已发送：{}（mode={}）", json,
                 "operation".equalsIgnoreCase(mode) ? "operation" : "direction");
-        long deadline = System.currentTimeMillis() + 800L;
-        while (lastMotorReply == null && System.currentTimeMillis() < deadline) {
-            try {
-                Thread.sleep(40L);
-            } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-                break;
-            }
-        }
-        if (lastMotorReply == null && lastMotorReplyAt == 0L) {
-            log.info("MISS 云台命令 0x112 未收到设备应答（机型无云台电机或命令格式不被接受）");
-        }
+        return null;
+    }
+
+    /** 最近一次 0x113 云台应答明文（可能为 null：设备不回应该命令）。 */
+    public String motorReply() {
         return lastMotorReply;
+    }
+
+    /** 最近一次 0x113 应答到达时刻（0 表示从未收到）。 */
+    public long motorReplyAt() {
+        return lastMotorReplyAt;
+    }
+
+    /** 最近一次 0x112 命令发出时刻（0 表示本会话尚未发过云台命令）。 */
+    public long motorCommandAt() {
+        return lastMotorCommandAt;
     }
 
     /** 写入大端 32 位命令字。 */
