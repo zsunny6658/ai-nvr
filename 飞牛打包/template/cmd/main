@@ -16,6 +16,10 @@ fi
 # fnOS 容器多为 C/POSIX，会把中文全部写成 '?'，排障时无法读日志。
 # 显式固定输出编码，且无论是否使用自定义 jvm.conf 都追加。
 JAVA_OPTS="${JAVA_OPTS} -Dfile.encoding=UTF-8 -Dsun.stdout.encoding=UTF-8 -Dsun.stderr.encoding=UTF-8 -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8"
+# 启动侧无损优化：显式启用 JRE 自带 CDS 档案（classes.jsa）加速类加载；固定熵源，
+# 避免容器内 /dev/random 熵不足阻塞 SecureRandom 初始化。二者都不改变应用行为，
+# 也不受 install_callback 重写 jvm.conf 影响（始终在最后追加）。
+JAVA_OPTS="${JAVA_OPTS} -Xshare:auto -Djava.security.egd=file:/dev/urandom"
 
 SPRING_ARGS="--spring.config.additional-location=file:${TRIM_PKGETC}/ --spring.profiles.active=fnos"
 mkdir -p "${LOG_DIR}"
@@ -62,12 +66,18 @@ case $1 in
     else
       nohup "${JAVA_BIN}" ${JAVA_OPTS} -jar "${APP_JAR}" ${SPRING_ARGS} > "${LOG_DIR}/app.log" 2>&1 &
     fi
-    sleep 1
-    # setsid 可能 fork，用真实 java pid 回写 pid 文件
-    for p in $(app_pids); do echo "$p" > "$PID_FILE"; done
-    sleep 2
-    chmod 666 "$SOCK_FILE" 2>/dev/null
-    pid=$(cat "$PID_FILE" | tr -d '[:space:]')
+    # 用短轮询替代固定 sleep 1 + sleep 2：setsid 可能 fork，进程一出现就回写真实 pid，
+    # UDS socket 一创建就修权限。冷启动不再白等 3 秒，慢盘场景上限仍各有数秒余量。
+    for i in $(seq 1 30); do
+      for p in $(app_pids); do echo "$p" > "$PID_FILE"; done
+      [ -s "$PID_FILE" ] && break
+      sleep 0.2
+    done
+    for i in $(seq 1 20); do
+      [ -S "$SOCK_FILE" ] && { chmod 666 "$SOCK_FILE" 2>/dev/null; break; }
+      sleep 0.2
+    done
+    pid=$(cat "$PID_FILE" 2>/dev/null | tr -d '[:space:]')
     if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
       echo "App failed to start. Check log: ${LOG_DIR}/app.log" > "${TRIM_TEMP_LOGFILE:-/dev/stderr}"
       exit 1
@@ -79,14 +89,14 @@ case $1 in
     # 超时也返回成功：java 已由 setsid 独立运行，不会被上层超时连带杀掉。
     CURL_BIN=$(command -v curl 2>/dev/null || echo /usr/bin/curl)
     READY_MAX=120
-    for i in $(seq 1 60); do
+    for i in $(seq 1 120); do
       if [ -S "$SOCK_FILE" ]; then
         chmod 666 "$SOCK_FILE" 2>/dev/null
         if [ ! -x "$CURL_BIN" ] || "$CURL_BIN" --unix-socket "$SOCK_FILE" -s -o /dev/null --max-time 2 "http://localhost${APP_PATH}" 2>/dev/null; then
           exit 0
         fi
       fi
-      sleep 2
+      sleep 1
     done
     echo "[main] app not ready within ${READY_MAX}s; java kept running, check app.log" >> "${LOG_DIR}/app.log"
     exit 0

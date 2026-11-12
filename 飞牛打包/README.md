@@ -40,7 +40,14 @@ service_port=8080                ← 你的 Spring Boot 端口
 
 > 如果要改默认 JVM 内存大小，打开 `template\cmd\install_callback`，修改里面的 512 和 128 这两个数字。
 
-### 第3步：双击运行
+### 第3步：先构建 fnOS 专用 jar，再双击运行
+
+> **iNVR 项目专用**：fpk 只认 `mvn clean package -Pfnos` 产出的
+> `target/invr-fnos.jar`（仅含 Linux x86_64 FFmpeg native）。
+> 默认的 `target/invr.jar` 是 Windows + Linux 双平台开发包，供本地 `java -jar` 调试，
+> 打进 fpk 会白白大 23 MiB，且启动时多解压一个永远用不到的 native 包。
+> macOS / Linux 侧执行 `bash make_fpk.sh`，同样要求先构建 `-Pfnos` 产物。
+> 两个打包脚本都会校验 jar 里是否残留 Windows native，防止误用。
 
 双击 **`build.bat`**，等它跑完。
 

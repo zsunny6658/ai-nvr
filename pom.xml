@@ -73,8 +73,9 @@
             <version>${netty.version}</version>
         </dependency>
 
-        <!-- 进程内 FFmpeg（MP4 录像流拷贝 / HLS 切片）；同时打包 Windows + Linux x86_64 两套 native，
-             一个 fat jar 双平台运行；JavaCPP 运行时按 os.name/os.arch 自动选择对应本地库，
+        <!-- 进程内 FFmpeg（MP4 录像流拷贝 / HLS 切片）。平台 native 由下方 profiles 提供：
+             默认构建 Windows + Linux x86_64 双平台（本地调试能力不变），
+             -Pfnos 只打 Linux x86_64 供 fpk 使用。JavaCPP 按 os.name/os.arch 自动选库，
              无需在目标系统安装 ffmpeg。如需 ARM 服务器，再追加 classifier=linux-arm64 即可。 -->
         <dependency>
             <groupId>org.bytedeco</groupId>
@@ -85,18 +86,6 @@
             <groupId>org.bytedeco</groupId>
             <artifactId>ffmpeg</artifactId>
             <version>${ffmpeg.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.bytedeco</groupId>
-            <artifactId>ffmpeg</artifactId>
-            <version>${ffmpeg.version}</version>
-            <classifier>windows-x86_64</classifier>
-        </dependency>
-        <dependency>
-            <groupId>org.bytedeco</groupId>
-            <artifactId>ffmpeg</artifactId>
-            <version>${ffmpeg.version}</version>
-            <classifier>linux-x86_64</classifier>
         </dependency>
 
         <!-- 日志：slf4j-simple（全项目统一） -->
@@ -178,4 +167,48 @@
             </plugin>
         </plugins>
     </build>
+
+    <!-- ===== 平台原生库分发 =====
+         desktop（默认）：Windows + Linux x86_64 双平台，保持历史 fat jar 能力，
+                          本地 Windows / macOS 可直接 java -jar 调试。
+         fnos（mvn package -Pfnos）：只含 Linux x86_64，产物 target/invr-fnos.jar。
+         fnOS 运行在 Linux x86_64，Windows 的 .dll 永远不会被 JavaCPP 加载；
+         去掉后 fat jar 小 23 MiB，且 requiresUnpack 启动时少解压一个 23 MiB 的
+         native 包（冷启动 / 升级后首次启动明显变快），功能完全不变。 -->
+    <profiles>
+        <profile>
+            <id>desktop</id>
+            <activation>
+                <activeByDefault>true</activeByDefault>
+            </activation>
+            <dependencies>
+                <dependency>
+                    <groupId>org.bytedeco</groupId>
+                    <artifactId>ffmpeg</artifactId>
+                    <version>${ffmpeg.version}</version>
+                    <classifier>windows-x86_64</classifier>
+                </dependency>
+                <dependency>
+                    <groupId>org.bytedeco</groupId>
+                    <artifactId>ffmpeg</artifactId>
+                    <version>${ffmpeg.version}</version>
+                    <classifier>linux-x86_64</classifier>
+                </dependency>
+            </dependencies>
+        </profile>
+        <profile>
+            <id>fnos</id>
+            <dependencies>
+                <dependency>
+                    <groupId>org.bytedeco</groupId>
+                    <artifactId>ffmpeg</artifactId>
+                    <version>${ffmpeg.version}</version>
+                    <classifier>linux-x86_64</classifier>
+                </dependency>
+            </dependencies>
+            <build>
+                <finalName>invr-fnos</finalName>
+            </build>
+        </profile>
+    </profiles>
 </project>

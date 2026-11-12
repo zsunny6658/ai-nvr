@@ -9,13 +9,21 @@ echo   fnOS FPK Packer (Native / JRE)
 echo ==========================================
 echo.
 
-if not exist "..\target\invr.jar" (
-    echo [ERROR] input\app.jar not found
-    echo Please put your Spring Boot jar to input\app.jar
+REM fpk 使用 -Pfnos 产出的 Linux-only jar（不含 Windows FFmpeg native）
+REM 默认 ..\target\invr.jar 仍是双平台开发包，本地调试能力不变
+if not exist "..\target\invr-fnos.jar" (
+    echo [ERROR] ..\target\invr-fnos.jar not found
+    echo Please run: mvn clean package -Pfnos
     pause
     exit /b 1
 )
-echo [OK] app.jar found
+powershell -NoProfile -Command "Add-Type -AssemblyName System.IO.Compression.FileSystem; $z = [IO.Compression.ZipFile]::OpenRead((Resolve-Path '..\target\invr-fnos.jar').Path); $bad = @($z.Entries | Where-Object { $_.FullName -match 'windows-x86_64' }).Count; $z.Dispose(); if ($bad -gt 0) { exit 1 }"
+if errorlevel 1 (
+    echo [ERROR] fnos jar still contains Windows FFmpeg native, rebuild with mvn -Pfnos
+    pause
+    exit /b 1
+)
+echo [OK] invr-fnos.jar found (Linux-only)
 
 if not exist "input\jre\bin\java" (
     echo [ERROR] input\jre\bin\java not found
@@ -34,8 +42,13 @@ xcopy "template\*" "build\" /E /I /Y /Q >nul
 
 echo [..] Copying JRE and jar...
 xcopy "input\jre\*" "build\app\jre\" /E /I /Y /Q >nul
-copy "..\target\invr.jar" "build\app\app.jar" >nul
+copy "..\target\invr-fnos.jar" "build\app\app.jar" >nul
 copy "template\manifest" "build\app\manifest" >nul
+
+REM 只删 fnOS 永不命中的 CDS 变体（堆 > 32GB 才用）；classes.jsa / classes_coh.jsa 保留以加速启动
+echo [..] Trimming unused CDS archives...
+if exist "build\app\jre\lib\server\classes_nocoops.jsa" del /q "build\app\jre\lib\server\classes_nocoops.jsa"
+if exist "build\app\jre\lib\server\classes_nocoops_coh.jsa" del /q "build\app\jre\lib\server\classes_nocoops_coh.jsa"
 
 echo [..] Syncing ui/config from manifest...
 powershell -NoProfile -Command "$m = Get-Content 'template\manifest'; $appName = ($m | Select-String '^appname=(.+)').Matches.Groups[1].Value.Trim(); $port = ($m | Select-String '^service_port=(.+)').Matches.Groups[1].Value.Trim(); $title = ($m | Select-String '^display_name=(.+)').Matches.Groups[1].Value.Trim(); $c = [IO.File]::ReadAllText('build\app\ui\config'); $c = $c.Replace('{{APP_NAME}}', $appName).Replace('{{SERVICE_PORT}}', $port).Replace('{{DISPLAY_NAME}}', $title); [IO.File]::WriteAllText('build\app\ui\config', $c)"

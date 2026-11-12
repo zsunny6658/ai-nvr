@@ -8,11 +8,23 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 REPO_ROOT="$(cd .. && pwd)"
-APP_JAR="${REPO_ROOT}/target/invr.jar"
+# fpk 用 -Pfnos 产出的 Linux-only jar：不含 Windows FFmpeg native（省 23 MiB，启动少解压一个包）。
+# 默认 target/invr.jar 仍是双平台，供本地 Windows / macOS 直接 java -jar 调试，能力不变。
+APP_JAR="${REPO_ROOT}/target/invr-fnos.jar"
 
 echo "==> 检查前置文件"
-[ -f "$APP_JAR" ] || { echo "[ERROR] 未找到 $APP_JAR，请先 mvn package"; exit 1; }
+[ -f "$APP_JAR" ] || {
+  echo "[ERROR] 未找到 $APP_JAR"
+  echo "        请先执行: mvn clean package -Pfnos"
+  echo "        （target/invr.jar 是双平台开发包，不用于 fpk）"
+  exit 1
+}
 [ -f input/jre/bin/java ] || { echo "[ERROR] 未找到 input/jre/bin/java（需 Linux x64 JRE）"; exit 1; }
+# 防回归：误用双平台 jar 会让 fpk 白白大 23 MiB、启动还多解压一个 native 包
+if command -v unzip >/dev/null 2>&1 && unzip -Z1 "$APP_JAR" | grep -q 'windows-x86_64'; then
+  echo "[ERROR] $APP_JAR 仍含 Windows FFmpeg native，请用 mvn clean package -Pfnos 重新构建"
+  exit 1
+fi
 
 # 从 manifest 解析占位符
 MANIFEST=template/manifest
@@ -35,6 +47,14 @@ mkdir -p build/app/jre
 cp -R input/jre/. build/app/jre/
 cp "$APP_JAR" build/app/app.jar
 cp template/manifest build/app/manifest
+
+echo "==> 精简 JRE（只删 fnOS 永不命中的 CDS 变体）"
+# Temurin JRE 自带 4 个 CDS 档案。classes_nocoops*.jsa 只在 -XX:-UseCompressedOops
+# （堆 > 32GB）时使用；本应用向导 Xmx 默认 512m，永不命中，删除省约 7.4 MiB。
+# classes.jsa / classes_coh.jsa 必须保留：-Xshare:auto 靠它们加速 JVM 启动。
+# legal/ 与 NOTICE 是许可证声明，保留不动。
+rm -f build/app/jre/lib/server/classes_nocoops.jsa \
+      build/app/jre/lib/server/classes_nocoops_coh.jsa 2>/dev/null || true
 
 echo "==> 同步 ui/config 占位符"
 sed -i '' -e "s/{{APP_NAME}}/$APP_NAME/g" \
