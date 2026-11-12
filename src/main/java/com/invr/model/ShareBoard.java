@@ -20,6 +20,8 @@ public class ShareBoard {
     public static final String LAYOUT_GRID9 = "grid9";
     /** 6 宫格（1+5，3×3 轨道上大格跨 2×2）。 */
     public static final String LAYOUT_GRID6 = "grid6";
+    /** 单画面（1×1）：供「外网可播链接」临时单摄像头分享使用，不出现在看板编辑布局选项中。 */
+    public static final String LAYOUT_SINGLE = "single";
 
     /** 看板主键（内部引用，不进共享 URL）。 */
     public String id;

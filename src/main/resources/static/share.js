@@ -21,6 +21,63 @@
 
     function full(path) { return ROOT + path; }
 
+    /* ===== v1.2.3 移动端 / 飞牛 App WebView：HEVC 兼容画面 =====
+       共享页外网打开时多在低配手机上，H.265 解码常不可用。浏览器能力探测为否时，
+       改走免鉴权的 /share/{token}/frame/{did} JPEG 连续帧，<img> 即可出画面。 */
+    function hevcSupported() {
+        try {
+            var codecs = ['hvc1.1.6.L93.B0', 'hev1.1.6.L93.B0', 'hvc1.1.6.L153.B0'];
+            var probe = document.createElement('video');
+            for (var i = 0; i < codecs.length; i++) {
+                var mime = 'video/mp4; codecs="' + codecs[i] + '"';
+                if (window.MediaSource && MediaSource.isTypeSupported && MediaSource.isTypeSupported(mime)) { return true; }
+                if (probe.canPlayType(mime)) { return true; }
+            }
+            return false;
+        } catch (e) { return false; }
+    }
+    function inlineVideo(v) {
+        v.muted = true; v.autoplay = true; v.playsInline = true;
+        v.setAttribute('playsinline', '');
+        v.setAttribute('webkit-playsinline', '');
+        v.setAttribute('x5-playsinline', '');
+        v.setAttribute('x5-video-player-type', 'h5');
+        v.setAttribute('x5-video-player-fullscreen', 'true');
+    }
+    function findFrameUrl(did) {
+        for (var i = 0; i < board.slots.length; i++) {
+            if (board.slots[i].did === did) { return board.slots[i].frameUrl || null; }
+        }
+        return null;
+    }
+    function startCompatImage(container, frameUrl) {
+        var img = document.createElement('img');
+        img.className = 'cell-compat';
+        img.alt = '实时画面（兼容模式）';
+        container.appendChild(img);
+        var tag = document.createElement('div');
+        tag.className = 'compat-tag';
+        tag.textContent = '兼容画面 · 低帧率 / 无声音';
+        container.appendChild(tag);
+        var n = 0, stopped = false;
+        img.onload = function () { /* 重置失败计数由服务端的下一帧自然恢复 */ };
+        function tick() {
+            if (stopped) { return; }
+            img.src = full(frameUrl) + '?_=' + Date.now() + '_' + (++n);
+        }
+        tick();
+        var timer = setInterval(tick, 450);
+        return {
+            stop: function () {
+                stopped = true;
+                clearInterval(timer);
+                img.onload = img.onerror = null;
+                img.remove();
+                tag.remove();
+            }
+        };
+    }
+
     /* ===================== 配置拉取 ===================== */
 
     async function fetchBoard() {
@@ -39,7 +96,9 @@
 
     function render(b) {
         var boardEl = document.getElementById('board');
-        boardEl.className = 'board' + (b.layout === 'grid4' ? ' layout-grid4' : '');
+        boardEl.className = 'board'
+            + (b.layout === 'grid4' ? ' layout-grid4' : '')
+            + (b.layout === 'single' ? ' layout-single' : '');
         boardEl.innerHTML = '';
         b.slots.forEach(function (s) {
             var cell = document.createElement('div');
@@ -83,17 +142,22 @@
         showPlaceholder(cell, '正在连接…', 'loading');
 
         var video = document.createElement('video');
-        video.muted = true;
-        video.autoplay = true;
-        video.playsInline = true;
+        inlineVideo(video);
         cell.appendChild(video);
 
         var rec = { slot: s.slot, did: s.did, cell: cell, video: video, hls: null,
-            hlsUrl: s.hlsUrl, online: s.online, empty: false };
+            hlsUrl: s.hlsUrl, frameUrl: s.frameUrl, online: s.online,
+            compat: null, empty: false };
         players.set(s.slot, rec);
 
         if (!s.online) {
             showPlaceholder(cell, '设备离线', 'offline');
+            return;
+        }
+        if (!hevcSupported() && s.frameUrl) {
+            clearPlaceholder(cell);
+            video.hidden = true;
+            rec.compat = startCompatImage(cell, s.frameUrl);
             return;
         }
         attachHls(rec);
@@ -146,6 +210,7 @@
 
     function destroyPlayer(rec) {
         stopWatchdog(rec);
+        if (rec.compat) { rec.compat.stop(); rec.compat = null; }
         if (rec.hls) {
             try { rec.hls.destroy(); } catch (e) { /* 忽略 */ }
         }
@@ -364,9 +429,7 @@
         layer.innerHTML = '';
 
         var video = document.createElement('video');
-        video.muted = true;
-        video.autoplay = true;
-        video.playsInline = true;
+        inlineVideo(video);
         layer.appendChild(video);
 
         var bar = document.createElement('div');
@@ -380,6 +443,14 @@
         bar.appendChild(name);
         layer.appendChild(bar);
 
+        var frameUrl = findFrameUrl(did);
+        if (!hevcSupported() && frameUrl) {
+            video.hidden = true;
+            var compat = startCompatImage(layer, frameUrl);
+            fullscreenRec = { did: did, video: video, hls: null, wd: null, compat: compat };
+            layer.hidden = false;
+            return;
+        }
         var src = findHlsUrl(did);
         var hls = null;
         var wd = null;
@@ -426,6 +497,7 @@
 
     function destroyFullscreen() {
         if (fullscreenRec) {
+            if (fullscreenRec.compat) { fullscreenRec.compat.stop(); }
             if (fullscreenRec.wd) { fullscreenRec.wd.stop(); }
             if (fullscreenRec.hls) {
                 try { fullscreenRec.hls.destroy(); } catch (e) { /* 忽略 */ }

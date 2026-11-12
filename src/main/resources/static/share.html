@@ -2,11 +2,12 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#000000">
     <title>共享看板</title>
     <style>
         /* 最小内联样式：资源加载前保持黑屏，避免白屏闪烁 */
-        html, body { margin: 0; padding: 0; height: 100%; background: #000; overflow: hidden; }
+        html, body { margin: 0; padding: 0; height: 100%; height: 100dvh; background: #000; overflow: hidden; }
         #boot { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
             color: #64748b; font-family: sans-serif; font-size: 15px; }
     </style>
@@ -34,7 +35,7 @@
 
     var link = document.createElement('link');
     link.rel = 'stylesheet';
-    link.href = root + 'share.css?v=18';
+    link.href = root + 'share.css?v=23';
     document.head.appendChild(link);
 
     function load(src) {
@@ -48,9 +49,9 @@
     }
 
     load('vendor/hls.min.js').then(function () {
-        return load('watchdog.js?v=17');
+        return load('watchdog.js?v=23');
     }).then(function () {
-        return load('share.js?v=17');
+        return load('share.js?v=23');
     }).catch(function () {
         document.getElementById('boot').textContent = '资源加载失败，将自动重试…';
         setTimeout(function () { location.reload(); }, 5000);

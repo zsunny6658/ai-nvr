@@ -21,6 +21,9 @@
         // v1.2.1：延迟徽标定时器 / 云台点击序号（避免旧的异步应答覆盖新状态）
         liveBadgeTimer: null,
         ptzSeq: 0,
+        // v1.2.3：兼容画面轮询 / 自动降级 / 外网临时链接
+        compatTimer: null, compatSeq: 0, compatFails: 0, forceCompat: false,
+        liveShare: null,
         // v1.2.2：录像文件页批量选择（name 集合 + 当前列表 name→size，用于显示选中容量）
         recSelected: new Set(),
         recRows: new Map(),
@@ -1114,8 +1117,13 @@
         var el = $('liveBadge');
         if (!el) { return; }
         var txt = el.querySelector('span');
-        var lat = currentLatency();
         if (!txt) { return; }
+        if (state.compatTimer) {
+            el.className = 'live-badge idle';
+            txt.textContent = '兼容画面';
+            return;
+        }
+        var lat = currentLatency();
         if (lat == null) {
             el.className = 'live-badge idle';
             txt.textContent = '直播';
@@ -1640,6 +1648,153 @@
         } catch (e) { return false; }
     }
 
+    /* ==================== v1.2.3 兼容画面模式 ====================
+       摄像头输出为 fMP4 + H.265，PC Edge/Safari 与部分手机可解；Android WebView / 飞牛 App
+       多数缺少 HEVC 解码，hls.js 会直接报 codec 不兼容黑屏。这里改用服务端解帧后的
+       JPEG 连续帧（/api/frame/{did}），只需 <img>，任何浏览器/WebView 都能出画面。
+       代价：低帧率、无声音、服务端需要软解一路；故仅在自动判定不支持或手动选择时启用。 */
+    function previewWantsCompat() {
+        var mode = $('previewMode') ? ($('previewMode').value || 'auto') : 'auto';
+        if (mode === 'compat') { return true; }
+        if (mode === 'hls') { return false; }
+        return state.forceCompat || !hevcDecodeSupported();
+    }
+
+    function stopCompatMode() {
+        state.compatSeq++;
+        if (state.compatTimer) { clearInterval(state.compatTimer); state.compatTimer = null; }
+        var img = $('compatFrame');
+        if (img) {
+            img.onload = null; img.onerror = null;
+            img.removeAttribute('src');
+            img.hidden = true;
+        }
+        if ($('compatBadge')) { $('compatBadge').hidden = true; }
+        var v = $('previewVideo');
+        if (v) { v.hidden = false; }
+    }
+
+    function startCompatMode(did) {
+        var img = $('compatFrame');
+        if (!img) { return; }
+        var seq = ++state.compatSeq;
+        var n = 0;
+        state.compatFails = 0;
+        img.hidden = false;
+        $('compatBadge').hidden = false;
+        $('previewVideo').hidden = true;
+        $('previewHint').hidden = true;
+        $('previewLoading').hidden = true;
+        img.onload = function () { state.compatFails = 0; };
+        img.onerror = function () {
+            state.compatFails++;
+            if (state.compatFails === 4 && state.compatSeq === seq) {
+                showPreviewHint('兼容画面取帧失败：请确认摄像头在线、米家账号已登录，稍后重试；'
+                    + '也可把「画面」切回 HLS 高清，或在局域网用下方 RTSP 地址播放。');
+            }
+        };
+        function tick() {
+            if (state.compatSeq !== seq || $('previewModal').hidden || state.previewDid !== did) { return; }
+            n++;
+            // 查询串同时携带门禁令牌与递增序号：绕开移动 WebView 对同 URL 图片的强缓存
+            var u = withToken('api/frame/' + encodeURIComponent(did))
+                + '&_=' + Date.now() + '_' + n;
+            img.src = u;
+        }
+        tick();
+        state.compatTimer = setInterval(tick, 450);
+        var badge = $('liveBadge');
+        if (badge) { badge.querySelector('span').textContent = '兼容画面'; }
+        setPtzStatus('兼容画面模式：以 JPEG 连续帧显示（约 2 帧/秒、无声音），不依赖浏览器 HEVC 解码；云台控制仍可用。');
+    }
+
+    /** HLS 播放失败且处于「自动」时，强制切一次兼容画面；手动 HLS 模式只给出提示。 */
+    function autoFallbackToCompat(msg) {
+        var mode = $('previewMode') ? ($('previewMode').value || 'auto') : 'auto';
+        if (mode === 'auto' && !state.forceCompat && state.previewDid) {
+            state.forceCompat = true;
+            state.recoveredOnce = false;
+            toast('H.265 无法播放，已切换到兼容画面', 'ok');
+            var c = findDevice(state.previewDid);
+            if (c) { applyPreviewPlayback(state.previewDid, withToken(c.hlsUrl)); }
+            return;
+        }
+        showPreviewHint(msg);
+    }
+
+    /* ==================== v1.2.3 外网可播链接 ====================
+       RTSP 是独立监听的 9554 TCP 端口，fnOS 网关只反代 HTTP；用公网域名访问时未做端口
+       映射必然连不上。改为生成一张临时单画面共享看板，链接走当前域名 + /share/{token}，
+       免登录、免端口映射，24 小时有效且可随时撤销。 */
+    function absUrl(path) {
+        try { return new URL(path, document.baseURI).href; } catch (e) { return path; }
+    }
+    function resetLiveShareUi() {
+        state.liveShare = null;
+        var box = $('previewShareUrl');
+        box.textContent = '未生成 · 走当前域名，无需 9554 端口映射';
+        box.className = 'share-url';
+        box.title = '';
+        $('btnCopyLiveLink').disabled = true;
+        $('btnRevokeLiveLink').hidden = true;
+    }
+    function showLiveShare(data) {
+        state.liveShare = data;
+        var box = $('previewShareUrl');
+        var url = absUrl(data.path);
+        box.textContent = url;
+        box.title = url;
+        box.className = 'share-url has-link';
+        $('btnCopyLiveLink').disabled = false;
+        $('btnRevokeLiveLink').hidden = false;
+    }
+    async function loadLiveShareStatus(did) {
+        try {
+            var r = await api('api/live-share/' + encodeURIComponent(did));
+            if (r && r.active && state.previewDid === did) { showLiveShare(r); }
+        } catch (e) { /* 无历史链接时接口返回 active:false，静默即可 */ }
+    }
+    async function genLiveShare(copyAfter) {
+        var did = state.previewDid;
+        if (!did) { toast('请先打开实时预览', 'err'); return; }
+        var btn = $('btnGenLiveLink');
+        btn.disabled = true;
+        try {
+            var r = await api('api/live-share/' + encodeURIComponent(did), { method: 'POST' });
+            if (state.previewDid !== did) { return; }
+            showLiveShare(r);
+            if (copyAfter) {
+                copyText(absUrl(r.path));
+                toast('外网可播链接已复制（24 小时有效）', 'ok');
+            } else {
+                toast('链接已生成，可复制后在外网打开', 'ok');
+            }
+        } catch (e) {
+            toast('生成链接失败：' + e.message, 'err');
+        } finally {
+            btn.disabled = false;
+        }
+    }
+    function copyLiveShare() {
+        if (state.liveShare) {
+            copyText(absUrl(state.liveShare.path));
+            toast('外网可播链接已复制', 'ok');
+        } else {
+            genLiveShare(true);
+        }
+    }
+    async function revokeLiveShare() {
+        if (!state.liveShare) { return; }
+        var id = state.liveShare.id;
+        try {
+            await api('api/live-share/' + encodeURIComponent(id), { method: 'DELETE' });
+            resetLiveShareUi();
+            toast('链接已撤销，立即失效', 'ok');
+        } catch (e) {
+            toast('撤销失败：' + e.message, 'err');
+        }
+    }
+
     /* 预览 hls.js（MSE）挂载：低延迟调优 + 令牌注入 + 致命错误恢复，返回 hls 实例 */
     function mountPreviewMse(video, url) {
         // 除 m3u8 内 URI 携带令牌外，所有 XHR 再注入 Authorization 头（双保险）
@@ -1677,8 +1832,8 @@
                 var codecFail = data.details === Hls.ErrorDetails.MANIFEST_INCOMPATIBLE_CODECS_ERROR ||
                     data.details === Hls.ErrorDetails.BUFFER_ADD_CODEC_ERROR;
                 if (codecFail) {
-                    showPreviewHint('当前浏览器无法解码 H.265(HEVC)。\nWindows 上的 Chrome / Edge 需安装「HEVC 视频扩展」且显卡支持硬解；macOS 可用 Safari。\n也可复制下方 RTSP 地址用 VLC 播放。');
-                    hls.destroy();
+                    try { hls.destroy(); } catch (e) {}
+                    autoFallbackToCompat('当前浏览器无法解码 H.265(HEVC)：Windows 上的 Chrome / Edge 需安装「HEVC 视频扩展」，局域网也可用下方 RTSP 地址在 VLC 播放。');
                 } else if (!state.recoveredOnce) {
                     state.recoveredOnce = true;
                     try { hls.recoverMediaError(); } catch (e) {
@@ -1756,6 +1911,8 @@
         var c = findDevice(did);
         if (!c) { toast('设备信息缺失', 'err'); return; }
         state.previewDid = did;
+        state.forceCompat = false;
+        state.recoveredOnce = false;
         $('previewTitle').textContent = '实时预览 · ' + c.name;
         $('previewRtsp').textContent = c.rtspUrl;
         $('previewModal').hidden = false;
@@ -1763,18 +1920,40 @@
         $('previewLoading').hidden = false;
         loadPreviewControls(did);
         var video = $('previewVideo');
+        video.hidden = false;
         video.style.visibility = 'visible';
-        state.recoveredOnce = false;
+        resetLiveShareUi();
+        loadLiveShareStatus(did);
+        applyPreviewPlayback(did, withToken(c.hlsUrl));
+        startLiveBadge();
+    }
+
+    /**
+     * 按当前「画面」选择重建播放：兼容画面（JPEG 帧）或 HLS（含诊断与看门狗）。
+     * 切换模式、自动降级时都走这里，保证两种通道不会同时占用播放器。
+     */
+    function applyPreviewPlayback(did, url) {
+        stopPreviewWatchdog();
+        stopCompatMode();
+        if (state.previewWatch) { clearTimeout(state.previewWatch); state.previewWatch = null; }
+        if (state.hls) { try { state.hls.destroy(); } catch (e) {} state.hls = null; }
+        var video = $('previewVideo');
+        try { video.pause(); video.removeAttribute('src'); video.load(); } catch (e) {}
+        video.hidden = false;
+        $('previewHint').hidden = true;
+        $('previewLoading').hidden = false;
+
+        if (previewWantsCompat()) {
+            startCompatMode(did);
+            return;
+        }
 
         var clearWatch = function () {
             if (state.previewWatch) { clearTimeout(state.previewWatch); state.previewWatch = null; }
         };
-        // 媒体 URL 追加令牌查询参数（原生 HLS 子资源由服务端 m3u8 注入令牌，此处先覆盖 m3u8 本身）
-        var url = withToken(c.hlsUrl);
         var diagnosed = false;
 
-        /* 首帧失败时先分辨「服务端没取到流」与「浏览器解不了 HEVC」，不再一律归因为解码问题。
-           主动探一次播放列表：非 2xx 说明取流/首片未就绪；2xx 但无画面再看客户端解码能力。 */
+        /* 首帧失败时先分辨「服务端没取到流」与「浏览器解不了 HEVC」，不再一律归因为解码问题。 */
         function diagnoseFirstFrame(reason) {
             if (diagnosed) return;
             diagnosed = true;
@@ -1784,24 +1963,31 @@
                 if (!r.ok) {
                     lines.push('播放列表返回 HTTP ' + r.status + '：取流或首片尚未就绪。请确认摄像头在线、稍后重试。');
                 } else if (!hevcDecodeSupported()) {
-                    lines.push('播放列表正常，但本机缺少 H.265(HEVC) 解码支持：Windows 上的 Chrome / Edge 需安装「HEVC 视频扩展」且显卡支持硬解，macOS 可改用 Safari。');
+                    lines.push('播放列表正常，但本机缺少 H.265(HEVC) 解码支持；可把顶栏「画面」切到「兼容画面」。');
                 } else {
-                    lines.push('播放列表正常且浏览器声明支持 HEVC，仍无画面：可能是码流参数集或分片异常，请刷新重试或查看应用日志。');
+                    lines.push('播放列表正常且浏览器声明支持 HEVC，仍无画面：可能是码流参数集或分片异常，请刷新重试。');
                 }
-                lines.push('也可复制下方 RTSP 地址用 VLC 播放。');
+                lines.push('局域网也可用下方 RTSP 地址在 VLC 播放。');
                 showPreviewHint(lines.join('\n'));
             }).catch(function () {
-                showPreviewHint('预览' + reason + '，且播放列表请求失败（网络或登录态失效）。请刷新页面重新登录，或用下方 RTSP 地址在 VLC 播放。');
+                showPreviewHint('预览' + reason + '，且播放列表请求失败（网络或登录态失效）。请刷新页面重新登录。');
             });
         }
 
-        // 看门狗：预热攒片（最多约15s）+ 首片加载后，26s 内仍未解码出画面则给出分类诊断
+        // 看门狗：预热攒片 + 首片加载后，26s 内仍未解码出画面则分类诊断或自动降级
         clearWatch();
         state.previewWatch = setTimeout(function () {
             state.previewWatch = null;
             if ($('previewModal').hidden) return;
             if (!video.videoWidth || video.readyState < 2) {
                 if (state.hls) { try { state.hls.destroy(); } catch (e) {} state.hls = null; }
+                // v1.2.3：自动模式下首帧迟迟不出，也降级到兼容画面（只降一次，避免来回抖动）
+                if (($('previewMode').value || 'auto') === 'auto' && !state.forceCompat) {
+                    state.forceCompat = true;
+                    toast('HLS 迟迟未出画面，已切换到兼容画面', 'ok');
+                    applyPreviewPlayback(did, url);
+                    return;
+                }
                 diagnoseFirstFrame('超时未出画面');
             }
         }, 26000);
@@ -1810,18 +1996,17 @@
         video.addEventListener('error', function () {
             if (!$('previewModal').hidden && !video.videoWidth) diagnoseFirstFrame('播放出错');
         }, { once: true });
-        if (state.hls) { try { state.hls.destroy(); } catch (e) {} state.hls = null; }
 
-        // 按浏览器能力选择路径：Chromium 优先 hls.js(MSE)，原生降级；不支持则明确提示
+        // 按浏览器能力选择路径：Chromium 优先 hls.js(MSE)，原生降级；不支持则自动切兼容画面
         var mountResult = mountPreviewPlayer(video, url);
         if (mountResult === undefined) {
-            showPreviewHint('当前浏览器不支持 HLS 播放，请复制下方 RTSP 地址用 VLC 播放。');
+            autoFallbackToCompat('当前浏览器不支持 HLS 播放，请把顶栏「画面」切到「兼容画面」；局域网也可用下方 RTSP 地址在 VLC 播放。');
         } else {
-            // 长期运行看门狗：停滞/错误自动重新挂载（带退避），与首帧看门狗 previewWatch 相互独立
+            // 长期运行看门狗：停滞/错误自动重新挂载（带退避），与首帧看门狗相互独立
             startPreviewWatchdog(video, url);
         }
-        startLiveBadge();
     }
+
     function showPreviewHint(text) {
         var h = $('previewHint');
         h.hidden = false;
@@ -1831,6 +2016,9 @@
     }
     function stopPreviewOnly() {
         state.previewDid = null;
+        state.forceCompat = false;
+        stopCompatMode();
+        resetLiveShareUi();
         state.ptzSeq++;            // 作废在途的云台应答轮询
         $('previewModal').hidden = true;
         var video = $('previewVideo');
@@ -2378,6 +2566,21 @@
         $('previewModal').addEventListener('click', function (e) { if (e.target === this) closePreview(); });
         $('playerModal').addEventListener('click', function (e) { if (e.target === this) closePlayer(); });
         $('btnCopyRtsp').addEventListener('click', function () { copyText($('previewRtsp').textContent); });
+        // v1.2.3：外网可播链接 + 画面模式切换 + 移动 WebView 起播兜底
+        $('btnGenLiveLink').addEventListener('click', function () { genLiveShare(false); });
+        $('btnCopyLiveLink').addEventListener('click', copyLiveShare);
+        $('btnRevokeLiveLink').addEventListener('click', revokeLiveShare);
+        $('previewMode').addEventListener('change', function () {
+            state.forceCompat = false;
+            var did = state.previewDid;
+            if (!did) { return; }
+            var c = findDevice(did);
+            if (c) { applyPreviewPlayback(did, withToken(c.hlsUrl)); }
+        });
+        $('previewModal').addEventListener('pointerdown', function () {
+            var v = $('previewVideo');
+            if (v && !v.hidden && v.paused) { v.play().catch(function () {}); }
+        }, { passive: true });
 
         var pv = $('previewVideo');
         pv.addEventListener('playing', function () { $('previewLoading').hidden = true; });

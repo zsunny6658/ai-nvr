@@ -200,6 +200,7 @@ public class ShareBoardService {
     /** 布局类型 → 槽位数；非法布局返回 empty。 */
     public static java.util.Optional<Integer> slotCount(String layout) {
         return switch (layout) {
+            case ShareBoard.LAYOUT_SINGLE -> java.util.Optional.of(1);
             case ShareBoard.LAYOUT_GRID4 -> java.util.Optional.of(4);
             case ShareBoard.LAYOUT_GRID6 -> java.util.Optional.of(6);
             case ShareBoard.LAYOUT_GRID9 -> java.util.Optional.of(9);

@@ -81,10 +81,13 @@ body {
 .small { font-size: 12px; }
 
 /* Tabs */
-.tabs { display: flex; gap: 4px; margin-bottom: 18px; border-bottom: 1px solid var(--line); }
+.tabs { display: flex; gap: 4px; margin-bottom: 18px; border-bottom: 1px solid var(--line);
+    overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+.tabs::-webkit-scrollbar { display: none; }
 .tab {
     border: none; background: none; padding: 10px 18px; cursor: pointer; font-size: 14px;
     color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px;
+    flex: none; white-space: nowrap;
 }
 .tab.active { color: var(--primary-d); border-bottom-color: var(--primary); font-weight: 600; }
 .section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
@@ -116,7 +119,8 @@ body {
 .cam-actions .btn { flex: 1; }
 
 /* 录像表 */
-.table-wrap { background: var(--panel); border-radius: 12px; box-shadow: var(--shadow); overflow: hidden; }
+.table-wrap { background: var(--panel); border-radius: 12px; box-shadow: var(--shadow);
+    overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .rec-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .rec-table th, .rec-table td { text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--line); }
 .rec-table th { background: #f8fafc; color: #475569; font-weight: 600; font-size: 12px; }
@@ -455,4 +459,116 @@ body {
     .ptz-pad { grid-template-columns: repeat(3, 34px); grid-template-rows: repeat(3, 34px); }
     .ptz-label { margin-bottom: 4px; }
     .preview-foot { padding: 6px 14px 8px; }
+}
+
+/* ==================== v1.2.3 移动端 / 飞牛 App WebView 双端适配 ==================== */
+/* 安全区：iOS WKWebView 齐刘海与底部工具栏不遮挡操作区；不支持 env() 的内核退回常量 */
+.topbar { padding-left: max(20px, env(safe-area-inset-left, 0px));
+    padding-right: max(20px, env(safe-area-inset-right, 0px)); }
+.container { padding-bottom: calc(60px + env(safe-area-inset-bottom, 0px)); }
+.modal-mask { padding-bottom: max(16px, env(safe-area-inset-bottom, 0px)); }
+.toast { bottom: calc(32px + env(safe-area-inset-bottom, 0px)); }
+
+/* 预览顶栏：画面模式切换（自动 / HLS 高清 / 兼容画面） */
+.mode-pick { display: inline-flex; align-items: center; gap: 5px; flex: none;
+    font-size: 11px; font-weight: 400; color: #94a3b8; }
+.mode-pick select { height: 28px; padding: 0 6px; font-size: 11px; cursor: pointer;
+    color: #e2e8f0; background: #0b1424;
+    border: 1px solid rgba(148, 163, 184, .25); border-radius: 7px; }
+.mode-pick select:focus { outline: none; border-color: var(--primary); }
+
+/* 兼容画面：JPEG 连续帧用 <img> 显示，绕开 H.265 解码限制 */
+.compat-frame { position: absolute; inset: 0; width: 100%; height: 100%;
+    object-fit: contain; background: #000; }
+.compat-badge { position: absolute; top: 10px; left: 10px; z-index: 2;
+    font-size: 11px; padding: 4px 10px; border-radius: 999px; pointer-events: none;
+    color: #e2e8f0; background: rgba(15, 23, 42, .78);
+    border: 1px solid rgba(148, 163, 184, .3); }
+
+/* 外网可播链接行（主推），RTSP 降为仅局域网的次要项 */
+.preview-foot .share-line { display: flex; align-items: center; gap: 8px;
+    flex-wrap: wrap; margin-bottom: 8px; }
+.share-line > .muted { font-size: 12px; flex: none; }
+.share-url { flex: 1 1 240px; min-width: 0; background: #f1f5f9; padding: 4px 8px;
+    border-radius: 6px; font-size: 11px; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; }
+.share-url.has-link { background: #ecfeff; color: var(--primary-d); }
+
+@media (max-width: 640px) {
+    .topbar { height: auto; min-height: 52px; padding: 7px 12px; gap: 6px; flex-wrap: wrap; }
+    .brand-sub { display: none; }
+    .top-right { gap: 6px; flex-wrap: wrap; }
+    .top-right .btn { padding: 6px 9px; font-size: 12px; }
+    .user-chip { display: none; }
+    .container { padding: 14px 12px calc(40px + env(safe-area-inset-bottom, 0px)); }
+    .tabs { margin-bottom: 12px; }
+    .tab { padding: 9px 12px; font-size: 13px; }
+    .grid { grid-template-columns: 1fr; gap: 12px; }
+    .section-head { flex-wrap: wrap; gap: 8px; }
+    .section-head > div { flex-wrap: wrap; }
+    .rec-table { min-width: 620px; }
+    .modal-mask { padding: 0; }
+    .modal-preview { width: 100vw; max-width: 100vw; height: 100dvh;
+        max-height: 100dvh; border-radius: 0; }
+    .preview-head { padding: 10px 12px; gap: 8px; }
+    .mode-pick > span { display: none; }
+    .ptz-console { padding: 10px 12px; max-height: 46dvh; }
+    .ptz-pad-wrap { justify-content: center; }
+    .ptz-pad { grid-template-columns: repeat(3, 44px); grid-template-rows: repeat(3, 44px); }
+    .ptz-fields { grid-template-columns: 1fr 1fr; }
+    .ptz-field:last-child { grid-column: 1 / -1; }
+    .ptz-tip { display: none; }
+    .preview-foot { padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0px)); }
+    .share-line > .muted, .share-url,
+    .rtsp-line > .muted, .rtsp-line code { flex-basis: 100%; }
+    .rtsp-line code { min-width: 0; }
+    .pb-bar { gap: 6px; }
+    .toast { bottom: calc(16px + env(safe-area-inset-bottom, 0px)); max-width: 92vw; }
+    .toast-item { font-size: 12px; padding: 8px 12px; }
+}
+@media (max-width: 380px) {
+    .ptz-fields { grid-template-columns: 1fr; }
+    .ptz-field:last-child { grid-column: auto; }
+    .live-badge { display: none; }
+}
+/* 触屏设备：去掉点击延迟与蓝色高亮，方向键按下即时反馈 */
+@media (hover: none) {
+    .ptz-key, .btn, .tab, select { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+    .ptz-key { -webkit-user-select: none; user-select: none; }
+}
+
+/* ===== v1.2.3 窄屏二次收紧：底部只留两行，把高度还给画面 =====
+   实测 500px 宽竖屏下，链接行 / RTSP 行 / 长说明把视频区压到 110px，
+   且说明文字溢出需滚动。这里用 order 把按钮与标签排一行、地址各占一行，
+   窄屏收起长说明（关键信息已在链接占位文案里），并给画面区 26dvh 下限。 */
+@media (max-width: 640px) {
+    .modal-preview .video-wrap { min-height: 26dvh; }
+    .ptz-console { max-height: 32dvh; }
+    .preview-foot { padding-top: 6px; }
+    .share-line > .muted, .rtsp-line > .muted { flex-basis: auto; }
+    .share-line > .muted { order: 0; }
+    #btnGenLiveLink { order: 1; }
+    #btnCopyLiveLink { order: 2; }
+    #btnRevokeLiveLink { order: 3; }
+    .share-url { order: 4; flex-basis: 100%; }
+    .rtsp-line > .muted { order: 0; }
+    #btnCopyRtsp { order: 1; }
+    #previewRtsp { order: 2; flex-basis: 100%; min-width: 0; }
+    .preview-foot #previewNote { display: none; }
+    .ptz-status { font-size: 10px; }
+}
+
+/* ===== v1.2.3 窄屏三次收紧：控制台改为左右并排，三个下拉无需滚动 =====
+   实测窄屏纵向堆叠时 max-height 裁掉了「云台格式」。方向盘 142px 与参数区并排后
+   控制台自然高度约 210px，低于 34dvh 上限，画面区还能再大一点。 */
+@media (max-width: 640px) {
+    .ptz-console { flex-direction: row; align-items: flex-start; gap: 10px; max-height: 34dvh; }
+    .ptz-pad-wrap { display: flex; flex-direction: column; align-items: center; gap: 0; flex: 0 0 auto; }
+    .ptz-label { display: none; }
+    .ptz-controls { min-width: 0; gap: 6px; }
+    .ptz-fields { grid-template-columns: 1fr; gap: 5px; }
+    .ptz-field > span { font-size: 10px; }
+    .ptz-field select { height: 28px; }
+    .ptz-actions { gap: 6px; }
+    .ptz-status { font-size: 10px; min-height: 0; }
 }

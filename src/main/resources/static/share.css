@@ -44,7 +44,7 @@ html, body {
 
 /* 槽位标题覆盖层：置于右下角，避开左上角摄像头 OSD 时间 */
 .cell-bar {
-    position: absolute;
+    position: absolute; z-index: 4;
     bottom: 8px; right: 8px;
     max-width: calc(100% - 16px);
     padding: 5px 10px;
@@ -116,3 +116,20 @@ html, body {
 }
 .notice[hidden] { display: none; }
 .notice.info { background: rgba(8, 145, 178, .92); }
+
+/* ============ v1.2.3 单画面临时分享 + 移动端兼容画面 ============ */
+.board.layout-single { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+/* 兼容画面：<img> 连续帧，任何浏览器/WebView 都能显示，不依赖 HEVC 解码 */
+.cell .cell-compat, .fullscreen-layer .cell-compat {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    object-fit: contain; background: #000; }
+.cell video[hidden], .fullscreen-layer video[hidden] { display: none; }
+.compat-tag { position: absolute; top: 10px; left: 10px; z-index: 3;
+    font-size: 11px; padding: 4px 10px; border-radius: 999px; pointer-events: none;
+    color: #e2e8f0; background: rgba(15, 23, 42, .78);
+    border: 1px solid rgba(148, 163, 184, .3); }
+@media (max-width: 640px) {
+    .cell-bar { bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+        right: calc(8px + env(safe-area-inset-right, 0px)); font-size: 12px; }
+    .notice { padding: 8px 12px; font-size: 12px; }
+}

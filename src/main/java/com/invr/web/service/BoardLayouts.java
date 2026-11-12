@@ -17,6 +17,7 @@ public final class BoardLayouts {
 
     public static List<BoardSlot> slots(String layout) {
         return switch (layout) {
+            case ShareBoard.LAYOUT_SINGLE -> List.of(new BoardSlot("1", 1, 1, 1, 1));
             case ShareBoard.LAYOUT_GRID4 -> List.of(
                     new BoardSlot("1", 1, 1, 1, 1),
                     new BoardSlot("2", 2, 1, 1, 1),

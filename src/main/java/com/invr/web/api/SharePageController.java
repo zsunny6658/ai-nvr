@@ -96,6 +96,8 @@ public class SharePageController {
                 m.put("online", cam != null && cam.online());
                 // 相对站点根的路径，前端基于 document.baseURI 解析，兼容网关前缀
                 m.put("hlsUrl", "share/" + token + "/hls/" + did + "/index.m3u8");
+                // 兼容画面模式：浏览器解不了 HEVC 时改走 JPEG 帧轮询，同样免鉴权、同源
+                m.put("frameUrl", "share/" + token + "/frame/" + did);
             }
             slots.add(m);
         }
