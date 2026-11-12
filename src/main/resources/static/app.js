@@ -16,6 +16,8 @@
         hls: null,
         previewDid: null,
         pollTimer: null,
+        // v1.2.7：首页概览 30 秒刷新
+        dashTimer: null,
         gateTimer: null,
         recoveredOnce: false,
         // v1.2.1：延迟徽标定时器 / 云台点击序号（避免旧的异步应答覆盖新状态）
@@ -124,6 +126,7 @@
     /* ---------- 视图切换 ---------- */
     function stopPoll() {
         if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer = null; }
+        if (state.dashTimer) { clearInterval(state.dashTimer); state.dashTimer = null; }
     }
     function hideAll() {
         $('loginView').hidden = true;
@@ -179,7 +182,10 @@
         loadDevices(true);
         loadRecordings();
         loadBoards();
+        loadDashboard();
         state.pollTimer = setInterval(function () { loadDevices(false); }, 5000);
+        // 概览含录像目录扫描，30 秒一次即可，不跟着 5 秒设备轮询走
+        state.dashTimer = setInterval(loadDashboard, 30000);
     }
 
     /* ---------- 访问密码门禁路由 ---------- */
@@ -391,6 +397,103 @@
         if (v) { copyText(v); }
     }
 
+    /* ---------- v1.2.7 首页概览（/api/dashboard，30 秒刷新） ---------- */
+    function statSet(numId, subId, value, sub, cls) {
+        var n = $(numId), s = $(subId);
+        if (n) { n.textContent = value; }
+        if (s) { s.textContent = sub || ''; }
+        var card = n ? n.parentNode : null;
+        if (card && card.classList) {
+            card.classList.remove('ok', 'warn', 'danger');
+            if (cls) { card.classList.add(cls); }
+        }
+    }
+
+    async function loadDashboard() {
+        try {
+            var d = await api('api/dashboard');
+            var dev = d.devices || {}, ev = d.events || {}, rec = d.recordings || {},
+                st = d.streams || {}, mo = d.motion || {};
+            statSet('dsDevTotal', 'dsDevSub', dev.total == null ? '-' : dev.total,
+                (dev.recording || 0) + ' 路录像中');
+            statSet('dsOnline', 'dsOnlineSub', dev.online == null ? '-' : dev.online,
+                (dev.offline || 0) + ' 台离线', dev.offline ? 'warn' : 'ok');
+            statSet('dsToday', 'dsTodaySub', ev.today == null ? 0 : ev.today,
+                mo.enabled ? '运动侦测已开启' : '运动侦测未开启');
+            statSet('dsUnhandled', 'dsUnhandledSub', ev.unhandled == null ? 0 : ev.unhandled,
+                '累计 ' + (ev.total || 0) + ' 条', ev.unhandled ? 'warn' : 'ok');
+            statSet('dsRecFiles', 'dsRecSub', rec.files == null ? 0 : rec.files,
+                fmtSize(rec.bytes));
+            statSet('dsStreams', 'dsStreamsSub', st.activeUpstreams == null ? 0 : st.activeUpstreams,
+                (st.activeFrameSources || 0) + ' 路兼容帧');
+        } catch (e) {
+            // 概览失败不打断主流程（门禁失效由 api() 统一处理）
+        }
+    }
+
+    /* ---------- v1.2.7 设备自检 ---------- */
+    function probeRow(label, value) {
+        return '<div><span>' + esc(label) + '</span><b>' + esc(value) + '</b></div>';
+    }
+
+    async function runProbe(did, deep) {
+        var card = $('deviceGrid').querySelector('.cam-card[data-did="' + CSS.escape(did) + '"]');
+        if (!card) { return; }
+        var box = card.querySelector('.probe-box');
+        if (!box) {
+            box = document.createElement('div');
+            box.className = 'probe-box';
+            card.appendChild(box);
+        }
+        box.classList.remove('err');
+        box.innerHTML = '<div class="probe-hint">正在自检' +
+            (deep ? '（深度探测会短暂拉起取流，最多 8 秒）' : '') + '…</div>';
+        var mainBtn = card.querySelector('.cam-actions button[data-act="probe"]');
+        if (mainBtn) { mainBtn.disabled = true; }
+        try {
+            var p = await api('api/devices/' + encodeURIComponent(did) + '/probe' + (deep ? '?deep=true' : ''));
+            var s = p.stream || {}, m = p.media || {}, mo = p.motion || {};
+            var rows = '';
+            rows += probeRow('设备状态', p.online ? '在线' : '离线');
+            rows += probeRow('取流会话', s.active ? (s.healthy ? '健康' : '异常') : '未建立');
+            rows += probeRow('当前订阅者', s.subscribers == null ? '-' : s.subscribers);
+            rows += probeRow('最近一帧', s.lastFrameAgeMs < 0 ? '从未收到'
+                : (s.lastFrameAgeMs / 1000).toFixed(1) + ' 秒前');
+            rows += probeRow('清晰度设置', p.quality || 'auto');
+            rows += probeRow('云台格式', p.ptzMode || 'direction');
+            rows += probeRow('录像 / 预览', (p.recording ? '录像中' : '未录像') + ' / '
+                + (p.previewing ? '预览中' : '未预览'));
+            rows += probeRow('运动侦测', mo.enabled ? (mo.watched ? '已启用·含本设备' : '已启用·不含本设备') : '未启用');
+            rows += probeRow('重连代数', s.generation == null ? '-' : s.generation);
+            if (deep) {
+                rows += probeRow('视频编码', m.codec || '未知');
+                rows += probeRow('原始分辨率', m.width ? (m.width + ' × ' + m.height) : '未取得');
+                rows += probeRow('帧率(估)', m.fpsEstimate ? (m.fpsEstimate + ' fps') : '未取得');
+                rows += probeRow('视频包 / 首帧', (m.videoPackets || 0) + ' / '
+                    + (m.firstFrameMs < 0 ? '-' : m.firstFrameMs + ' ms'));
+            }
+            var hint = deep
+                ? '帧率按媒体包时间戳估算，仅供参考；深检结束已自动退订，不额外占用通道。'
+                : '浅检只读内存状态，不取流、不影响画面。点「深度探测」查看编码 / 分辨率 / 帧率。';
+            if (m.error) { hint = '探测异常：' + m.error + '。' + (m.hint || ''); }
+            else if (m.hint) { hint = m.hint; }
+            box.innerHTML = '<div class="probe-grid">' + rows + '</div>' +
+                '<div class="probe-hint">' + esc(hint) + '</div>' +
+                '<div class="probe-actions">' +
+                '<button class="btn soft" data-act="' + (deep ? 'probe' : 'deepprobe') +
+                '" data-did="' + esc(did) + '">' + (deep ? '重新浅检' : '深度探测') + '</button>' +
+                '<button class="btn soft" data-act="probeclose" data-did="' + esc(did) + '">收起</button>' +
+                '</div>';
+            if (!p.online) { box.classList.add('err'); }
+        } catch (e) {
+            box.classList.add('err');
+            box.innerHTML = '<div class="probe-hint">自检失败：' + esc(e.message || String(e)) + '</div>';
+        } finally {
+            var b2 = card.querySelector('.cam-actions button[data-act="probe"]');
+            if (b2) { b2.disabled = false; }
+        }
+    }
+
     /* ---------- 设备 ---------- */
     async function loadDevices(forceRefresh) {
         try {
@@ -441,6 +544,7 @@
             '<div class="cam-actions">' +
             '<button class="btn primary" data-act="preview" data-did="' + esc(c.did) + '"' + offlineDis + '>实时预览</button>' +
             recBtn +
+            '<button class="btn soft probe-btn" data-act="probe" data-did="' + esc(c.did) + '">自检</button>' +
             '</div></div>';
     }
 
@@ -2555,6 +2659,12 @@
             if (act === 'preview') openPreview(did);
             else if (act === 'recstart') startRecord(did);
             else if (act === 'recstop') stopRecord(did);
+            else if (act === 'probe') runProbe(did, false);
+            else if (act === 'deepprobe') runProbe(did, true);
+            else if (act === 'probeclose') {
+                var box = b.closest('.cam-card').querySelector('.probe-box');
+                if (box) { box.remove(); }
+            }
         });
 
         // 共享看板：卡片操作事件委托

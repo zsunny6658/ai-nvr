@@ -3,6 +3,8 @@ package com.invr.hub;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -102,6 +104,27 @@ public final class StreamHub {
     /** 当前有上游会话的设备 DID 列表（供状态接口/排障使用）。 */
     public java.util.List<String> activeDids() {
         return new java.util.ArrayList<>(streams.keySet());
+    }
+
+    /**
+     * 单设备取流会话的只读诊断快照（设备自检 / 首页概览用）。
+     *
+     * <p>纯内存读取，<b>不会新建订阅、不会拉起上游、不发送任何设备命令</b>，因此可在
+     * 5 秒级轮询中安全调用。{@code lastFrameAgeMs = -1} 表示从未收到过帧。</p>
+     */
+    public Map<String, Object> describe(String did) {
+        CameraStream cs = streams.get(did);
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("active", cs != null);
+        m.put("subscribers", cs == null ? 0 : cs.subscriberCount());
+        m.put("healthy", cs != null && cs.isHealthy());
+        m.put("generation", cs == null ? 0 : cs.generation());
+        m.put("lastFrameAt", cs == null ? 0L : cs.lastFrameAt());
+        m.put("lastFrameAgeMs", cs == null || cs.lastFrameAt() <= 0
+                ? -1L : Math.max(0L, System.currentTimeMillis() - cs.lastFrameAt()));
+        m.put("lastErrorAt", cs == null ? 0L : cs.lastErrorAt());
+        m.put("noFrameStreak", cs == null ? 0 : cs.noFrameStreak());
+        return m;
     }
 
     /** 停止全部上游（服务关闭）。 */

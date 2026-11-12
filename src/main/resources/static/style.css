@@ -572,3 +572,38 @@ body {
     .ptz-actions { gap: 6px; }
     .ptz-status { font-size: 10px; min-height: 0; }
 }
+
+/* ===== v1.2.7 首页概览统计卡 + 设备自检面板 ===== */
+.stat-row { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; margin-bottom: 18px; }
+.stat { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    box-shadow: var(--shadow); padding: 12px 14px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.stat-label { font-size: 11px; color: var(--muted); font-weight: 600; letter-spacing: .3px; }
+.stat strong { font-size: 22px; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.stat-sub { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stat.ok strong { color: var(--green); }
+.stat.warn strong { color: var(--amber); }
+.stat.danger strong { color: var(--red); }
+
+.cam-actions .btn.probe-btn { flex: 0 0 auto; padding-left: 12px; padding-right: 12px; }
+.probe-box { margin-top: 2px; padding: 10px 12px; border: 1px solid var(--line);
+    border-radius: 9px; background: #f8fafc; font-size: 12px; }
+/* 单列：两列时「录像中 / 预览中」「已启用·含本设备」等长值会挤进相邻列造成重叠 */
+.probe-grid { display: grid; grid-template-columns: 1fr; gap: 3px 12px; }
+/* 自检面板展开后不必把同排其它卡片一起拉高 */
+#deviceGrid { align-items: start; }
+.probe-grid > div { min-width: 0; display: flex; gap: 6px; justify-content: space-between; }
+.probe-grid span { color: var(--muted); flex: 0 0 auto; }
+.probe-grid b { font-weight: 600; font-variant-numeric: tabular-nums; word-break: break-all; text-align: right; }
+.probe-hint { margin-top: 7px; color: var(--muted); font-size: 11px; line-height: 1.45; }
+.probe-box.err { border-color: #fecaca; background: #fef2f2; }
+.probe-box .probe-actions { margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; }
+.probe-box .probe-actions .btn { padding: 4px 10px; font-size: 12px; }
+
+@media (max-width: 900px) { .stat-row { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 640px) {
+    .stat-row { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 14px; }
+    .stat { padding: 10px 12px; }
+    .stat strong { font-size: 19px; }
+    .cam-actions { flex-wrap: wrap; }
+    .cam-actions .btn { min-width: 88px; }
+}
