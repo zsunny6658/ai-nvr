@@ -8,6 +8,7 @@ import com.invr.model.CameraDevice;
 import com.invr.store.AppSettingsStore;
 import com.invr.web.service.DeviceCatalog;
 import com.invr.web.service.DeviceProbe;
+import com.invr.web.service.MotionDetector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -57,13 +58,15 @@ public class PtzController {
     private final DeviceCatalog catalog;
     private final AppSettingsStore settingsStore;
     private final DeviceProbe deviceProbe;
+    private final MotionDetector motion;
 
     public PtzController(StreamHub hub, DeviceCatalog catalog, AppSettingsStore settingsStore,
-                         DeviceProbe deviceProbe) {
+                         DeviceProbe deviceProbe, MotionDetector motion) {
         this.hub = hub;
         this.catalog = catalog;
         this.settingsStore = settingsStore;
         this.deviceProbe = deviceProbe;
+        this.motion = motion;
     }
 
     /** 发送一次云台动作：方向键点一次走一步；stop 用于连续运动模式的停止。 */
@@ -99,6 +102,8 @@ public class PtzController {
             throw new ApiException(503,
                     "该摄像头当前没有可用的取流会话，请先打开实时预览或开始录像，再使用云台控制");
         }
+        // 云台转动会让整幅画面剧变，运动侦测在此期间静默并重置帧差基准，避免刷出一串误报。
+        motion.noteMotor(did);
         // v1.2.1：不等设备 0x113 应答，命令发出即返回。设备应答由命令通道排空线程异步
         // 记录，前端在 ~400ms / ~1s 后通过 capabilities 轮询读取，点击到界面反馈不再有固定 800ms。
         MotorReply snapshot = hub.motorReply(did);

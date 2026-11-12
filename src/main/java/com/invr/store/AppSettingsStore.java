@@ -10,6 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -54,6 +55,8 @@ public class AppSettingsStore {
     private static final String KEY_DEVICE_QUALITY = "deviceQuality";
     /** 云台命令载荷格式：direction（默认）/ operation（旧固件）。 */
     private static final String KEY_PTZ_MODE = "ptzMode";
+    /** 运动侦测参数（子对象，只存与默认值不同的项）。 */
+    private static final String KEY_MOTION = "motion";
 
     private static final TypeReference<LinkedHashMap<String, Object>> MAP_TYPE = new TypeReference<>() {};
 
@@ -282,6 +285,110 @@ public class AppSettingsStore {
             m.remove(KEY_PTZ_MODE); // auto 作为默认值不落盘
         }
         persist(m);
+    }
+
+    // ===================== 运动侦测 =====================
+
+    /** 读取运动侦测参数；未配置或字段缺失时逐项回落到 {@link MotionSettings#DEFAULTS}。 */
+    @SuppressWarnings("unchecked")
+    public synchronized MotionSettings motion() {
+        MotionSettings d = MotionSettings.DEFAULTS;
+        Object v = all().get(KEY_MOTION);
+        if (!(v instanceof Map<?, ?> raw)) {
+            return d;
+        }
+        Map<String, Object> m = (Map<String, Object>) raw;
+        return new MotionSettings(
+                bool(m, "enabled", d.enabled()),
+                num(m, "threshold", d.threshold()),
+                intNum(m, "intervalSec", d.intervalSec()),
+                intNum(m, "cooldownSec", d.cooldownSec()),
+                intNum(m, "confirmFrames", d.confirmFrames()),
+                intNum(m, "silentSec", d.silentSec()),
+                intNum(m, "retentionDays", d.retentionDays()),
+                intNum(m, "maxEvents", d.maxEvents()),
+                strList(m.get("dids"), d.dids()));
+    }
+
+    /** 保存运动侦测参数（只写一次文件）；与默认值相同的项不落盘，恢复默认即删除这些键。 */
+    public synchronized void saveMotion(MotionSettings s) {
+        MotionSettings v = s == null ? MotionSettings.DEFAULTS : s;
+        MotionSettings d = MotionSettings.DEFAULTS;
+        Map<String, Object> m = all();
+        Map<String, Object> sub = new LinkedHashMap<>();
+        if (v.enabled() != d.enabled()) sub.put("enabled", v.enabled());
+        if (Double.compare(v.threshold(), d.threshold()) != 0) sub.put("threshold", v.threshold());
+        putIfChanged(sub, "intervalSec", v.intervalSec(), d.intervalSec());
+        putIfChanged(sub, "cooldownSec", v.cooldownSec(), d.cooldownSec());
+        putIfChanged(sub, "confirmFrames", v.confirmFrames(), d.confirmFrames());
+        putIfChanged(sub, "silentSec", v.silentSec(), d.silentSec());
+        putIfChanged(sub, "retentionDays", v.retentionDays(), d.retentionDays());
+        putIfChanged(sub, "maxEvents", v.maxEvents(), d.maxEvents());
+        if (!v.dids().equals(d.dids())) sub.put("dids", v.dids());
+        if (sub.isEmpty()) {
+            m.remove(KEY_MOTION);
+        } else {
+            m.put(KEY_MOTION, sub);
+        }
+        persist(m);
+    }
+
+    private static void putIfChanged(Map<String, Object> m, String key, int value, int defaultV) {
+        if (value != defaultV) {
+            m.put(key, value);
+        }
+    }
+
+    private static double num(Map<String, Object> m, String key, double fallback) {
+        Object v = m.get(key);
+        if (v instanceof Number n) {
+            return n.doubleValue();
+        }
+        try {
+            return v == null ? fallback : Double.parseDouble(String.valueOf(v).trim());
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
+    }
+
+    private static int intNum(Map<String, Object> m, String key, int fallback) {
+        Object v = m.get(key);
+        if (v instanceof Number n) {
+            return n.intValue();
+        }
+        try {
+            return v == null ? fallback : Integer.parseInt(String.valueOf(v).trim());
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
+    }
+
+    private static boolean bool(Map<String, Object> m, String key, boolean fallback) {
+        Object v = m.get(key);
+        if (v instanceof Boolean b) {
+            return b;
+        }
+        if (v == null) {
+            return fallback;
+        }
+        String s = String.valueOf(v).trim().toLowerCase();
+        if ("true".equals(s) || "1".equals(s)) return true;
+        if ("false".equals(s) || "0".equals(s)) return false;
+        return fallback;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<String> strList(Object v, List<String> fallback) {
+        if (!(v instanceof List<?> raw)) {
+            return fallback;
+        }
+        List<String> out = new java.util.ArrayList<>();
+        for (Object o : raw) {
+            if (o != null && !String.valueOf(o).isBlank()) {
+                out.add(String.valueOf(o).trim());
+            }
+        }
+        return out;
     }
 
     // ===================== 通用读写 =====================

@@ -1,0 +1,400 @@
+package com.invr.store;
+
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+
+/**
+ * 告警事件存储：append-only JSONL + 内存索引 + 独立 JPEG 快照文件。
+ *
+ * <p>刻意不引入数据库：i-nvr 其它状态均为 {@code .invr/} 下的轻量文件，事件量级（默认上限
+ * 2000 条）用 JSONL 重放完全够用，也不会让 fpk 变大或拖慢启动。每次写操作追加一行
+ * {@code {"op": ...}}，启动按顺序重放恢复 {@code add / handled / delete} 三种意图；行数超过
+ * 上限两倍时压缩重写一次（临时文件 + 原子 rename），避免日志无限膨胀。</p>
+ *
+ * <p>快照与事件分离存放，删除事件时同步清理；快照路径在库内只存相对名，读取前做
+ * {@code normalize().startsWith(root)} 校验，防止手工篡改文件造成目录穿越。</p>
+ */
+public class EventStore {
+
+    private static final Logger log = LoggerFactory.getLogger(EventStore.class);
+
+    private static final String EVENTS_DIR = "events";
+    private static final String LOG_FILE = "events.jsonl";
+    private static final String SNAPSHOT_DIR = "snapshots";
+    private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("yyyyMMdd");
+    private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+    private static final TypeReference<LinkedHashMap<String, Object>> MAP_TYPE = new TypeReference<>() {};
+
+    /** 一条告警事件。{@code snapshot} 为相对快照目录的文件名，空串表示无快照。 */
+    public record AlarmEvent(
+            long id,
+            String did,
+            String deviceName,
+            String type,
+            String level,
+            String title,
+            double score,
+            String snapshot,
+            long createdAt,
+            boolean handled,
+            Long handledAt,
+            List<Map<String, Object>> detections) {
+    }
+
+    /** 列表筛选条件；{@code date} 为本地时区 yyyy-MM-dd，fromMs/toMs 为 epoch 毫秒。 */
+    public record Filter(String did, String type, Boolean handled, String date,
+                         Long fromMs, Long toMs, int limit, int offset) {
+        public static Filter of(String did, String type, Boolean handled, String date,
+                                Long fromMs, Long toMs, int limit, int offset) {
+            return new Filter(blankToNull(did), blankToNull(type), handled, blankToNull(date),
+                    fromMs, toMs, Math.max(1, Math.min(200, limit)), Math.max(0, offset));
+        }
+
+        private static String blankToNull(String s) {
+            return s == null || s.isBlank() ? null : s.trim();
+        }
+    }
+
+    public record Page(List<AlarmEvent> items, int total) {
+    }
+
+    private final Path root;
+    private final Path logFile;
+    private final Path snapshotsDir;
+    private final ObjectMapper mapper = new ObjectMapper();
+    private final LinkedHashMap<Long, AlarmEvent> events = new LinkedHashMap<>();
+    private long nextId = 1;
+    private long lineCount = 0;
+
+    public EventStore() {
+        this(DataDir.get());
+    }
+
+    public EventStore(Path dataDir) {
+        this.root = dataDir.resolve(EVENTS_DIR);
+        this.logFile = root.resolve(LOG_FILE);
+        this.snapshotsDir = root.resolve(SNAPSHOT_DIR);
+        load();
+    }
+
+    // ===================== 写 =====================
+
+    /**
+     * 新增事件并落盘快照。快照写失败不阻断事件记录（仅该条没有截图）。
+     */
+    public synchronized AlarmEvent add(String did, String deviceName, String type, String level,
+                                       String title, double score, byte[] jpeg,
+                                       List<Map<String, Object>> detections) {
+        long now = System.currentTimeMillis();
+        long id = nextId++;
+        String rel = "";
+        if (jpeg != null && jpeg.length > 0) {
+            rel = dayOf(now) + "/" + id + ".jpg";
+            try {
+                Path target = snapshotFile(rel);
+                if (target == null) {
+                    rel = "";
+                } else {
+                    Files.createDirectories(target.getParent());
+                    Files.write(target, jpeg);
+                }
+            } catch (IOException e) {
+                log.warn("事件快照写入失败 id={}: {}", id, e.toString());
+                rel = "";
+            }
+        }
+        AlarmEvent event = new AlarmEvent(id, nullToEmpty(did), nullToEmpty(deviceName),
+                nullToEmpty(type), nullToEmpty(level), nullToEmpty(title), score, rel, now,
+                false, null, detections == null ? List.of() : List.copyOf(detections));
+        events.put(id, event);
+        append(Map.of("op", "add", "event", event));
+        return event;
+    }
+
+    /** 标记已处理 / 取消处理；返回更新后的事件，不存在返回空。 */
+    public synchronized Optional<AlarmEvent> markHandled(long id, boolean handled) {
+        AlarmEvent old = events.get(id);
+        if (old == null) {
+            return Optional.empty();
+        }
+        long at = handled ? System.currentTimeMillis() : 0L;
+        AlarmEvent updated = new AlarmEvent(old.id(), old.did(), old.deviceName(), old.type(),
+                old.level(), old.title(), old.score(), old.snapshot(), old.createdAt(),
+                handled, handled ? at : null, old.detections());
+        events.put(id, updated);
+        Map<String, Object> line = new LinkedHashMap<>();
+        line.put("op", "handled");
+        line.put("id", id);
+        line.put("handled", handled);
+        line.put("at", at);
+        append(line);
+        return Optional.of(updated);
+    }
+
+    /** 删除事件及其快照文件。 */
+    public synchronized boolean delete(long id) {
+        AlarmEvent e = events.remove(id);
+        if (e == null) {
+            return false;
+        }
+        deleteSnapshot(e.snapshot());
+        append(Map.of("op", "delete", "id", id));
+        return true;
+    }
+
+    /**
+     * 按保留天数与条数上限清理最老的事件。由巡检循环周期调用，无需额外定时线程。
+     *
+     * @return 实际删除条数
+     */
+    public synchronized int purge(int maxEvents, int retentionDays) {
+        long cutoff = retentionDays > 0
+                ? System.currentTimeMillis() - retentionDays * 86_400_000L
+                : Long.MIN_VALUE;
+        java.util.Set<Long> doomed = new java.util.LinkedHashSet<>();
+        for (AlarmEvent e : events.values()) {
+            if (e.createdAt() < cutoff) {
+                doomed.add(e.id());
+            }
+        }
+        int keepLimit = Math.max(100, maxEvents);
+        if (events.size() - doomed.size() > keepLimit) {
+            List<Long> byAge = new ArrayList<>(events.keySet());
+            for (Long id : byAge) {
+                if (events.size() - doomed.size() <= keepLimit) {
+                    break;
+                }
+                if (!doomed.contains(id)) {
+                    AlarmEvent e = events.get(id);
+                    if (e != null && e.createdAt() >= cutoff) {
+                        doomed.add(id);
+                    }
+                }
+            }
+        }
+        for (Long id : doomed) {
+            AlarmEvent e = events.remove(id);
+            if (e != null) {
+                deleteSnapshot(e.snapshot());
+                append(Map.of("op", "delete", "id", id));
+            }
+        }
+        if (lineCount > (long) keepLimit * 2) {
+            compact();
+        }
+        return doomed.size();
+    }
+
+    // ===================== 读 =====================
+
+    /** 倒序（最新在前）分页查询。 */
+    public synchronized Page list(Filter f) {
+        List<AlarmEvent> matched = new ArrayList<>();
+        for (AlarmEvent e : events.values()) {
+            if (f.did() != null && !f.did().equals(e.did())) continue;
+            if (f.type() != null && !f.type().equals(e.type())) continue;
+            if (f.handled() != null && f.handled() != e.handled()) continue;
+            if (f.date() != null && !f.date().equals(dateOf(e.createdAt()))) continue;
+            if (f.fromMs() != null && e.createdAt() < f.fromMs()) continue;
+            if (f.toMs() != null && e.createdAt() > f.toMs()) continue;
+            matched.add(e);
+        }
+        matched.sort(Comparator.comparingLong(AlarmEvent::id).reversed());
+        int total = matched.size();
+        if (f.offset() >= total || f.limit() <= 0) {
+            return new Page(List.of(), total);
+        }
+        int end = Math.min(total, f.offset() + f.limit());
+        return new Page(List.copyOf(matched.subList(f.offset(), end)), total);
+    }
+
+    /** 首页概览所需聚合：总数 / 今日 / 未处理 / 按类型 / 按设备。 */
+    public synchronized Map<String, Object> stats() {
+        String today = dateOf(System.currentTimeMillis());
+        int todayCount = 0;
+        int unhandled = 0;
+        Map<String, Integer> byType = new LinkedHashMap<>();
+        Map<String, Integer> byDid = new LinkedHashMap<>();
+        for (AlarmEvent e : events.values()) {
+            if (today.equals(dateOf(e.createdAt()))) todayCount++;
+            if (!e.handled()) unhandled++;
+            byType.merge(e.type(), 1, Integer::sum);
+            byDid.merge(e.did(), 1, Integer::sum);
+        }
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("total", events.size());
+        m.put("today", todayCount);
+        m.put("unhandled", unhandled);
+        m.put("byType", byType);
+        m.put("byDid", byDid);
+        return m;
+    }
+
+    public synchronized Optional<AlarmEvent> find(long id) {
+        return Optional.ofNullable(events.get(id));
+    }
+
+    public synchronized int size() {
+        return events.size();
+    }
+
+    /** 读取事件快照；无快照 / 文件缺失 / 路径非法时返回空。 */
+    public byte[] snapshot(long id) throws IOException {
+        AlarmEvent e;
+        synchronized (this) {
+            e = events.get(id);
+        }
+        if (e == null) {
+            return null;
+        }
+        Path p = snapshotFile(e.snapshot());
+        if (p == null || !Files.isRegularFile(p)) {
+            return null;
+        }
+        return Files.readAllBytes(p);
+    }
+
+    /** 供控制器生成展示用的相对 URL 片段（不含网关前缀）。 */
+    public static String snapshotUrl(AlarmEvent e) {
+        return e.snapshot().isEmpty() ? "" : "/api/events/" + e.id() + "/snapshot";
+    }
+
+    // ===================== 内部 =====================
+
+    private void load() {
+        if (!Files.isRegularFile(logFile)) {
+            return;
+        }
+        try (BufferedReader r = Files.newBufferedReader(logFile, StandardCharsets.UTF_8)) {
+            String line;
+            while ((line = r.readLine()) != null) {
+                lineCount++;
+                if (line.isBlank()) {
+                    continue;
+                }
+                try {
+                    Map<String, Object> obj = mapper.readValue(line, MAP_TYPE);
+                    String op = String.valueOf(obj.getOrDefault("op", ""));
+                    long id = ((Number) obj.getOrDefault("id", 0)).longValue();
+                    switch (op) {
+                        case "add" -> {
+                            AlarmEvent e = mapper.convertValue(obj.get("event"), AlarmEvent.class);
+                            if (e != null) {
+                                events.put(e.id(), e);
+                                nextId = Math.max(nextId, e.id() + 1);
+                            }
+                        }
+                        case "handled" -> {
+                            AlarmEvent old = events.get(id);
+                            if (old != null) {
+                                boolean h = Boolean.TRUE.equals(obj.get("handled"));
+                                long at = obj.get("at") instanceof Number n ? n.longValue() : 0L;
+                                events.put(id, new AlarmEvent(old.id(), old.did(), old.deviceName(),
+                                        old.type(), old.level(), old.title(), old.score(),
+                                        old.snapshot(), old.createdAt(), h,
+                                        h && at > 0 ? at : null, old.detections()));
+                            }
+                        }
+                        case "delete" -> events.remove(id);
+                        default -> log.debug("忽略未知事件日志操作：{}", op);
+                    }
+                } catch (Exception e) {
+                    log.warn("事件日志跳过损坏行：{}", e.toString());
+                }
+            }
+        } catch (IOException e) {
+            log.warn("事件日志读取失败，按空库启动：{}", e.toString());
+        }
+    }
+
+    private void append(Map<String, Object> line) {
+        try {
+            Files.createDirectories(root);
+            String text = mapper.writeValueAsString(line) + "\n";
+            Files.writeString(logFile, text, StandardCharsets.UTF_8,
+                    StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+            lineCount++;
+        } catch (IOException e) {
+            // 内存索引仍然有效，本轮请求不失败；下次进程重启可能丢失这一行
+            log.error("事件日志追加失败：{}", e.toString());
+        }
+    }
+
+    /** 用当前内存索引重写日志，去掉已被删除/覆盖的历史行。 */
+    private void compact() {
+        Path tmp = logFile.resolveSibling(LOG_FILE + ".tmp");
+        try (BufferedWriter w = Files.newBufferedWriter(tmp, StandardCharsets.UTF_8,
+                StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
+            for (AlarmEvent e : events.values()) {
+                w.write(mapper.writeValueAsString(Map.of("op", "add", "event", e)));
+                w.newLine();
+            }
+        } catch (IOException e) {
+            log.warn("事件日志压缩失败，保留原文件：{}", e.toString());
+            return;
+        }
+        try {
+            try {
+                Files.move(tmp, logFile, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (IOException unsupported) {
+                Files.move(tmp, logFile, StandardCopyOption.REPLACE_EXISTING);
+            }
+            lineCount = events.size();
+        } catch (IOException e) {
+            log.warn("事件日志压缩替换失败：{}", e.toString());
+        }
+    }
+
+    private Path snapshotFile(String rel) {
+        if (rel == null || rel.isBlank()) {
+            return null;
+        }
+        Path p = snapshotsDir.resolve(rel).normalize();
+        return p.startsWith(snapshotsDir) ? p : null;
+    }
+
+    private void deleteSnapshot(String rel) {
+        Path p = snapshotFile(rel);
+        if (p == null) {
+            return;
+        }
+        try {
+            Files.deleteIfExists(p);
+        } catch (IOException e) {
+            log.debug("事件快照删除失败：{}", e.toString());
+        }
+    }
+
+    private static String dayOf(long epochMs) {
+        return LocalDate.ofInstant(Instant.ofEpochMilli(epochMs), ZoneId.systemDefault()).format(DAY);
+    }
+
+    private static String dateOf(long epochMs) {
+        return LocalDate.ofInstant(Instant.ofEpochMilli(epochMs), ZoneId.systemDefault()).format(DATE);
+    }
+
+    private static String nullToEmpty(String s) {
+        return s == null ? "" : s;
+    }
+}

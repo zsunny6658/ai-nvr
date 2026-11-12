@@ -4,6 +4,7 @@ import com.invr.hub.StreamHub;
 import com.invr.hub.CameraConnector;
 import com.invr.rtsp.RtspServer;
 import com.invr.store.AppSettingsStore;
+import com.invr.store.EventStore;
 import com.invr.store.RecordingStateStore;
 import com.invr.store.SessionStore;
 import org.springframework.context.annotation.Bean;
@@ -29,6 +30,12 @@ public class NvrConfig {
     @Bean
     public AppSettingsStore appSettingsStore() {
         return new AppSettingsStore();
+    }
+
+    /** 告警事件库：启动时重放 events.jsonl 恢复内存索引，不引入数据库依赖。 */
+    @Bean
+    public EventStore eventStore() {
+        return new EventStore();
     }
 
     @Bean(destroyMethod = "shutdown")
