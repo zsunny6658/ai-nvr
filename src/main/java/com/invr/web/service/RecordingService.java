@@ -14,9 +14,14 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.io.BufferedOutputStream;
 import java.io.File;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.nio.file.Files;
+import java.util.zip.Deflater;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -344,11 +349,172 @@ public class RecordingService {
 
     public void delete(String name) {
         File f = resolveFile(name);
+        // 正在写入的分段由 Mp4SegmentRecorder 持有 FFmpeg 句柄：Linux 上 unlink 后录制线程
+        // 仍会往已无目录项的 inode 写，数据静默丢失且空间要等封段才释放；Windows 上则直接失败。
+        if (writingSegments().contains(name)) {
+            throw ApiException.conflict("该分段正在录制中，请等待封段后再删除");
+        }
         try {
             Files.deleteIfExists(f.toPath());
         } catch (IOException e) {
             throw ApiException.badRequest("删除失败：" + e.getMessage());
         }
+    }
+
+    // ===================== 批量操作（v1.2.2） =====================
+
+    /** 单次批量删除上限，避免一个请求长时间占用线程。前端按该大小自动分批。 */
+    public static final int MAX_BATCH_DELETE = 500;
+    /** 单次批量打包上限（zip 为流式写出，不占内存；主要防止 URL/请求体过大）。 */
+    public static final int MAX_BATCH_DOWNLOAD = 1000;
+
+    /**
+     * 批量打包预检结果：真正会被写进 zip 的文件，以及被跳过的原因计数。
+     * 预检在响应头写出前完成，前端据此显示「已打包 N 个、跳过 M 个」。
+     */
+    public record BatchPlan(List<File> files, int skippedWriting, int skippedUnavailable) {
+        public int size() {
+            return files.size();
+        }
+    }
+
+    /** 所有正在写入、尚未封段的分段名（与 {@link #cleanupExpired} 的保护口径一致）。 */
+    protected Set<String> writingSegments() {
+        Set<String> writing = new HashSet<>();
+        active.forEach((did, sink) -> {
+            String n = sink.currentSegmentName();
+            if (n != null && !n.isBlank()) {
+                writing.add(n);
+            }
+        });
+        return writing;
+    }
+
+    private void validateBatch(List<String> names, int max) {
+        if (names == null || names.isEmpty()) {
+            throw ApiException.badRequest("请先勾选要操作的录像文件");
+        }
+        if (names.size() > max) {
+            throw ApiException.badRequest("单次最多处理 " + max + " 个文件，请分批操作（本次 "
+                    + names.size() + " 个）");
+        }
+    }
+
+    private static Map<String, String> failure(String name, String reason) {
+        Map<String, String> m = new LinkedHashMap<>();
+        m.put("name", name == null ? "" : name);
+        m.put("reason", reason);
+        return m;
+    }
+
+    /**
+     * 批量删除：逐条独立校验、去重，任何一条失败都不影响其他文件；
+     * 正在录制中的分段跳过（不删），路径穿越 / 文件不存在 / IO 失败计入 failed 返回给前端。
+     */
+    public Map<String, Object> deleteBatch(List<String> names) {
+        validateBatch(names, MAX_BATCH_DELETE);
+        Set<String> writing = writingSegments();
+        List<String> deleted = new ArrayList<>();
+        List<String> skipped = new ArrayList<>();
+        List<Map<String, String>> failed = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (String name : names) {
+            if (name == null || name.isBlank() || !seen.add(name)) {
+                continue;
+            }
+            try {
+                if (!FILE_PATTERN.matcher(name).matches()) {
+                    throw ApiException.badRequest("非法文件名");
+                }
+                File f = resolveFile(name);
+                if (writing.contains(name)) {
+                    skipped.add(name);
+                    continue;
+                }
+                if (Files.deleteIfExists(f.toPath())) {
+                    deleted.add(name);
+                } else {
+                    failed.add(failure(name, "文件已不存在"));
+                }
+            } catch (ApiException e) {
+                failed.add(failure(name, e.getMessage()));
+            } catch (IOException e) {
+                failed.add(failure(name, "删除失败：" + e.getMessage()));
+            }
+        }
+        log.info("批量删除录像：成功 {} 个、跳过录制中 {} 个、失败 {} 个",
+                deleted.size(), skipped.size(), failed.size());
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("deleted", deleted);
+        out.put("skipped", skipped);
+        out.put("failed", failed);
+        out.put("deletedCount", deleted.size());
+        out.put("skippedCount", skipped.size());
+        out.put("failedCount", failed.size());
+        return out;
+    }
+
+    /** 批量打包预检：过滤非法名、路径穿越、已不存在文件与正在写入的分段。 */
+    public BatchPlan planZip(List<String> names) {
+        validateBatch(names, MAX_BATCH_DOWNLOAD);
+        Set<String> writing = writingSegments();
+        List<File> files = new ArrayList<>();
+        int skipWriting = 0;
+        int skipUnavailable = 0;
+        Set<String> seen = new HashSet<>();
+        for (String name : names) {
+            if (name == null || name.isBlank() || !seen.add(name)) {
+                continue;
+            }
+            if (!FILE_PATTERN.matcher(name).matches()) {
+                skipUnavailable++;
+                continue;
+            }
+            if (writing.contains(name)) {
+                skipWriting++;
+                continue;
+            }
+            try {
+                files.add(resolveFile(name));
+            } catch (ApiException e) {
+                skipUnavailable++;
+            }
+        }
+        if (files.isEmpty()) {
+            throw ApiException.badRequest("所选文件均不可打包（正在录制中或已不存在），请等待封段后重试");
+        }
+        return new BatchPlan(files, skipWriting, skipUnavailable);
+    }
+
+    /**
+     * 把预检通过的文件流式写入 zip 输出流，返回实际写入条目数。
+     * MP4 已是压缩格式，用 NO_COMPRESSION 避免二次 deflate 白耗 CPU；不关闭底层响应流。
+     */
+    public int writeZip(BatchPlan plan, OutputStream out) throws IOException {
+        ZipOutputStream zip = new ZipOutputStream(new BufferedOutputStream(out));
+        zip.setLevel(Deflater.NO_COMPRESSION);
+        int written = 0;
+        for (File f : plan.files()) {
+            if (!f.isFile()) {
+                continue;
+            }
+            try {
+                zip.putNextEntry(new ZipEntry(f.getName()));
+                Files.copy(f.toPath(), zip);
+                zip.closeEntry();
+                written++;
+            } catch (IOException e) {
+                log.warn("批量打包跳过 {}：{}", f.getName(), e.getMessage());
+                try {
+                    zip.closeEntry();
+                } catch (IOException ignored) {
+                    // 条目已损坏时保持流可用，继续下一个文件
+                }
+            }
+        }
+        zip.finish();
+        zip.flush();
+        return written;
     }
 
     // ===================== 存储目录 / 分段设置（Web 设置栏） =====================
@@ -491,13 +657,7 @@ public class RecordingService {
             return 0;
         }
         // 所有正在写入的分段名一律不删（它们的时间戳也很新，双重保险）。
-        Set<String> writing = new HashSet<>();
-        active.forEach((did, sink) -> {
-            String n = sink.currentSegmentName();
-            if (n != null) {
-                writing.add(n);
-            }
-        });
+        Set<String> writing = writingSegments();
         long cutoff = System.currentTimeMillis() - days * 24L * 60 * 60 * 1000;
         int removed = 0;
         for (File f : files) {

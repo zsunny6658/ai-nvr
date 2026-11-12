@@ -7,7 +7,7 @@
     <base href="./">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230891b2'/%3E%3C/svg%3E">
     <title>iNvr · 小米摄像头 NVR</title>
-    <link rel="stylesheet" href="style.css?v=21">
+    <link rel="stylesheet" href="style.css?v=22">
 </head>
 <body>
 <header class="topbar">
@@ -120,13 +120,25 @@
                 <h2>录像文件</h2>
                 <div>
                     <select id="recFilter" class="select"></select>
-                    <button class="btn ghost" id="btnRecRefresh">刷新</button>
+                    <button class="btn soft" id="btnRecRefresh">刷新</button>
+                </div>
+            </div>
+            <!-- v1.2.2 批量操作：勾选文件后统一打包下载 / 删除 -->
+            <div class="rec-toolbar">
+                <span class="rec-selinfo" id="recSelInfo">勾选文件后可批量打包下载或删除</span>
+                <div class="rec-toolbar-actions">
+                    <button class="btn tiny soft" id="btnRecBatchZip" disabled>打包下载</button>
+                    <button class="btn tiny soft-danger" id="btnRecBatchDel" disabled>批量删除</button>
+                    <button class="btn tiny" id="btnRecClearSel" hidden>取消选择</button>
                 </div>
             </div>
             <div class="table-wrap">
                 <table class="rec-table">
                     <thead>
-                    <tr><th>文件名</th><th>摄像头</th><th>大小</th><th>时间</th><th>操作</th></tr>
+                    <tr>
+                        <th class="rec-check"><input type="checkbox" id="recSelAll" title="全选本页" aria-label="全选本页"></th>
+                        <th>文件名</th><th>摄像头</th><th>大小</th><th>时间</th><th>操作</th>
+                    </tr>
                     </thead>
                     <tbody id="recList"></tbody>
                 </table>
@@ -144,9 +156,9 @@
                         <button class="btn tiny" type="button" data-zoom="6">6小时</button>
                         <button class="btn tiny" type="button" data-zoom="1">1小时</button>
                     </span>
-                    <button class="btn ghost tiny" type="button" id="pbPrev">◀</button>
-                    <button class="btn ghost tiny" type="button" id="pbNext">▶</button>
-                    <button class="btn ghost tiny" type="button" id="pbRefresh">刷新</button>
+                    <button class="btn soft tiny" type="button" id="pbPrev">◀</button>
+                    <button class="btn soft tiny" type="button" id="pbNext">▶</button>
+                    <button class="btn soft tiny" type="button" id="pbRefresh">刷新</button>
                 </div>
             </div>
 
@@ -257,7 +269,7 @@
                     <label>随机密钥（重新生成后旧密钥立即失效，完整明文仅此一次展示）</label>
                     <div class="set-actions">
                         <button class="btn primary" id="btnApiGen" type="button">生成新密钥</button>
-                        <button class="btn ghost danger" id="btnApiDelete" type="button" disabled>删除密钥</button>
+                        <button class="btn soft-danger" id="btnApiDelete" type="button" disabled>删除密钥</button>
                     </div>
                     <div id="apiKeyFreshBox" class="link-box" hidden style="margin-top:10px;">
                         <p class="muted small">请立即复制并妥善保存，刷新或离开后无法再次查看完整密钥：</p>
@@ -490,7 +502,7 @@
 <div id="toast" class="toast"></div>
 
 <script src="vendor/hls.min.js"></script>
-<script src="watchdog.js?v=21"></script>
-<script src="app.js?v=21"></script>
+<script src="watchdog.js?v=22"></script>
+<script src="app.js?v=22"></script>
 </body>
 </html>

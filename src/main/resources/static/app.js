@@ -21,6 +21,9 @@
         // v1.2.1：延迟徽标定时器 / 云台点击序号（避免旧的异步应答覆盖新状态）
         liveBadgeTimer: null,
         ptzSeq: 0,
+        // v1.2.2：录像文件页批量选择（name 集合 + 当前列表 name→size，用于显示选中容量）
+        recSelected: new Set(),
+        recRows: new Map(),
         // 门禁令牌（内存兜底；主存 localStorage，跨站 iframe 中为分区存储仍可读写）
         memToken: '',
         // 时间轴回放状态
@@ -742,19 +745,34 @@
             // 确保设备名已加载，录像列表才能显示“名称（DID）”而非裸 DID
             if (!state.devices.length) { try { await loadDevices(false); } catch (e2) { /* 忽略，退回显示 DID */ } }
             var list = await api(url);
+            state.recRows = new Map((list || []).map(function (r) {
+                return [r.name, { size: r.size || 0, recording: !!r.recording }];
+            }));
+            // 刷新后剔除已被删除 / 已不在当前筛选结果里的勾选，避免误删看不见的文件
+            Array.from(state.recSelected).forEach(function (n) {
+                if (!state.recRows.has(n)) state.recSelected.delete(n);
+            });
             renderRecordings(list);
         } catch (e) {
-            $('recList').innerHTML = '<tr><td colspan="5" class="empty">加载失败：' + esc(e.message) + '</td></tr>';
+            $('recList').innerHTML = '<tr><td colspan="6" class="empty">加载失败：' + esc(e.message) + '</td></tr>';
+            state.recRows = new Map();
+            updateBatchUi();
         }
     }
     function renderRecordings(list) {
         var tb = $('recList');
         if (!list || !list.length) {
-            tb.innerHTML = '<tr><td colspan="5" class="empty">暂无录像文件</td></tr>';
+            tb.innerHTML = '<tr><td colspan="6" class="empty">暂无录像文件</td></tr>';
+            updateBatchUi();
             return;
         }
         tb.innerHTML = list.map(function (r) {
-            return '<tr>' +
+            var sel = state.recSelected.has(r.name);
+            // 录制中的分段由后端跳过，前端直接禁用勾选并说明原因，避免选了却没被处理
+            var disabled = r.recording ? ' disabled title="该分段正在录制中，封段后可操作"' : '';
+            return '<tr' + (sel ? ' class="rec-selected"' : '') + '>' +
+                '<td class="rec-check"><input type="checkbox" data-rsel="' + esc(r.name) + '"' +
+                    (sel ? ' checked' : '') + disabled + '></td>' +
                 '<td class="fname">' + esc(r.name) + '</td>' +
                 '<td>' + esc(cameraLabel(r.did)) + (r.recording ? ' <span class="badge rec">录制中</span>' : '') + '</td>' +
                 '<td>' + fmtSize(r.size) + '</td>' +
@@ -762,7 +780,7 @@
                 '<td class="acts">' +
                 '<button class="btn tiny" data-ract="play" data-name="' + esc(r.name) + '">播放</button>' +
                 '<a class="btn tiny" href="' + withToken('api/recordings/' + encodeURIComponent(r.name) + '?dl=1') + '" download>下载</a>' +
-                '<button class="btn tiny" data-ract="del" data-name="' + esc(r.name) + '">删除</button>' +
+                '<button class="btn tiny soft-danger" data-ract="del" data-name="' + esc(r.name) + '">删除</button>' +
                 '</td></tr>';
         }).join('');
         tb.querySelectorAll('button[data-ract]').forEach(function (btn) {
@@ -773,6 +791,132 @@
                 else if (act === 'del') delRecording(name);
             });
         });
+        updateBatchUi();
+    }
+
+    /* ---------- v1.2.2 批量选择 / 批量删除 / 打包下载 ---------- */
+    function recSelectableNames() {
+        var out = [];
+        state.recRows.forEach(function (meta, name) { if (!meta.recording) out.push(name); });
+        return out;
+    }
+    function selectedRecBytes() {
+        var total = 0;
+        state.recSelected.forEach(function (n) {
+            var m = state.recRows.get(n);
+            if (m) total += m.size || 0;
+        });
+        return total;
+    }
+    function updateBatchUi() {
+        var n = state.recSelected.size;
+        var all = recSelectableNames();
+        var allChecked = all.length > 0 && all.every(function (x) { return state.recSelected.has(x); });
+        var box = $('recSelAll');
+        box.checked = allChecked;
+        box.indeterminate = n > 0 && !allChecked;
+        box.disabled = all.length === 0;
+        $('btnRecBatchZip').disabled = n === 0;
+        $('btnRecBatchDel').disabled = n === 0;
+        $('btnRecClearSel').hidden = n === 0;
+        var info = $('recSelInfo');
+        info.textContent = n ? ('已选 ' + n + ' 个文件 · 合计 ' + fmtSize(selectedRecBytes()))
+            : '勾选文件后可批量打包下载或删除';
+        info.className = 'rec-selinfo' + (n ? ' has-sel' : '');
+    }
+    /** 全选 / 清空后同步已渲染行的勾选与高亮，不重新拉列表。 */
+    function syncRecChecks() {
+        $('recList').querySelectorAll('input[data-rsel]').forEach(function (cb) {
+            var on = state.recSelected.has(cb.getAttribute('data-rsel'));
+            cb.checked = on;
+            var tr = cb.closest('tr');
+            if (tr) tr.classList.toggle('rec-selected', on);
+        });
+    }
+    function fileStamp() {
+        var d = new Date();
+        function p(x) { return String(x).padStart(2, '0'); }
+        return '' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate())
+            + '-' + p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds());
+    }
+    async function recBatchDelete() {
+        var names = Array.from(state.recSelected);
+        if (!names.length) return;
+        if (!confirm('确认删除选中的 ' + names.length + ' 个录像文件（' + fmtSize(selectedRecBytes())
+            + '）？\n此操作不可恢复；正在录制中的分段会自动跳过。')) return;
+        var btn = $('btnRecBatchDel');
+        btn.disabled = true;
+        var deleted = 0, skipped = 0, failed = [];
+        try {
+            // 后端单次上限 500，超出时分批串行提交，避免一次请求超时
+            for (var i = 0; i < names.length; i += 500) {
+                var r = await api('api/recordings/batch/delete', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ names: names.slice(i, i + 500) })
+                });
+                deleted += r.deletedCount || 0;
+                skipped += r.skippedCount || 0;
+                failed = failed.concat(r.failed || []);
+            }
+            toast('已删除 ' + deleted + ' 个' + (skipped ? '，跳过录制中 ' + skipped + ' 个' : '')
+                + (failed.length ? '，失败 ' + failed.length + ' 个' : ''), failed.length ? 'err' : 'ok');
+            if (failed.length) console.warn('批量删除失败明细：', failed);
+            state.recSelected.clear();
+        } catch (e) {
+            toast('批量删除失败：' + e.message, 'err');
+        } finally {
+            await loadRecordings();
+            btn.disabled = false;
+            updateBatchUi();
+        }
+    }
+    async function recBatchZip() {
+        var names = Array.from(state.recSelected);
+        if (!names.length) return;
+        if (names.length > 1000) { toast('单次最多打包 1000 个文件，请分批选择', 'err'); return; }
+        var bytes = selectedRecBytes();
+        if (bytes > 1073741824 && !confirm('所选文件约 ' + fmtSize(bytes)
+            + '，浏览器需暂存整个压缩包，可能较慢或占用较多磁盘。继续打包？')) return;
+        var btn = $('btnRecBatchZip');
+        var label = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = '打包中…';
+        try {
+            // 这里要拿 blob，不能直接走 api()（它会尝试按 JSON 解析响应体）
+            var headers = { 'Content-Type': 'application/json' };
+            var tk = getToken();
+            if (tk) headers['Authorization'] = 'Bearer ' + tk;
+            var res = await fetch('api/recordings/batch/download', {
+                method: 'POST', headers: headers, body: JSON.stringify({ names: names })
+            });
+            if (!res.ok) {
+                var msg = '打包失败 HTTP ' + res.status;
+                try {
+                    var data = await res.json();
+                    if (data && data.error) msg = data.error;
+                } catch (ignored) { /* 非 JSON 错误体 */ }
+                if (res.status === 401) scheduleGateRelock();
+                throw new Error(msg);
+            }
+            var blob = await res.blob();
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement('a');
+            a.href = url;
+            a.download = 'invr-recordings-' + fileStamp() + '.zip';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+            var count = parseInt(res.headers.get('X-Invr-Zip-Files') || names.length, 10);
+            var skipped = parseInt(res.headers.get('X-Invr-Zip-Skipped') || '0', 10);
+            toast('已打包 ' + count + ' 个文件' + (skipped ? '，跳过 ' + skipped + ' 个（录制中/已不存在）' : ''), 'ok');
+        } catch (e) {
+            toast('打包下载失败：' + e.message, 'err');
+        } finally {
+            btn.disabled = false;
+            btn.textContent = label;
+            updateBatchUi();
+        }
     }
     function renderRecFilter() {
         var sel = $('recFilter');
@@ -2039,7 +2183,36 @@
         $('lockPw').addEventListener('keydown', function (e) { if (e.key === 'Enter') submitUnlock(); });
         $('btnRefresh').addEventListener('click', function () { loadDevices(true); loadRecordings(); });
         $('btnRecRefresh').addEventListener('click', loadRecordings);
-        $('recFilter').addEventListener('change', loadRecordings);
+        $('recFilter').addEventListener('change', function () {
+            // 换筛选条件后清空勾选，避免删到当前列表里看不见的文件
+            state.recSelected.clear();
+            loadRecordings();
+        });
+
+        // v1.2.2 录像批量操作：表头全选、行勾选、批量删除 / 打包下载
+        $('recSelAll').addEventListener('change', function (e) {
+            recSelectableNames().forEach(function (n) {
+                if (e.target.checked) state.recSelected.add(n);
+                else state.recSelected.delete(n);
+            });
+            syncRecChecks();
+            updateBatchUi();
+        });
+        $('recList').addEventListener('change', function (e) {
+            var cb = e.target.closest && e.target.closest('input[data-rsel]');
+            if (!cb) return;
+            var name = cb.getAttribute('data-rsel');
+            if (cb.checked) state.recSelected.add(name);
+            else state.recSelected.delete(name);
+            var tr = cb.closest('tr');
+            if (tr) tr.classList.toggle('rec-selected', cb.checked);
+            updateBatchUi();
+        });
+        $('btnRecClearSel').addEventListener('click', function () {
+            state.recSelected.clear(); syncRecChecks(); updateBatchUi();
+        });
+        $('btnRecBatchDel').addEventListener('click', recBatchDelete);
+        $('btnRecBatchZip').addEventListener('click', recBatchZip);
 
         // 设置：存储路径 / 分段 / 端口
         $('btnBrowseDir').addEventListener('click', openDirModal);
