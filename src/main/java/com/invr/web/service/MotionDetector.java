@@ -19,9 +19,11 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.time.Clock;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -147,6 +149,20 @@ public class MotionDetector {
     }
 
     /** 运行状态快照：配置、逐设备评分分布与事件统计，供误报率评估与排障。 */
+    /**
+     * 某设备最近一次「画面确实在变化」的时间戳（epoch ms，从未运动过返回 0）。
+     * 供 {@code MotionRecordingService} 判断自动录像是否该停；静默期与低照度帧不更新。
+     */
+    public long lastMotionAtMs(String did) {
+        State s = states.get(did);
+        return s == null ? 0L : s.lastMotionAtMs;
+    }
+
+    /** 已被巡检过的设备 DID 快照；状态机据此遍历候选设备，不触发任何取流。 */
+    public Set<String> motionDids() {
+        return new HashSet<>(states.keySet());
+    }
+
     public Map<String, Object> status() {
         MotionSettings cfg = settingsStore.motion();
         long now = clock.millis();
@@ -160,6 +176,8 @@ public class MotionDetector {
         m.put("retentionDays", cfg.retentionDays());
         m.put("maxEvents", cfg.maxEvents());
         m.put("dids", cfg.dids());
+        m.put("autoRecord", cfg.autoRecord());
+        m.put("recordTailSec", cfg.recordTailSec());
         m.put("activeFrameSources", frames.activeSources());
         m.put("events", events.stats());
 
@@ -174,6 +192,7 @@ public class MotionDetector {
             one.put("triggered", s.triggered);
             one.put("lastSampleAt", s.lastSampleAtMs);
             one.put("lastEventAt", s.lastEventAtMs);
+            one.put("lastMotionAt", s.lastMotionAtMs);
             one.put("cooldownRemainingSec", remainingSec(s.lastEventAtMs + cfg.cooldownMs(), now));
             one.put("silentRemainingSec", remainingSec(s.silentUntilMs, now));
             one.put("lastError", s.lastError);
@@ -246,6 +265,9 @@ public class MotionDetector {
 
         boolean cooled = now - s.lastEventAtMs >= cfg.cooldownMs();
         if (score >= cfg.threshold()) {
+            // 画面确实在变化（即便处于事件冷却期）：供自动录像状态机延长录制窗口。
+            // 静默期（云台转动）与低照度帧不更新，避免把机械转动误当成持续运动。
+            s.lastMotionAtMs = now;
             // 冷却期内不累加确认，避免冷却一结束就凭旧变化立刻再触发一条
             s.confirm = cooled ? s.confirm + 1 : 0;
         } else {
@@ -268,7 +290,8 @@ public class MotionDetector {
                 false, remainingSec(s.lastEventAtMs + cfg.cooldownMs(), now), 0L, "");
     }
 
-    private String deviceName(String did) {
+    /** 设备显示名；找不到时回落 DID。也供自动录像写事件时使用。 */
+    public String deviceName(String did) {
         try {
             return catalog.find(did).map(CameraDevice::name).orElse(did);
         } catch (Throwable t) {
@@ -341,6 +364,7 @@ public class MotionDetector {
         long lastEventAtMs = 0;
         long silentUntilMs = 0;
         long lastSampleAtMs = 0;
+        long lastMotionAtMs = 0;
         long samples = 0;
         long triggered = 0;
         double lastScore = 0;

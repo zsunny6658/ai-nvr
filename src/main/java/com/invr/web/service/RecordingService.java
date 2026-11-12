@@ -147,6 +147,49 @@ public class RecordingService {
         return Map.of("did", did, "recording", true, "segmentSec", seg);
     }
 
+    /**
+     * v1.2.8 运动侦测触发的<b>临时</b>录像：只建立订阅，<b>不写</b>"期望持续录像"状态。
+     *
+     * <p>与 {@link #start} 的区别是关键点：若复用 start，{@code recordings.json} 会留下一个
+     * 永久标记，服务重启后 {@link #reconcile()} 会把它当作用户手动开启的录像无限续录下去。
+     * 临时录像的生命周期完全由 {@code MotionRecordingService} 在内存中管理，重启后按尾延时
+     * 窗口恢复一次即自动收敛（见该类的持久化说明），不会变成常开录像。</p>
+     */
+    public synchronized Map<String, Object> startTransient(String did, Long segmentSec) {
+        if (active.containsKey(did)) {
+            throw ApiException.conflict("该摄像头已在录像中");
+        }
+        CameraDevice device = connector.findDevice(did);
+        if (device == null) {
+            throw ApiException.notFound("设备列表中未找到 did=" + did);
+        }
+        long seg = segmentSec == null || segmentSec <= 0 ? this.segmentSec : segmentSec;
+        attach(did, device, seg);
+        log.info("[{}] 运动侦测触发临时录像（{}s/段，目录 {}）", did, seg, rootDir.getAbsolutePath());
+        return Map.of("did", did, "recording", true, "segmentSec", seg, "transient", true);
+    }
+
+    /** 停止临时录像并正常封段；与 {@link #stop} 不同，<b>不改动</b>持续录像状态。 */
+    public synchronized Map<String, Object> stopTransient(String did) {
+        RecordingSink sink = detach(did);
+        if (sink == null) {
+            throw ApiException.badRequest("该摄像头当前未在录像");
+        }
+        log.info("[{}] 运动侦测临时录像结束（视频包={} 分段={}）",
+                did, sink.videoPackets(), sink.segmentCount());
+        return Map.of("did", did, "recording", false,
+                "videoPackets", sink.videoPackets(), "segments", sink.segmentCount());
+    }
+
+    /** 该 DID 是否被用户显式设为"持续录像"（自动录像状态机不应介入或停止它）。 */
+    public boolean isPersistentRecording(String did) {
+        try {
+            return stateStore.cameras().containsKey(did);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     /** 用当前 {@link #rootDir} 为摄像头建立录像订阅（不碰持续录像状态），供 start 与切目录重连复用。 */
     private void attach(String did, CameraDevice device, long seg) {
         RecordingSink sink = new RecordingSink(did, rootDir, seg);

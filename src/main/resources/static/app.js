@@ -29,6 +29,10 @@
         // v1.2.2：录像文件页批量选择（name 集合 + 当前列表 name→size，用于显示选中容量）
         recSelected: new Set(),
         recRows: new Map(),
+        // v1.2.8：事件告警页（选中集 / 已加载行 / 分页游标）
+        evSelected: new Set(), evRows: [], evOffset: 0, evTotal: 0, evBusy: false,
+        // v1.2.8：PTZ 操作时临时切 JPEG 兼容帧，操作停止后自动切回 HLS
+        ptzCompatActive: false, ptzCompatTimer: null,
         // 门禁令牌（内存兜底；主存 localStorage，跨站 iframe 中为分区存储仍可读写）
         memToken: '',
         // 时间轴回放状态
@@ -1104,6 +1108,8 @@
             renderQualitySettings(s.quality);
             // 开放接口 API 密钥状态（独立接口，失败不阻塞其余设置项）
             loadApiKey();
+            // v1.2.8 运动侦测与自动录像（独立接口，失败不阻塞其余设置项）
+            loadMotionSettings();
         } catch (e) {
             if (e.status === 401) return; // 门禁失效由全局逻辑切回解锁页
             toast('加载设置失败：' + e.message, 'err');
@@ -1310,6 +1316,8 @@
             setTimeout(function () { key.classList.remove('fired'); }, 180);
         }
         setPtzStatus('云台「' + label + '」已发出，正在同步最新画面…', 'ok');
+        // v1.2.8：操作期间临时用常驻 JPEG 帧显示，避开 HLS 的 GOP 等待；停止操作后自动切回
+        beginPtzCompat();
         // 立即丢弃滞后缓冲；1.2s 后再追一次，覆盖「追帧时新分片刚好还没生成」的情况
         chaseLiveEdge(true);
         setTimeout(function () { if (seq === state.ptzSeq) { chaseLiveEdge(true); } }, 1200);
@@ -1795,7 +1803,7 @@
         if (v) { v.hidden = false; }
     }
 
-    function startCompatMode(did) {
+    function startCompatMode(did, quiet) {
         var img = $('compatFrame');
         if (!img) { return; }
         var seq = ++state.compatSeq;
@@ -1826,7 +1834,10 @@
         state.compatTimer = setInterval(tick, 450);
         var badge = $('liveBadge');
         if (badge) { badge.querySelector('span').textContent = '兼容画面'; }
-        setPtzStatus('兼容画面模式：以 JPEG 连续帧显示（约 2 帧/秒、无声音），不依赖浏览器 HEVC 解码；云台控制仍可用。');
+        // PTZ 临时跟手模式不覆盖"云台「上」已发出"的操作反馈
+        if (!quiet) {
+            setPtzStatus('兼容画面模式：以 JPEG 连续帧显示（约 2 帧/秒、无声音），不依赖浏览器 HEVC 解码；云台控制仍可用。');
+        }
     }
 
     /** HLS 播放失败且处于「自动」时，强制切一次兼容画面；手动 HLS 模式只给出提示。 */
@@ -1841,6 +1852,69 @@
             return;
         }
         showPreviewHint(msg);
+    }
+
+    /* ==================== v1.2.8 PTZ 临时跟手画面 ====================
+       HLS/fMP4 的 GOP≈3.2s，云台转动后要等下一个关键帧才更新；JPEG 兼容帧由
+       LiveFrameService 常驻解码（≤4fps），没有 GOP 等待，方向键更跟手。
+       操作时临时把 compatFrame 盖到 video 上，连续 4 秒无操作后自动切回 HLS。
+       关键：不销毁 / 重建 HLS 会话，video 只是 hidden，切回无需重连、无黑屏。 */
+    var PTZ_COMPAT_HOLD_MS = 4000;
+    var COMPAT_BADGE_TEXT = '兼容画面 · 低帧率 / 无声音';
+
+    function ptzCompatEligible() {
+        var sel = $('previewMode');
+        var mode = sel ? (sel.value || 'auto') : 'auto';
+        var img = $('compatFrame');
+        return mode === 'auto' && !state.forceCompat && !!state.previewDid
+            && !$('previewModal').hidden && !!img && img.hidden;
+    }
+
+    function beginPtzCompat() {
+        // 已因 HLS 失败永久降级：保持兼容画面，不要回切
+        if (state.forceCompat) return;
+        if (state.ptzCompatActive || !ptzCompatEligible()) {
+            if (state.ptzCompatActive) schedulePtzCompatBack(); // 连续操作只做续期
+            return;
+        }
+        state.ptzCompatActive = true;
+        startCompatMode(state.previewDid, true);
+        if ($('compatBadge')) $('compatBadge').textContent = '云台跟手 · 临时低延迟画面';
+        updateLiveBadge();
+        schedulePtzCompatBack();
+    }
+
+    function schedulePtzCompatBack() {
+        if (state.ptzCompatTimer) clearTimeout(state.ptzCompatTimer);
+        state.ptzCompatTimer = setTimeout(endPtzCompat, PTZ_COMPAT_HOLD_MS);
+    }
+
+    function endPtzCompat() {
+        if (state.ptzCompatTimer) { clearTimeout(state.ptzCompatTimer); state.ptzCompatTimer = null; }
+        if (!state.ptzCompatActive) return;
+        state.ptzCompatActive = false;
+        var mode = $('previewMode') ? ($('previewMode').value || 'auto') : 'auto';
+        // 期间若发生自动降级、用户切了模式、或预览已关闭，播放器已被别处接管
+        if (state.forceCompat || mode !== 'auto' || !state.previewDid || $('previewModal').hidden) return;
+        stopCompatMode(); // 只停 JPEG 轮询并隐藏 img，HLS 实例与订阅保持不动
+        if ($('compatBadge')) $('compatBadge').textContent = COMPAT_BADGE_TEXT;
+        $('previewLoading').hidden = true;
+        $('previewHint').hidden = true;
+        var v = $('previewVideo');
+        if (v) {
+            v.hidden = false;
+            try { v.play().catch(function () {}); } catch (e) {}
+        }
+        chaseLiveEdge(true); // 丢掉操作期间的滞后缓冲
+        setTimeout(function () { if (!state.ptzCompatActive) chaseLiveEdge(true); }, 1200);
+        setPtzStatus('已切回 HLS 高清画面', 'ok');
+        updateLiveBadge();
+    }
+
+    function cancelPtzCompat() {
+        if (state.ptzCompatTimer) { clearTimeout(state.ptzCompatTimer); state.ptzCompatTimer = null; }
+        state.ptzCompatActive = false;
+        if ($('compatBadge')) $('compatBadge').textContent = COMPAT_BADGE_TEXT;
     }
 
     /* ==================== v1.2.3 外网可播链接 ====================
@@ -2031,6 +2105,7 @@
     function openPreview(did) {
         var c = findDevice(did);
         if (!c) { toast('设备信息缺失', 'err'); return; }
+        cancelPtzCompat(); // 换设备 / 重开预览时清掉上一次的临时跟手状态
         state.previewDid = did;
         state.forceCompat = false;
         state.recoveredOnce = false;
@@ -2136,6 +2211,7 @@
         $('previewLoading').hidden = true;
     }
     function stopPreviewOnly() {
+        cancelPtzCompat();
         state.previewDid = null;
         state.forceCompat = false;
         stopCompatMode();
@@ -2156,6 +2232,227 @@
     function closePreview() {
         stopPreviewOnly();
         loadDevices(false);
+    }
+
+    /* ==================== v1.2.8 事件告警页 ====================
+       数据来自 P0 的 /api/events*：JSONL 事件库 + JPEG 快照。列表按时间倒序，
+       勾选后走批量接口（单条操作也复用同一套渲染），避免一次请求写爆日志。 */
+    var EV_PAGE = 20;
+
+    function evQuery(offset) {
+        var p = ['limit=' + EV_PAGE, 'offset=' + offset];
+        var did = $('evFilterDid').value;
+        var type = $('evFilterType').value;
+        var handled = $('evFilterHandled').value;
+        var date = $('evFilterDate').value;
+        if (did) p.push('did=' + encodeURIComponent(did));
+        if (type) p.push('type=' + encodeURIComponent(type));
+        if (handled !== '') p.push('handled=' + handled);
+        if (date) p.push('date=' + encodeURIComponent(date));
+        return p.join('&');
+    }
+
+    function loadEvFilters() {
+        var sel = $('evFilterDid');
+        var cur = sel.value;
+        sel.innerHTML = '<option value="">全部设备</option>' + (state.devices || []).map(function (d) {
+            return '<option value="' + esc(d.did) + '">' + esc(d.name || d.did) + '</option>';
+        }).join('');
+        sel.value = cur;
+    }
+
+    async function loadEvents(reset) {
+        if (state.evBusy) return;
+        if (reset) {
+            state.evOffset = 0;
+            state.evRows = [];
+            state.evSelected.clear();
+        }
+        state.evBusy = true;
+        try {
+            var r = await api('api/events?' + evQuery(state.evOffset));
+            var list = r.list || [];
+            state.evRows = reset ? list : state.evRows.concat(list);
+            state.evTotal = r.total || 0;
+            state.evOffset = state.evRows.length;
+            renderEvents();
+            var st = await api('api/events/stats');
+            $('evStats').innerHTML = '<span>累计事件 <b>' + (st.total || 0) + '</b></span>' +
+                '<span>今日 <b>' + (st.today || 0) + '</b></span>' +
+                '<span>未处理 <b>' + (st.unhandled || 0) + '</b></span>';
+            $('btnEvMore').hidden = state.evRows.length >= state.evTotal;
+        } catch (e) {
+            toast('事件加载失败：' + e.message, 'err');
+        } finally {
+            state.evBusy = false;
+        }
+    }
+
+    function renderEvents() {
+        var box = $('evList');
+        if (!state.evRows.length) {
+            box.innerHTML = '<div class="ev-empty">暂无事件。请先在「设置 → 运动侦测与自动录像」启用侦测。</div>';
+            updateEvBatchUi();
+            return;
+        }
+        box.innerHTML = state.evRows.map(function (e) {
+            var thumb = e.snapshotUrl
+                ? '<img class="ev-thumb" src="' + esc(withToken(e.snapshotUrl)) + '" alt="事件快照" data-evact="snapshot" data-evid="' + e.id + '">'
+                : '<div class="ev-nothumb">无快照</div>';
+            var score = (e.score != null && e.score > 0)
+                ? ' · 变化 ' + Number(e.score).toFixed(2) : '';
+            return '<article class="ev-card' + (state.evSelected.has(e.id) ? ' sel' : '') +
+                '" data-evid="' + e.id + '">' +
+                '<div class="ev-card-top">' +
+                    '<input type="checkbox" class="ev-check" data-evid="' + e.id + '"' +
+                        (state.evSelected.has(e.id) ? ' checked' : '') + ' aria-label="选择事件">' + thumb +
+                '</div>' +
+                '<div class="ev-body">' +
+                    '<div class="ev-title">' + esc(e.title || e.typeName) + '</div>' +
+                    '<div class="ev-meta">' + esc(e.deviceName || e.did) + ' · ' + fmtTime(e.createdAt) + '</div>' +
+                    '<div class="ev-meta">' + esc(e.typeName || e.type) + score + '</div>' +
+                    '<div class="ev-tags"><span class="ev-tag ' + (e.handled ? 'handled' : 'unhandled') +
+                        '">' + (e.handled ? '已处理' : '未处理') + '</span>' +
+                        (e.level && e.level !== 'info' ? '<span class="ev-tag">' + esc(e.level) + '</span>' : '') +
+                    '</div>' +
+                    '<div class="ev-actions">' +
+                        (e.snapshotUrl ? '<button class="btn tiny soft" data-evact="snapshot" data-evid="' + e.id + '">查看快照</button>' : '') +
+                        '<button class="btn tiny soft" data-evact="handled" data-evid="' + e.id +
+                            '" data-evval="' + (e.handled ? 'false' : 'true') + '">' +
+                            (e.handled ? '取消处理' : '标记已处理') + '</button>' +
+                        '<button class="btn tiny soft-danger" data-evact="del" data-evid="' + e.id + '">删除</button>' +
+                    '</div>' +
+                '</div></article>';
+        }).join('');
+        updateEvBatchUi();
+    }
+
+    function updateEvBatchUi() {
+        var n = state.evSelected.size;
+        var ids = state.evRows.map(function (e) { return e.id; });
+        $('evSelAll').checked = ids.length > 0 && ids.every(function (id) { return state.evSelected.has(id); });
+        $('evSelInfo').textContent = n ? ('已选 ' + n + ' 条事件') : '勾选事件后可批量标记或删除';
+        $('btnEvBatchHandled').disabled = n === 0;
+        $('btnEvBatchDel').disabled = n === 0;
+        $('btnEvClearSel').hidden = n === 0;
+        Array.prototype.forEach.call(document.querySelectorAll('.ev-card'), function (card) {
+            card.classList.toggle('sel', state.evSelected.has(Number(card.getAttribute('data-evid'))));
+        });
+    }
+
+    async function evBatchHandled() {
+        var ids = Array.from(state.evSelected);
+        if (!ids.length) return;
+        try {
+            var r = await api('api/events/batch/handled', {
+                method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ids: ids })
+            });
+            toast('已标记 ' + (r.updated || 0) + ' 条事件', 'ok');
+            await loadEvents(true);
+            loadDashboard();
+        } catch (e) { toast('操作失败：' + e.message, 'err'); }
+    }
+
+    async function evBatchDelete() {
+        var ids = Array.from(state.evSelected);
+        if (!ids.length) return;
+        if (!confirm('确认删除选中的 ' + ids.length + ' 条事件？对应快照也会一并删除，操作不可恢复。')) return;
+        try {
+            var r = await api('api/events/batch/delete', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ids: ids })
+            });
+            toast('已删除 ' + (r.deleted || 0) + ' 条事件', 'ok');
+            await loadEvents(true);
+            loadDashboard();
+        } catch (e) { toast('删除失败：' + e.message, 'err'); }
+    }
+
+    async function evSingle(id, act, val) {
+        if (act === 'del' && !confirm('确认删除这条事件？快照也会一并删除。')) return;
+        try {
+            if (act === 'handled') {
+                await api('api/events/' + id, {
+                    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ handled: val === 'true' })
+                });
+            } else {
+                await api('api/events/' + id, { method: 'DELETE' });
+            }
+            await loadEvents(true);
+            loadDashboard();
+        } catch (e) { toast('操作失败：' + e.message, 'err'); }
+    }
+
+    function openEvSnapshot(id) {
+        var e = state.evRows.find(function (x) { return x.id === id; });
+        if (!e || !e.snapshotUrl) return;
+        $('evSnapshotTitle').textContent = (e.deviceName || e.did) + ' · ' + fmtTime(e.createdAt);
+        var img = $('evSnapshotImg');
+        img.alt = '快照不可用或已被清理';
+        img.onerror = function () { $('evSnapshotTitle').textContent += ' · 快照不可用或已被清理'; };
+        img.src = withToken(e.snapshotUrl);
+        $('evSnapshotModal').hidden = false;
+    }
+
+    function closeEvSnapshot() {
+        $('evSnapshotModal').hidden = true;
+        var img = $('evSnapshotImg');
+        img.onerror = null;
+        img.removeAttribute('src');
+    }
+
+    /* ---------- 设置页：运动侦测与自动录像 ---------- */
+    async function loadMotionSettings() {
+        try {
+            var m = await api('api/motion/config');
+            $('setMotionEnabled').checked = !!m.enabled;
+            $('setAutoRecord').checked = !!m.autoRecord;
+            $('setMotionThreshold').value = m.threshold;
+            $('setRecordTail').value = m.recordTailSec;
+            $('setEventRetention').value = m.retentionDays;
+            $('setEventMax').value = m.maxEvents;
+            $('setMotionHint').textContent = m.enabled
+                ? '当前已启用运动侦测' + (m.autoRecord ? '与自动录像' : '') + '，参数保存后立即生效，无需重启。'
+                : '当前未启用，不会产生事件，也不会自动录像。';
+        } catch (e) {
+            $('setMotionHint').textContent = '读取运动侦测设置失败：' + e.message;
+        }
+    }
+
+    async function saveMotionSettings() {
+        var body = {
+            enabled: $('setMotionEnabled').checked,
+            autoRecord: $('setAutoRecord').checked,
+            threshold: Number($('setMotionThreshold').value),
+            recordTailSec: Number($('setRecordTail').value),
+            retentionDays: Number($('setEventRetention').value),
+            maxEvents: Number($('setEventMax').value)
+        };
+        try {
+            await api('api/motion/config', {
+                method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            toast('运动侦测设置已保存并立即生效', 'ok');
+            loadMotionSettings();
+            loadDashboard();
+        } catch (e) { toast('保存失败：' + e.message, 'err'); }
+    }
+
+    async function showMotionStatus() {
+        try {
+            var s = await api('api/motion/status');
+            var d = s.devices || {};
+            var lines = Object.keys(d).map(function (k) {
+                return k + '：评分 ' + d[k].lastScore + '，触发 ' + d[k].triggered + ' 次';
+            });
+            $('setMotionHint').textContent = '侦测 ' + (s.enabled ? '开' : '关') +
+                ' · 自动录像 ' + (s.autoRecord ? '开' : '关') +
+                ' · 事件 ' + ((s.events && s.events.total) || 0) + ' 条' +
+                (lines.length ? '\n' + lines.join('\n') : '\n（尚无采样数据）');
+        } catch (e) { toast('读取运行状态失败：' + e.message, 'err'); }
     }
 
     /* ---------- 录像回放 ---------- */
@@ -2523,6 +2820,70 @@
         $('btnRecBatchDel').addEventListener('click', recBatchDelete);
         $('btnRecBatchZip').addEventListener('click', recBatchZip);
 
+        // v1.2.8 事件告警页：筛选、批量、快照查看
+        $('btnEvRefresh').addEventListener('click', function () { loadEvents(true); });
+        $('btnEvMore').addEventListener('click', function () { loadEvents(false); });
+        $('btnEvReset').addEventListener('click', function () {
+            $('evFilterDid').value = '';
+            $('evFilterType').value = '';
+            $('evFilterHandled').value = '';
+            $('evFilterDate').value = '';
+            loadEvents(true);
+        });
+        ['evFilterDid', 'evFilterType', 'evFilterHandled', 'evFilterDate'].forEach(function (id) {
+            $(id).addEventListener('change', function () { loadEvents(true); });
+        });
+        $('evSelAll').addEventListener('change', function (e) {
+            state.evRows.forEach(function (r) {
+                if (e.target.checked) state.evSelected.add(r.id);
+                else state.evSelected.delete(r.id);
+            });
+            Array.prototype.forEach.call(document.querySelectorAll('.ev-check'), function (cb) {
+                cb.checked = e.target.checked;
+            });
+            updateEvBatchUi();
+        });
+        $('evList').addEventListener('change', function (e) {
+            var cb = e.target.closest && e.target.closest('.ev-check');
+            if (!cb) return;
+            var id = Number(cb.getAttribute('data-evid'));
+            if (cb.checked) state.evSelected.add(id);
+            else state.evSelected.delete(id);
+            updateEvBatchUi();
+        });
+        $('evList').addEventListener('click', function (e) {
+            var b = e.target.closest && e.target.closest('[data-evact]');
+            if (!b) return;
+            var id = Number(b.getAttribute('data-evid'));
+            var act = b.getAttribute('data-evact');
+            if (act === 'snapshot') openEvSnapshot(id);
+            else if (act === 'handled') evSingle(id, 'handled', b.getAttribute('data-evval'));
+            else if (act === 'del') evSingle(id, 'del');
+        });
+        // 快照文件被清理 / 损坏时降级成占位块，避免列表里出现破图 alt 文本
+        $('evList').addEventListener('error', function (e) {
+            var img = e.target;
+            if (!img.classList || !img.classList.contains('ev-thumb') || !img.parentNode) return;
+            var ph = document.createElement('div');
+            ph.className = 'ev-nothumb';
+            ph.textContent = '快照不可用';
+            img.parentNode.replaceChild(ph, img);
+        }, true);
+        $('btnEvBatchHandled').addEventListener('click', evBatchHandled);
+        $('btnEvBatchDel').addEventListener('click', evBatchDelete);
+        $('btnEvClearSel').addEventListener('click', function () {
+            state.evSelected.clear();
+            Array.prototype.forEach.call(document.querySelectorAll('.ev-check'), function (cb) { cb.checked = false; });
+            updateEvBatchUi();
+        });
+        $('evSnapshotClose').addEventListener('click', closeEvSnapshot);
+        $('evSnapshotCloseBtn').addEventListener('click', closeEvSnapshot);
+        $('evSnapshotModal').addEventListener('click', function (e) {
+            if (e.target === this) closeEvSnapshot();
+        });
+        $('btnSaveMotion').addEventListener('click', saveMotionSettings);
+        $('btnMotionStatus').addEventListener('click', showMotionStatus);
+
         // 设置：存储路径 / 分段 / 端口
         $('btnBrowseDir').addEventListener('click', openDirModal);
         $('btnSaveDir').addEventListener('click', function () { saveSettings(false); });
@@ -2640,10 +3001,12 @@
                 $('tab-cameras').hidden = name !== 'cameras';
                 $('tab-boards').hidden = name !== 'boards';
                 $('tab-recordings').hidden = name !== 'recordings';
+                $('tab-events').hidden = name !== 'events';
                 $('tab-playback').hidden = name !== 'playback';
                 $('tab-settings').hidden = name !== 'settings';
                 if (name === 'boards') loadBoards();
                 if (name === 'recordings') loadRecordings();
+                if (name === 'events') { loadEvFilters(); loadEvents(true); }
                 if (name === 'playback') enterPlayback();
                 else { pausePb(); stopPbLive(); }
                 if (name === 'settings') loadSettings();
@@ -2698,6 +3061,7 @@
         $('btnCopyLiveLink').addEventListener('click', copyLiveShare);
         $('btnRevokeLiveLink').addEventListener('click', revokeLiveShare);
         $('previewMode').addEventListener('change', function () {
+            cancelPtzCompat(); // 用户手动选模式后，不再自动回切，避免抢占用户选择
             state.forceCompat = false;
             var did = state.previewDid;
             if (!did) { return; }

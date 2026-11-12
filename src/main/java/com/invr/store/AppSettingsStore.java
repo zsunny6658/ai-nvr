@@ -307,7 +307,9 @@ public class AppSettingsStore {
                 intNum(m, "silentSec", d.silentSec()),
                 intNum(m, "retentionDays", d.retentionDays()),
                 intNum(m, "maxEvents", d.maxEvents()),
-                strList(m.get("dids"), d.dids()));
+                strList(m.get("dids"), d.dids()),
+                bool(m, "autoRecord", d.autoRecord()),
+                intNum(m, "recordTailSec", d.recordTailSec()));
     }
 
     /** 保存运动侦测参数（只写一次文件）；与默认值相同的项不落盘，恢复默认即删除这些键。 */
@@ -325,6 +327,8 @@ public class AppSettingsStore {
         putIfChanged(sub, "retentionDays", v.retentionDays(), d.retentionDays());
         putIfChanged(sub, "maxEvents", v.maxEvents(), d.maxEvents());
         if (!v.dids().equals(d.dids())) sub.put("dids", v.dids());
+        if (v.autoRecord() != d.autoRecord()) sub.put("autoRecord", v.autoRecord());
+        putIfChanged(sub, "recordTailSec", v.recordTailSec(), d.recordTailSec());
         if (sub.isEmpty()) {
             m.remove(KEY_MOTION);
         } else {

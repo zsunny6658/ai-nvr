@@ -72,5 +72,37 @@ class MotionSettingsTest {
         assertTrue(m.enabled());
         assertEquals(0.12, m.threshold());
         assertEquals(30, m.cooldownSec());
+        // v1.2.8 新增字段：旧 settings.json 没有这两个键时必须回落「关闭 / 20 秒」
+        assertFalse(m.autoRecord());
+        assertEquals(20, m.recordTailSec());
+    }
+
+    @Test
+    void autoRecordFieldsClampAndPersist() {
+        assertFalse(MotionSettings.DEFAULTS.autoRecord());
+        assertEquals(20, MotionSettings.DEFAULTS.recordTailSec());
+        assertEquals(20000L, MotionSettings.DEFAULTS.recordTailMs());
+
+        MotionSettings legacy = new MotionSettings(true, 0.12, 2, 30, 2, 8, 30, 2000, List.of());
+        assertFalse(legacy.autoRecord());
+        assertEquals(20, legacy.recordTailSec());
+
+        MotionSettings clamped = new MotionSettings(true, 0.12, 2, 30, 2, 8, 30, 2000,
+                List.of(), true, 9999);
+        assertEquals(600, clamped.recordTailSec());
+        MotionSettings tooSmall = new MotionSettings(true, 0.12, 2, 30, 2, 8, 30, 2000,
+                List.of(), true, 0);
+        assertEquals(5, tooSmall.recordTailSec());
+
+        AppSettingsStore store = new AppSettingsStore(dir);
+        store.saveMotion(new MotionSettings(true, 0.12, 2, 30, 2, 8, 30, 2000,
+                List.of("d1"), true, 45));
+        MotionSettings reloaded = new AppSettingsStore(dir).motion();
+        assertTrue(reloaded.autoRecord());
+        assertEquals(45, reloaded.recordTailSec());
+        assertEquals(List.of("d1"), reloaded.dids());
+
+        store.saveMotion(MotionSettings.DEFAULTS);
+        assertFalse(new AppSettingsStore(dir).motion().autoRecord());
     }
 }

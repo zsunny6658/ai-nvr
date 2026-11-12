@@ -10,6 +10,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -35,10 +36,14 @@ public class EventsController {
 
     private static final Map<String, String> TYPE_NAMES = Map.of(
             "motion", "运动侦测",
+            "record", "自动录像",
             "person", "人形检测",
             "vehicle", "车辆检测",
             "offline", "设备离线",
             "alarm", "设备告警");
+
+    /** 事件页批量操作一次最多处理 200 条，避免一次请求写爆 JSONL。 */
+    private static final int MAX_BATCH = 200;
 
     private final EventStore store;
 
@@ -95,6 +100,53 @@ public class EventsController {
             throw ApiException.notFound("事件不存在：id=" + id);
         }
         return Map.of("deleted", id);
+    }
+
+    public record IdsRequest(List<Long> ids) {
+    }
+
+    /** 事件页批量标记已处理 / 取消处理。 */
+    @PutMapping("/events/batch/handled")
+    public Map<String, Object> markHandledBatch(
+            @RequestParam(name = "handled", defaultValue = "true") boolean handled,
+            @RequestBody(required = false) IdsRequest req) {
+        List<Long> ids = batchIds(req);
+        int n = 0;
+        for (Long id : ids) {
+            if (store.markHandled(id, handled).isPresent()) {
+                n++;
+            }
+        }
+        return Map.of("updated", n, "handled", handled);
+    }
+
+    /** 事件页批量删除（含各自快照）。 */
+    @PostMapping("/events/batch/delete")
+    public Map<String, Object> deleteBatch(@RequestBody(required = false) IdsRequest req) {
+        List<Long> ids = batchIds(req);
+        int n = 0;
+        for (Long id : ids) {
+            if (store.delete(id)) {
+                n++;
+            }
+        }
+        return Map.of("deleted", n);
+    }
+
+    private static List<Long> batchIds(IdsRequest req) {
+        if (req == null || req.ids() == null || req.ids().isEmpty()) {
+            throw ApiException.badRequest("请先选择事件");
+        }
+        List<Long> out = new ArrayList<>();
+        for (Long id : req.ids()) {
+            if (id != null && !out.contains(id)) {
+                out.add(id);
+            }
+        }
+        if (out.size() > MAX_BATCH) {
+            throw ApiException.badRequest("单次最多处理 " + MAX_BATCH + " 条事件，请分批操作");
+        }
+        return out;
     }
 
     /** 事件快照 JPEG；无快照时返回 404。 */

@@ -40,6 +40,14 @@ mkdir "build"
 echo [..] Copying template...
 xcopy "template\*" "build\" /E /I /Y /Q >nul
 
+REM GPLv2 分发要求随二进制附带许可证全文（fpk 顶层）
+if not exist "..\LICENSE" (
+    echo [ERROR] ..\LICENSE not found
+    pause
+    exit /b 1
+)
+copy "..\LICENSE" "build\LICENSE" >nul
+
 echo [..] Copying JRE and jar...
 xcopy "input\jre\*" "build\app\jre\" /E /I /Y /Q >nul
 copy "..\target\invr-fnos.jar" "build\app\app.jar" >nul

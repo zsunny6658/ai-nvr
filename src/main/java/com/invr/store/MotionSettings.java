@@ -13,6 +13,10 @@ import java.util.List;
  *
  * <p>字段在紧凑构造器里统一夹到安全区间，避免手工编辑 settings.json 写入越界值导致
  * 定时器空转或事件无限增长。{@code dids} 为空表示对所有在线设备启用。</p>
+ *
+ * <p>v1.2.8 增加 {@code autoRecord} / {@code recordTailSec}：运动触发的自动录像默认关闭，
+ * 开启后由 {@code MotionRecordingService} 管理临时录像会话（不写"持续录像"期望状态，
+ * 因此进程重启不会变成永久录像）。保留 9 参数构造器，避免旧代码/旧单测被迫改动。</p>
  */
 public record MotionSettings(
         boolean enabled,
@@ -23,10 +27,20 @@ public record MotionSettings(
         int silentSec,
         int retentionDays,
         int maxEvents,
-        List<String> dids) {
+        List<String> dids,
+        boolean autoRecord,
+        int recordTailSec) {
 
     public static final MotionSettings DEFAULTS =
-            new MotionSettings(false, 0.12, 2, 30, 2, 8, 30, 2000, List.of());
+            new MotionSettings(false, 0.12, 2, 30, 2, 8, 30, 2000, List.of(), false, 20);
+
+    /** 兼容 v1.2.6/1.2.7 的 9 参数构造：自动录像保持关闭、尾延时用默认值。 */
+    public MotionSettings(boolean enabled, double threshold, int intervalSec, int cooldownSec,
+                          int confirmFrames, int silentSec, int retentionDays, int maxEvents,
+                          List<String> dids) {
+        this(enabled, threshold, intervalSec, cooldownSec, confirmFrames, silentSec,
+                retentionDays, maxEvents, dids, false, 20);
+    }
 
     public MotionSettings {
         threshold = clamp(threshold, 0.02, 0.50);
@@ -36,6 +50,7 @@ public record MotionSettings(
         silentSec = (int) clamp(silentSec, 0, 120);
         retentionDays = (int) clamp(retentionDays, 0, 365);
         maxEvents = (int) clamp(maxEvents, 100, 20000);
+        recordTailSec = (int) clamp(recordTailSec, 5, 600);
 
         LinkedHashSet<String> unique = new LinkedHashSet<>();
         if (dids != null) {
@@ -54,6 +69,11 @@ public record MotionSettings(
 
     public long silentMs() {
         return silentSec * 1000L;
+    }
+
+    /** 画面静止多久后停止自动录像。 */
+    public long recordTailMs() {
+        return recordTailSec * 1000L;
     }
 
     /** 该 DID 是否参与巡检；空列表表示全部在线设备。 */

@@ -41,14 +41,15 @@ public class MotionController {
     /** 全部字段可省略，省略项沿用当前值；参数每轮巡检重新读取，保存后立即生效。 */
     public record ConfigRequest(Boolean enabled, Double threshold, Integer intervalSec,
                                 Integer cooldownSec, Integer confirmFrames, Integer silentSec,
-                                Integer retentionDays, Integer maxEvents, List<String> dids) {
+                                Integer retentionDays, Integer maxEvents, List<String> dids,
+                                Boolean autoRecord, Integer recordTailSec) {
     }
 
     @PutMapping("/config")
     public MotionSettings updateConfig(@RequestBody(required = false) ConfigRequest req) {
         MotionSettings cur = settingsStore.motion();
         ConfigRequest r = req == null ? new ConfigRequest(null, null, null, null,
-                null, null, null, null, null) : req;
+                null, null, null, null, null, null, null) : req;
 
         double threshold = r.threshold() == null ? cur.threshold() : r.threshold();
         int interval = r.intervalSec() == null ? cur.intervalSec() : r.intervalSec();
@@ -57,6 +58,7 @@ public class MotionController {
         int silent = r.silentSec() == null ? cur.silentSec() : r.silentSec();
         int retention = r.retentionDays() == null ? cur.retentionDays() : r.retentionDays();
         int maxEvents = r.maxEvents() == null ? cur.maxEvents() : r.maxEvents();
+        int recordTail = r.recordTailSec() == null ? cur.recordTailSec() : r.recordTailSec();
 
         requireRange(threshold, 0.02, 0.50, "threshold");
         requireRange(interval, 1, 60, "intervalSec");
@@ -65,11 +67,14 @@ public class MotionController {
         requireRange(silent, 0, 120, "silentSec");
         requireRange(retention, 0, 365, "retentionDays");
         requireRange(maxEvents, 100, 20000, "maxEvents");
+        requireRange(recordTail, 5, 600, "recordTailSec");
 
         MotionSettings next = new MotionSettings(
                 r.enabled() == null ? cur.enabled() : r.enabled(),
                 threshold, interval, cooldown, confirm, silent, retention, maxEvents,
-                r.dids() == null ? cur.dids() : r.dids());
+                r.dids() == null ? cur.dids() : r.dids(),
+                r.autoRecord() == null ? cur.autoRecord() : r.autoRecord(),
+                recordTail);
         settingsStore.saveMotion(next);
         return settingsStore.motion();
     }

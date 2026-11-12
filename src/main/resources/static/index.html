@@ -10,7 +10,7 @@
     <base href="./">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230891b2'/%3E%3C/svg%3E">
     <title>iNvr · 小米摄像头 NVR</title>
-    <link rel="stylesheet" href="style.css?v=25">
+    <link rel="stylesheet" href="style.css?v=26">
 </head>
 <body>
 <header class="topbar">
@@ -94,6 +94,7 @@
             <button class="tab active" data-tab="cameras">摄像头</button>
             <button class="tab" data-tab="boards">共享看板</button>
             <button class="tab" data-tab="recordings">录像文件</button>
+            <button class="tab" data-tab="events">事件告警</button>
             <button class="tab" data-tab="playback">录像回放</button>
             <button class="tab" data-tab="settings">设置</button>
         </nav>
@@ -155,6 +156,46 @@
                     <tbody id="recList"></tbody>
                 </table>
             </div>
+        </div>
+
+        <!-- v1.2.8 事件告警：运动侦测 / 自动录像事件，支持筛选、批量处理与快照查看 -->
+        <div id="tab-events" hidden>
+            <div class="section-head">
+                <h2>事件告警</h2>
+                <div><button class="btn soft" id="btnEvRefresh" type="button">&#8635; 刷新</button></div>
+            </div>
+            <div class="ev-stats" id="evStats">-</div>
+            <div class="ev-filters">
+                <select id="evFilterDid" class="select" aria-label="设备"><option value="">全部设备</option></select>
+                <select id="evFilterType" class="select" aria-label="类型">
+                    <option value="">全部类型</option>
+                    <option value="motion">运动侦测</option>
+                    <option value="record">自动录像</option>
+                    <option value="person">人形检测</option>
+                    <option value="vehicle">车辆检测</option>
+                    <option value="offline">设备离线</option>
+                    <option value="alarm">设备告警</option>
+                </select>
+                <select id="evFilterHandled" class="select" aria-label="处理状态">
+                    <option value="">全部状态</option>
+                    <option value="false">未处理</option>
+                    <option value="true">已处理</option>
+                </select>
+                <input type="date" id="evFilterDate" class="select" aria-label="日期">
+                <button class="btn soft" id="btnEvReset" type="button">重置</button>
+            </div>
+            <div class="rec-toolbar ev-toolbar">
+                <label class="ev-selall"><input type="checkbox" id="evSelAll" aria-label="全选本页"> 全选本页</label>
+                <span class="rec-selinfo" id="evSelInfo">勾选事件后可批量标记或删除</span>
+                <div class="rec-toolbar-actions">
+                    <button class="btn tiny soft" id="btnEvBatchHandled" disabled>标记已处理</button>
+                    <button class="btn tiny soft-danger" id="btnEvBatchDel" disabled>批量删除</button>
+                    <button class="btn tiny" id="btnEvClearSel" hidden>取消选择</button>
+                </div>
+            </div>
+            <div class="ev-grid" id="evList"></div>
+            <div class="ev-more"><button class="btn soft" id="btnEvMore" hidden>加载更多</button></div>
+            <p class="muted small">事件保存在应用数据目录，默认上限 2000 条 / 30 天，可在「设置 → 运动侦测与自动录像」调整。误报偏多时适当提高变化阈值或增大确认帧数。</p>
         </div>
 
         <div id="tab-playback" hidden>
@@ -237,6 +278,29 @@
                     </div>
                     <p class="muted small" id="setRetentionHint"></p>
                     <div class="set-kv" id="setMisc"></div>
+                </div>
+                <div class="set-card">
+                    <h3>运动侦测与自动录像</h3>
+                    <p class="muted small">基于实时画面的 8×8 感知哈希帧差检测，复用兼容画面已有的解码帧，不额外占用摄像头取流通道。自动录像在检测到运动时开录、画面静止后按尾延时自动封段停录，不会影响手动录像。默认全部关闭。</p>
+                    <label class="ev-switch"><input type="checkbox" id="setMotionEnabled"> 启用运动侦测与事件记录</label>
+                    <label class="ev-switch"><input type="checkbox" id="setAutoRecord"> 检测到运动时自动录像（需先启用侦测）</label>
+                    <label>变化阈值（0.02～0.50，越大越不灵敏）</label>
+                    <div class="set-edit">
+                        <input type="number" id="setMotionThreshold" min="0.02" max="0.5" step="0.01">
+                        <span class="muted small">误报多就调大</span>
+                    </div>
+                    <label>静止多久后停止自动录像（秒，5～600）</label>
+                    <div class="set-edit"><input type="number" id="setRecordTail" min="5" max="600" step="5"></div>
+                    <label>事件保留天数 / 最大条数</label>
+                    <div class="set-edit">
+                        <input type="number" id="setEventRetention" min="0" max="365" step="1">
+                        <input type="number" id="setEventMax" min="100" max="20000" step="100">
+                    </div>
+                    <div class="set-actions">
+                        <button class="btn primary" id="btnSaveMotion" type="button">保存并应用</button>
+                        <button class="btn" id="btnMotionStatus" type="button">查看运行状态</button>
+                    </div>
+                    <div id="setMotionHint" class="muted small"></div>
                 </div>
                 <div class="set-card">
                     <h3>门禁访问密码</h3>
@@ -528,10 +592,22 @@
     </div>
 </div>
 
+<!-- v1.2.8 事件快照查看 -->
+<div class="modal-mask" id="evSnapshotModal" hidden>
+    <div class="modal ev-snapshot-modal">
+        <div class="modal-head">
+            <span id="evSnapshotTitle">事件快照</span>
+            <button class="modal-x" id="evSnapshotClose" aria-label="关闭快照">×</button>
+        </div>
+        <img id="evSnapshotImg" alt="事件快照">
+        <div class="modal-foot"><button class="btn" id="evSnapshotCloseBtn" type="button">关闭</button></div>
+    </div>
+</div>
+
 <div id="toast" class="toast"></div>
 
 <script src="vendor/hls.min.js"></script>
-<script src="watchdog.js?v=25"></script>
-<script src="app.js?v=25"></script>
+<script src="watchdog.js?v=26"></script>
+<script src="app.js?v=26"></script>
 </body>
 </html>

@@ -37,10 +37,13 @@ echo "    appname=$APP_NAME  version=$VERSION  port=$PORT"
 # 非破坏式准备 build 目录（覆盖而非 rm -rf，避免误删/被安全钩子拦截）
 mkdir -p build
 rm -rf build/app build/cmd build/config build/wizard 2>/dev/null || true
-rm -f build/manifest build/ICON.PNG build/ICON_256.PNG 2>/dev/null || true
+rm -f build/manifest build/ICON.PNG build/ICON_256.PNG build/LICENSE 2>/dev/null || true
 
 echo "==> 复制模板"
 cp -R template/. build/
+# GPLv2 分发要求随二进制附带许可证全文：fpk 顶层放一份（仓库根 LICENSE 为准）
+[ -f "$REPO_ROOT/LICENSE" ] || { echo "[ERROR] 未找到仓库根 LICENSE，无法生成合规安装包"; exit 1; }
+cp "$REPO_ROOT/LICENSE" build/LICENSE
 
 echo "==> 复制 JRE 与 app.jar"
 mkdir -p build/app/jre
@@ -112,4 +115,4 @@ OUT=$(ls -t output/*.fpk | head -1)
 echo "==> 完成: $OUT"
 ls -lh "$OUT"
 echo "==> 校验内容（应含 app.tgz / manifest / cmd/main / app/app.jar）:"
-tar -tzf "$OUT" | grep -E '^(app\.tgz|manifest|cmd/main|app/app\.jar)$'
+tar -tzf "$OUT" | grep -E '^(app\.tgz|manifest|cmd/main|LICENSE|app/app\.jar)$'
