@@ -3,7 +3,7 @@
 # ============================================================
 
 appname=indsvr-invr
-version=1.2.3
+version=1.2.4
 display_name=iNVR
 desc=iNVR 是一款纯 Java 自研的小米 / 米家摄像头网络录像服务（NVR）。通过小米私有 miss/mess + CS2 协议直连接入摄像头，无需开启 RTSP/ONVIF、无需刷固件、不依赖云录像，在 NAS 上提供网页实时预览、标准 RTSP 下行、分段录像与时间轴回放，且不限制摄像头路数。<br /><br /><strong>核心特性</strong><br />· <strong>单通道复用</strong>：网页预览、RTSP、录像任意组合，同一摄像头始终只占用 1 条上游连接，内置 GOP 缓存秒开、断流自动重连<br />· <strong>米家账号登录</strong>：网页端完成登录，凭据加密本地存储、重启免密<br />· <strong>网页实时预览</strong>：HLS over fMP4（CMAF），HEVC/H.264 画面原样、音频转 AAC，浏览器原生播放；低延迟追帧 + 实时延迟显示，云台操作后自动跳到最新画面<br />· <strong>标准 RTSP 下行</strong>：rtsp://主机:9554/摄像头DID，VLC / ffplay 等第三方播放器直接拉流<br />· <strong>分段录像</strong>：fMP4 默认 2 分钟一段、按 IDR 边界对齐，边录边播，崩溃 / 断电只丢最后约 1 个 GOP；服务重启后自动续录<br />· <strong>批量管理</strong>：录像文件可多选后批量删除、批量打包为 ZIP 下载，正在录制中的分段自动跳过<br />· <strong>双端适配</strong>：手机飞牛 App 与 PC 浏览器均可正常操作与看画面，解不了 H.265 的设备自动切换兼容画面<br />· <strong>外网可播链接</strong>：一键生成走当前域名的临时播放链接，无需 RTSP 端口映射，24 小时有效可撤销<br />· <strong>时间轴回放</strong>：按天时间轴展示录像段，点击任意位置连续播放，支持全天 / 6 小时 / 1 小时缩放与翻页<br />· <strong>访问安全</strong>：访问密码门禁（PBKDF2 加盐哈希），支持一键解锁链接，会话与密码均加密落盘<br />
 platform=x86
@@ -16,4 +16,4 @@ os_min_version=0.9.0
 desktop_uidir=ui
 desktop_applaunchname=indsvr-invr.main
 ctl_stop=true
-changelog=Release 1.2.3 移动端 / PC 双端适配、外网可播链接与 HEVC 兼容画面：① 补齐 viewport-fit=cover 与安全区，顶栏 / 标签栏 / 录像表 / 设备卡片 / 控制区在 375~430px 手机屏不再溢出裁切，预览弹窗窄屏全屏化，方向键放大到 44px 触控区；② 所有 video 补齐 webkit-playsinline / x5-playsinline 等属性，避免飞牛 App 的 iOS WKWebView 与 Android X5 内核强制全屏接管，并增加触摸起播兜底；③ 新增「兼容画面」：解不了 H.265 的手机浏览器自动切到服务端 JPEG 连续帧（常驻订阅 + 帧率/分辨率节流，不重连摄像头、不依赖 HEVC 解码），顶栏可手动切换 自动 / HLS 高清 / 兼容画面，HLS 解码失败或首帧超时也会自动降级；④ 预览弹窗新增「外网可播链接」：生成临时单画面共享链接，走当前域名与网关前缀，免登录、免 9554 端口映射，24 小时有效可随时撤销；RTSP 地址明确标注仅局域网可用；⑤ 共享页同步支持单画面布局、移动端安全区与同样的兼容画面兜底；⑥ 新增 11 项单测，全量 119/119 通过\n
+changelog=Release 1.2.4 修正 iOS / 飞牛 App 画面降级策略与外网取流兜底：① 实测局域网内 iPhone 通过飞牛 App 可直接播放 H.265 画面，原「MP4 容器 hvc1 能力探测」在部分 WKWebView 返回空，会把原本流畅的 HLS 画面误降级成低帧率 JPEG；现改为声明支持原生 HLS 的设备（iOS Safari / 飞牛 App WKWebView / 桌面 Safari）一律先试 HLS，仅 Chromium + MSE 保留快速预降级，手动「自动 / HLS 高清 / 兼容画面」选择始终优先；② 预览弹窗首帧 26 秒、共享页网格与全屏 20 秒仍不出画面时自动切兼容帧，覆盖外网域名 / 中继拉不到 fMP4 分片的场景，不再永久停在「正在连接…」；③ 共享页 MSE 连续取流失败 3 次后自动转兼容帧，切换时彻底释放 HLS 会话与看门狗；④ HEVC 探测统一使用 window.MediaSource 显式引用。上一版 1.2.3：移动端 / PC 双端适配（安全区、内联播放、窄屏布局）、HEVC 兼容画面、外网同源可播链接、全量 119/119 单测通过\n

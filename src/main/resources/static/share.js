@@ -17,24 +17,41 @@
     var eventState = null;
     /* 全屏覆盖层播放器记录 */
     var fullscreenRec = null;
+    var fullscreenFirstFrameTimer = null;
     var evtSource = null;
 
     function full(path) { return ROOT + path; }
 
-    /* ===== v1.2.3 移动端 / 飞牛 App WebView：HEVC 兼容画面 =====
-       共享页外网打开时多在低配手机上，H.265 解码常不可用。浏览器能力探测为否时，
-       改走免鉴权的 /share/{token}/frame/{did} JPEG 连续帧，<img> 即可出画面。 */
+    /* ===== 移动端 / 飞牛 App WebView：HEVC 兼容画面 =====
+       共享页外网打开时若 H.265 解不了（或分片拉不下来），改走免鉴权的
+       /share/{token}/frame/{did} JPEG 连续帧，<img> 即可出画面。
+       v1.2.4：能力探测只作 Chromium+MSE 的快速预降级，原生 HLS 设备先试 HLS。 */
     function hevcSupported() {
         try {
             var codecs = ['hvc1.1.6.L93.B0', 'hev1.1.6.L93.B0', 'hvc1.1.6.L153.B0'];
             var probe = document.createElement('video');
             for (var i = 0; i < codecs.length; i++) {
                 var mime = 'video/mp4; codecs="' + codecs[i] + '"';
-                if (window.MediaSource && MediaSource.isTypeSupported && MediaSource.isTypeSupported(mime)) { return true; }
+                if (window.MediaSource && window.MediaSource.isTypeSupported && window.MediaSource.isTypeSupported(mime)) { return true; }
                 if (probe.canPlayType(mime)) { return true; }
             }
             return false;
         } catch (e) { return false; }
+    }
+
+    /* 原生 HLS（iOS Safari / 飞牛 App WKWebView）。实测局域网内 iPhone 用飞牛 App
+       能看到 H.265 画面，且 WKWebView 对 MP4/hvc1 的 canPlayType 探测可能返回空，
+       因此不能用该探测结果把它预降级成低帧率 JPEG。 */
+    function nativeHlsSupported() {
+        try {
+            var probe = document.createElement('video');
+            return !!probe.canPlayType('application/vnd.apple.mpegurl');
+        } catch (e) { return false; }
+    }
+
+    function wantsCompat() {
+        if (nativeHlsSupported()) { return false; }
+        return !hevcSupported();
     }
     function inlineVideo(v) {
         v.muted = true; v.autoplay = true; v.playsInline = true;
@@ -154,27 +171,52 @@
             showPlaceholder(cell, '设备离线', 'offline');
             return;
         }
-        if (!hevcSupported() && s.frameUrl) {
-            clearPlaceholder(cell);
-            video.hidden = true;
-            rec.compat = startCompatImage(cell, s.frameUrl);
+        if (wantsCompat() && s.frameUrl) {
+            enterCompat(rec);
             return;
         }
         attachHls(rec);
     }
 
+    function clearFirstFrame(rec) {
+        if (rec && rec.firstFrameTimer) {
+            clearTimeout(rec.firstFrameTimer);
+            rec.firstFrameTimer = null;
+        }
+    }
+
+    /* 统一切到兼容帧：能力预降级与「HLS 实际播不出来」降级共用，先彻底释放 HLS 会话。 */
+    function enterCompat(rec) {
+        if (!rec || !rec.frameUrl || rec.compat) { return false; }
+        stopWatchdog(rec);
+        clearFirstFrame(rec);
+        if (rec.hls) { try { rec.hls.destroy(); } catch (e) {} rec.hls = null; }
+        if (rec.video) {
+            try { rec.video.pause(); rec.video.removeAttribute('src'); rec.video.load(); } catch (e) {}
+            rec.video.hidden = true;
+        }
+        clearPlaceholder(rec.cell);
+        rec.compat = startCompatImage(rec.cell, rec.frameUrl);
+        return true;
+    }
+
     function attachHls(rec) {
         stopWatchdog(rec);
+        clearFirstFrame(rec);
+        if (rec.compat) { return; }
         rec.hls = mountHls(rec.video, full(rec.hlsUrl), function () {
             scheduleRetry(rec);
         });
         if (rec.hls === undefined) {
+            if (enterCompat(rec)) { return; }
             showPlaceholder(rec.cell, '当前浏览器不支持 HLS 播放', 'error');
             return;
         }
         rec.video.addEventListener('playing', function () {
+            clearFirstFrame(rec);
             if (rec.online) { clearPlaceholder(rec.cell); }
         });
+        rec.video.addEventListener('loadeddata', function () { clearFirstFrame(rec); }, { once: true });
         // 看门狗：停滞/错误/画面冻结/墙钟延迟过大时自动处理（video 元素不变，仅重建播放会话）。
         // getLatency/seekLive 闭包引用 rec，remount 后 rec.hls 更新为新实例，回调始终读到当前会话。
         rec.wd = Watchdog.start(rec.video, function () { remountRec(rec); }, {
@@ -188,6 +230,13 @@
             }
         });
         rec.video.getWatchdogState = rec.wd.getState; // 可观测性：便于 CDP 验收与运维排查
+        /* v1.2.4：外网（域名/中继）访问时，原生 HLS 播放器可能一直拉不到 fMP4 分片，
+           界面会永久停在「正在连接…」。20 秒仍无首帧就切兼容帧，保证 iPhone 外网也有画面。 */
+        rec.firstFrameTimer = setTimeout(function () {
+            rec.firstFrameTimer = null;
+            if (rec.compat) { return; }
+            if (!rec.video.videoWidth || rec.video.readyState < 2) { enterCompat(rec); }
+        }, 20000);
     }
 
     function stopWatchdog(rec) {
@@ -210,6 +259,7 @@
 
     function destroyPlayer(rec) {
         stopWatchdog(rec);
+        clearFirstFrame(rec);
         if (rec.compat) { rec.compat.stop(); rec.compat = null; }
         if (rec.hls) {
             try { rec.hls.destroy(); } catch (e) { /* 忽略 */ }
@@ -223,6 +273,9 @@
     }
 
     function scheduleRetry(rec) {
+        rec.retries = (rec.retries || 0) + 1;
+        // MSE 反复 fatal 时不再无限重试，直接落到兼容帧（外网分片异常的主要表现）
+        if (rec.retries >= 3 && enterCompat(rec)) { return; }
         showPlaceholder(rec.cell, '取流失败，重试中…', 'error');
         setTimeout(function () {
             if (rec.hls) {
@@ -424,8 +477,29 @@
 
     /* ===================== grid4/9 全屏覆盖层 ===================== */
 
+    function clearFullscreenFirstFrame() {
+        if (fullscreenFirstFrameTimer) {
+            clearTimeout(fullscreenFirstFrameTimer);
+            fullscreenFirstFrameTimer = null;
+        }
+    }
+
+    function fullscreenToCompat() {
+        var rec = fullscreenRec;
+        if (!rec || !rec.frameUrl || rec.compat) { return; }
+        clearFullscreenFirstFrame();
+        if (rec.wd) { rec.wd.stop(); rec.wd = null; }
+        if (rec.hls) { try { rec.hls.destroy(); } catch (e) {} rec.hls = null; }
+        rec.video.pause();
+        rec.video.removeAttribute('src');
+        rec.video.load();
+        rec.video.hidden = true;
+        rec.compat = startCompatImage(document.getElementById('fullscreenLayer'), rec.frameUrl);
+    }
+
     function showFullscreen(did) {
         var layer = document.getElementById('fullscreenLayer');
+        clearFullscreenFirstFrame();
         layer.innerHTML = '';
 
         var video = document.createElement('video');
@@ -444,7 +518,7 @@
         layer.appendChild(bar);
 
         var frameUrl = findFrameUrl(did);
-        if (!hevcSupported() && frameUrl) {
+        if (wantsCompat() && frameUrl) {
             video.hidden = true;
             var compat = startCompatImage(layer, frameUrl);
             fullscreenRec = { did: did, video: video, hls: null, wd: null, compat: compat };
@@ -469,8 +543,18 @@
                 video.getWatchdogState = wd.getState;
             }
         }
-        fullscreenRec = { did: did, video: video, hls: hls, wd: wd };
+        fullscreenRec = { did: did, video: video, hls: hls, wd: wd, frameUrl: frameUrl };
         layer.hidden = false;
+        video.addEventListener('playing', clearFullscreenFirstFrame);
+        video.addEventListener('loadeddata', clearFullscreenFirstFrame, { once: true });
+        if (hls === undefined && frameUrl) { fullscreenToCompat(); return; }
+        if (src && hls !== undefined) {
+            /* v1.2.4：外网拉不到分片时原生 HLS 会一直卡住，20s 无首帧则切兼容帧 */
+            fullscreenFirstFrameTimer = setTimeout(function () {
+                fullscreenFirstFrameTimer = null;
+                if (!video.videoWidth || video.readyState < 2) { fullscreenToCompat(); }
+            }, 20000);
+        }
     }
 
     /* 全屏看门狗回调：销毁旧会话后重新挂载，video 元素保持不变 */
@@ -496,6 +580,7 @@
     }
 
     function destroyFullscreen() {
+        clearFullscreenFirstFrame();
         if (fullscreenRec) {
             if (fullscreenRec.compat) { fullscreenRec.compat.stop(); }
             if (fullscreenRec.wd) { fullscreenRec.wd.stop(); }

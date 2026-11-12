@@ -1641,23 +1641,40 @@
             var probe = document.createElement('video');
             for (var i = 0; i < codecs.length; i++) {
                 var mime = 'video/mp4; codecs="' + codecs[i] + '"';
-                if (window.MediaSource && MediaSource.isTypeSupported && MediaSource.isTypeSupported(mime)) return true;
+                if (window.MediaSource && window.MediaSource.isTypeSupported && window.MediaSource.isTypeSupported(mime)) return true;
                 if (probe.canPlayType(mime)) return true;
             }
             return false;
         } catch (e) { return false; }
     }
 
+    /* 原生 HLS 能力（iOS Safari / 飞牛 App WKWebView）。
+       实测：局域网内 iPhone 通过飞牛 App 打开本应用可以看到 H.265 画面，说明这类
+       WebView 的「原生 HLS + HEVC」链路是通的；而 MP4 容器里 hvc1 的 canPlayType
+       探测在部分 WKWebView 会返回空，不能拿它否定 HLS 中的 HEVC 解码能力。
+       v1.2.4：这类设备一律先试 HLS，只有真实播放失败才降级，避免把流畅画面
+       误降成 2 帧/秒、无声音的 JPEG 兼容帧。 */
+    function nativeHlsSupported() {
+        try {
+            var probe = document.createElement('video');
+            return !!probe.canPlayType('application/vnd.apple.mpegurl');
+        } catch (e) { return false; }
+    }
+
     /* ==================== v1.2.3 兼容画面模式 ====================
-       摄像头输出为 fMP4 + H.265，PC Edge/Safari 与部分手机可解；Android WebView / 飞牛 App
-       多数缺少 HEVC 解码，hls.js 会直接报 codec 不兼容黑屏。这里改用服务端解帧后的
+       摄像头输出为 fMP4 + H.265，PC Edge/Safari 与部分手机可解；Android WebView / 缺少
+       HEVC 扩展的 Chromium 会直接报 codec 不兼容黑屏。这里改用服务端解帧后的
        JPEG 连续帧（/api/frame/{did}），只需 <img>，任何浏览器/WebView 都能出画面。
-       代价：低帧率、无声音、服务端需要软解一路；故仅在自动判定不支持或手动选择时启用。 */
+       代价：低帧率、无声音、服务端需要软解一路；故仅在「确定播不了」或「实际播放失败」
+       时启用。v1.2.4 起前置探测只用于 Chromium+MSE 快速跳过必然黑屏的等待，
+       原生 HLS 设备改为乐观试播 + 失败降级（首帧看门狗 / autoFallbackToCompat）。 */
     function previewWantsCompat() {
         var mode = $('previewMode') ? ($('previewMode').value || 'auto') : 'auto';
         if (mode === 'compat') { return true; }
         if (mode === 'hls') { return false; }
-        return state.forceCompat || !hevcDecodeSupported();
+        if (state.forceCompat) { return true; }
+        if (nativeHlsSupported()) { return false; }
+        return !hevcDecodeSupported();
     }
 
     function stopCompatMode() {
