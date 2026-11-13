@@ -115,11 +115,27 @@
         if (n < 1073741824) return (n / 1048576).toFixed(1) + ' MB';
         return (n / 1073741824).toFixed(2) + ' GB';
     }
+    function escapeHtml(s) {
+        return String(s == null ? '' : s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
     function fmtTime(ms) {
         var d = new Date(ms);
         function p(x) { return String(x).padStart(2, '0'); }
         return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) +
             ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+    }
+    function fmtDuration(sec) {
+        sec = Math.max(0, Math.floor(sec));
+        var d = Math.floor(sec / 86400);
+        var h = Math.floor((sec % 86400) / 3600);
+        var m = Math.floor((sec % 3600) / 60);
+        var s = sec % 60;
+        if (d > 0) return d + '天' + h + '时';
+        if (h > 0) return h + '时' + m + '分';
+        if (m > 0) return m + '分' + s + '秒';
+        return s + '秒';
     }
     function esc(s) {
         return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -187,6 +203,7 @@
         loadRecordings();
         loadBoards();
         loadDashboard();
+        loadAbout();
         state.pollTimer = setInterval(function () { loadDevices(false); }, 5000);
         // 概览含录像目录扫描，30 秒一次即可，不跟着 5 秒设备轮询走
         state.dashTimer = setInterval(loadDashboard, 30000);
@@ -433,6 +450,17 @@
         } catch (e) {
             // 概览失败不打断主流程（门禁失效由 api() 统一处理）
         }
+    }
+
+    /** 页脚显示运行版本与已运行时长；失败静默（不影响主流程）。 */
+    function loadAbout() {
+        var el = $('appVersion');
+        if (!el) return;
+        api('/api/about').then(function (d) {
+            var v = d.version || '?';
+            var up = d.uptimeMs ? (d.uptimeMs / 1000) : 0;
+            el.textContent = 'v' + v + ' · 已运行 ' + fmtDuration(up);
+        }).catch(function () {});
     }
 
     /* ---------- v1.2.7 设备自检 ---------- */
@@ -2413,6 +2441,10 @@
             $('setRecordTail').value = m.recordTailSec;
             $('setEventRetention').value = m.retentionDays;
             $('setEventMax').value = m.maxEvents;
+            var selected = (m.dids && m.dids.length) ? m.dids : [];
+            var all = selected.length === 0;
+            $('setMotionAllDids').checked = all;
+            await renderMotionDids(selected, all);
             $('setMotionHint').textContent = m.enabled
                 ? '当前已启用运动侦测' + (m.autoRecord ? '与自动录像' : '') + '，参数保存后立即生效，无需重启。'
                 : '当前未启用，不会产生事件，也不会自动录像。';
@@ -2421,14 +2453,48 @@
         }
     }
 
+    /** 渲染「生效摄像头」复选列表；all=true 时回落为全部设备（dids 留空）。 */
+    async function renderMotionDids(selected, all) {
+        var box = $('setMotionDids');
+        if (all) { box.innerHTML = ''; return; }
+        var set = new Set(selected || []);
+        var html = '';
+        try {
+            var dev = await api('api/devices');
+            var list = (dev && dev.devices) || [];
+            if (!list.length) {
+                html = '<div class="empty">暂无可列出设备，请先在首页刷新设备列表</div>';
+            } else {
+                list.forEach(function (c) {
+                    var checked = set.has(c.did) ? ' checked' : '';
+                    var off = c.online ? '' : ' <span class="did-off">(离线)</span>';
+                    html += '<label><input type="checkbox" value="' + escapeHtml(c.did) + '"' + checked + '>'
+                        + escapeHtml(c.name || c.did) + off + '</label>';
+                });
+            }
+        } catch (e) {
+            html = '<div class="empty">设备列表读取失败：' + escapeHtml(e.message) + '</div>';
+        }
+        box.innerHTML = html;
+    }
+
     async function saveMotionSettings() {
+        var dids;
+        if ($('setMotionAllDids').checked) {
+            dids = [];
+        } else {
+            dids = Array.prototype.slice
+                .call(document.querySelectorAll('#setMotionDids input:checked'))
+                .map(function (i) { return i.value; });
+        }
         var body = {
             enabled: $('setMotionEnabled').checked,
             autoRecord: $('setAutoRecord').checked,
             threshold: Number($('setMotionThreshold').value),
             recordTailSec: Number($('setRecordTail').value),
             retentionDays: Number($('setEventRetention').value),
-            maxEvents: Number($('setEventMax').value)
+            maxEvents: Number($('setEventMax').value),
+            dids: dids
         };
         try {
             await api('api/motion/config', {
@@ -2448,8 +2514,10 @@
             var lines = Object.keys(d).map(function (k) {
                 return k + '：评分 ' + d[k].lastScore + '，触发 ' + d[k].triggered + ' 次';
             });
+            var scope = (s.dids && s.dids.length) ? '指定 ' + s.dids.length + ' 台设备' : '全部在线设备';
             $('setMotionHint').textContent = '侦测 ' + (s.enabled ? '开' : '关') +
                 ' · 自动录像 ' + (s.autoRecord ? '开' : '关') +
+                ' · 范围 ' + scope +
                 ' · 事件 ' + ((s.events && s.events.total) || 0) + ' 条' +
                 (lines.length ? '\n' + lines.join('\n') : '\n（尚无采样数据）');
         } catch (e) { toast('读取运行状态失败：' + e.message, 'err'); }
@@ -2883,6 +2951,10 @@
         });
         $('btnSaveMotion').addEventListener('click', saveMotionSettings);
         $('btnMotionStatus').addEventListener('click', showMotionStatus);
+        $('setMotionAllDids').addEventListener('change', function () {
+            if (this.checked) { $('setMotionDids').innerHTML = ''; }
+            else { renderMotionDids([], false); }
+        });
 
         // 设置：存储路径 / 分段 / 端口
         $('btnBrowseDir').addEventListener('click', openDirModal);

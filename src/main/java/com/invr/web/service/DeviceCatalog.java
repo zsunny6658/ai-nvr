@@ -5,6 +5,7 @@ import com.invr.cloud.MiCloudApi;
 import com.invr.cloud.MiCloudUnauthorizedException;
 import com.invr.hub.StreamHub;
 import com.invr.model.CameraDevice;
+import com.invr.store.EventStore;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,6 +26,10 @@ import java.util.concurrent.TimeUnit;
  *
  * <p>v1.1.9：云端列表刷新后识别「离线→在线」和「局域网 IP 变化」并唤醒对应取流，
  * 避免正在预览的窗口还卡在最长 5 分钟的熔断退避里。</p>
+ *
+ * <p>v1.2.9：在「离线→在线」「在线→离线」两种跃变处各落一条事件（类型 reconnect / offline），
+ * 便于在事件告警页集中看到设备连接状态变化，无需逐一翻看预览窗口。事件仅在实际状态跃变时
+ * 产生（首屏或新绑定设备 was==null 的情形跳过），不会在进程启动或列表首次拉取时刷屏。</p>
  */
 @Component
 public class DeviceCatalog {
@@ -36,12 +41,14 @@ public class DeviceCatalog {
 
     private final SessionHolder sessionHolder;
     private final StreamHub streamHub;
+    private final EventStore events;
     private volatile List<CameraDevice> devices = List.of();
     private final ScheduledExecutorService scheduler;
 
-    public DeviceCatalog(SessionHolder sessionHolder, StreamHub streamHub) {
+    public DeviceCatalog(SessionHolder sessionHolder, StreamHub streamHub, EventStore events) {
         this.sessionHolder = sessionHolder;
         this.streamHub = streamHub;
+        this.events = events;
         this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "device-catalog-refresh");
             t.setDaemon(true);
@@ -99,6 +106,11 @@ public class DeviceCatalog {
             if (!was.online() && now.online()) {
                 log.info("设备 {} 由离线转为在线，立即唤醒取流", now.did());
                 streamHub.wakeup(now.did(), "米家云：离线→在线", true);
+                // 重连事件：集中呈现在事件告警页，无需逐一翻看预览窗口
+                events.add(now.did(), now.name(), "reconnect", "info", "设备重连上线", 0.0, null, List.of());
+            } else if (was.online() && !now.online()) {
+                log.info("设备 {} 由在线转为离线", now.did());
+                events.add(now.did(), now.name(), "offline", "warn", "设备离线", 0.0, null, List.of());
             } else if (!Objects.equals(was.localIp(), now.localIp())
                     && now.localIp() != null && !now.localIp().isBlank()) {
                 log.info("设备 {} 局域网 IP 由 {} 变为 {}，立即唤醒取流",

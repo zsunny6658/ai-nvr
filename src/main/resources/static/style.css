@@ -186,6 +186,10 @@ body {
 .toast-item { background: #0f172a; color: #fff; padding: 10px 18px; border-radius: 10px; font-size: 13px; box-shadow: var(--shadow); animation: pop .2s; }
 .toast-item.err { background: var(--red); }
 .toast-item.ok { background: var(--green); }
+
+/* 页脚版本信息 */
+.app-footer { margin-top: 18px; padding: 10px 4px calc(10px + env(safe-area-inset-bottom, 0px)); text-align: center; font-size: 11px; color: var(--muted); letter-spacing: .3px; }
+.app-footer #appVersion { font-variant-numeric: tabular-nums; }
 @keyframes pop { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 
 /* ========== 时间轴回放 ========== */
@@ -637,6 +641,15 @@ body {
 .ev-empty { grid-column: 1 / -1; text-align: center; color: var(--muted); padding: 36px 12px; }
 .ev-switch { display: flex; align-items: center; gap: 8px; font-weight: 600; margin: 9px 0; }
 .set-card #setMotionHint { white-space: pre-line; line-height: 1.6; }
+
+/* 逐摄像头运动开关：设备复选列表（v1.2.9） */
+.ev-switch.inline { display: inline-flex; margin: 0 10px 0 0; }
+.did-checklist { margin-top: 8px; display: flex; flex-direction: column; gap: 4px;
+    max-height: 210px; overflow: auto; border: 1px solid var(--border, #e2e8f0);
+    border-radius: 8px; padding: 8px; }
+.did-checklist label { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 13px; }
+.did-checklist .did-off { color: var(--muted, #94a3b8); }
+.did-checklist .empty { color: var(--muted, #94a3b8); font-size: 12px; padding: 4px; }
 .ev-snapshot-modal { max-width: min(92vw, 900px); }
 .ev-snapshot-modal img { display: block; width: 100%; max-height: 70dvh; object-fit: contain; background: #0f172a; }
 @media (max-width: 640px) {
