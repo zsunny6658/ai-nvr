@@ -467,10 +467,16 @@
     function loadAbout() {
         var el = $('appVersion');
         if (!el) return;
-        api('/api/about').then(function (d) {
+        // 版本号走免鉴权端点 /api/version，锁屏（输入访问密码）页也能显示真实版本，不再停在 “v?”
+        api('/api/version').then(function (d) {
             var v = d.version || '?';
-            var up = d.uptimeMs ? (d.uptimeMs / 1000) : 0;
-            el.textContent = 'v' + v + ' · 已运行 ' + fmtDuration(up);
+            el.textContent = 'v' + v;
+            // 解锁后再补运行时长（需鉴权）
+            api('/api/about').then(function (a) {
+                if (a && a.uptimeMs) {
+                    el.textContent = 'v' + v + ' · 已运行 ' + fmtDuration(a.uptimeMs / 1000);
+                }
+            }).catch(function () {});
         }).catch(function () {});
     }
 
@@ -1710,6 +1716,7 @@
         var d = dirData;
         $('dirCurrent').textContent = d.current || '此电脑 / 根目录';
         $('dirUp').disabled = !d.parent;
+        renderCrumbs(d.current);
         $('dirRoots').innerHTML = (d.roots || []).map(function (r) {
             return '<button class="btn tiny dir-drive" type="button" data-path="' + esc(r.path) + '">' + esc(r.name) + '</button>';
         }).join('');
@@ -1727,11 +1734,13 @@
         }
         if (d.entries && d.entries.length) {
             html += d.entries.map(function (e) {
-                var cls = e.writable ? 'dir-item' : 'dir-item ro';
-                return '<div class="' + cls + '" data-path="' + esc(e.path) + '" data-writable="' + (e.writable ? '1' : '0') + '">' +
+                var v = !!e.virtual;
+                var cls = e.writable ? 'dir-item' : (v ? 'dir-item virtual' : 'dir-item ro');
+                return '<div class="' + cls + '" data-path="' + esc(e.path) + '" data-writable="' + (e.writable ? '1' : '0') +
+                    '" data-virtual="' + (v ? '1' : '0') + '">' +
                     FOLDER_SVG +
                     '<span class="dir-name">' + esc(e.name) + '</span>' +
-                    '<span class="dir-flag">' + (e.writable ? '可写' : '不可写') + '</span>' +
+                    '<span class="dir-flag">' + (e.writable ? '可写' : (v ? '进入' : '不可写')) + '</span>' +
                     '</div>';
             }).join('');
         }
@@ -1739,7 +1748,11 @@
         box.querySelectorAll('.dir-item').forEach(function (el) {
             var p = el.getAttribute('data-path');
             var writable = el.getAttribute('data-writable') === '1';
+            var isVirtual = el.getAttribute('data-virtual') === '1';
             el.addEventListener('click', function () {
+                // fnOS 授权路径的中间层级（/vol2/1000、影视…）只有穿越权限、不可写，
+                // 单击直接进入下一级，不参与「选择」，避免误显示成不可选目录。
+                if (isVirtual && !writable) { loadDir(p); return; }
                 box.querySelectorAll('.dir-item').forEach(function (x) { x.classList.remove('sel'); });
                 el.classList.add('sel');
                 dirPicked = writable ? p : null;
@@ -1754,8 +1767,30 @@
             b.addEventListener('click', function () { loadDir(b.getAttribute('data-path')); });
         });
         if (d.unreadable) {
-            $('dirStatus').textContent = '该目录无权限列出内容。';
+            $('dirStatus').textContent = '该目录无权限列出内容（fnOS 仅授权了最末级目录，上级目录不可列举）。'
+                + '如需浏览更多目录，请在 fnOS「应用设置 → 存储管理」中把更上层的目录（如 /vol2/1000 或 /vol2/1000/影视）授权给本应用。';
         }
+    }
+
+    /** 把当前绝对路径渲染成可点击的面包屑（卷/1000/影视/cam…），点击任一段跳到该前缀路径。 */
+    function renderCrumbs(path) {
+        var el = $('dirCrumbs');
+        if (!el) return;
+        if (!path) { el.innerHTML = ''; return; }
+        var parts = path.split('/').filter(function (x) { return x.length; });
+        var acc = '';
+        var segs = parts.map(function (p) {
+            acc += '/' + p;
+            return { name: p, path: acc };
+        });
+        el.innerHTML = segs.map(function (s, i) {
+            var last = i === segs.length - 1;
+            return '<span class="crumb' + (last ? ' cur' : '') + '"'
+                + (last ? '' : ' data-path="' + esc(s.path) + '"') + '>' + esc(s.name) + '</span>';
+        }).join('<span class="crumb-sep">/</span>');
+        el.querySelectorAll('.crumb[data-path]').forEach(function (c) {
+            c.addEventListener('click', function () { loadDir(c.getAttribute('data-path')); });
+        });
     }
 
     function confirmDir() {

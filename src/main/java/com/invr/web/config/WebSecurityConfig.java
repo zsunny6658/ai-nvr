@@ -37,7 +37,9 @@ public class WebSecurityConfig implements WebMvcConfigurer {
                         "/api/login/**",
                         // 启动时探测米家登录态、登出
                         "/api/session",
-                        "/api/logout"
+                        "/api/logout",
+                        // 免鉴权版本号：锁定页页脚需要展示版本，列入白名单
+                        "/api/version"
                 );
     }
 }

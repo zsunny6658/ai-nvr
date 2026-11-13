@@ -53,6 +53,13 @@ public class MotionDetector {
 
     /** 平均亮度低于此值视为无效帧（近乎全黑），跳过判定。 */
     static final int MIN_LUMA = 18;
+    /**
+     * 8×8 灰度感知哈希的亮度标准差低于此值，视为“无信号 / 纯色帧”（摄像头断流常呈均匀灰屏）。
+     * 此类帧几乎全屏同色，与真实画面汉明距离极大，若参与帧差会被误判为“画面变动”而触发告警；
+     * 且 real→gray 与 gray→real 的跳变都会被判成运动。故整段无信号期间不触发，信号恢复后的
+     * 首帧当作新基准（不触发），避免灰屏被误报为事件。
+     */
+    static final int NOSIGNAL_STD = 6;
     private static final int HASH_BITS = 64;
 
     private final LiveFrameService frames;
@@ -228,6 +235,33 @@ public class MotionDetector {
                     false, 0, remainingSec(s.silentUntilMs, now), s.lastError);
         }
 
+        // 无信号 / 纯色帧（方差极低）：摄像头断流常呈均匀灰屏，与真实画面帧差极大，会被误判为
+        // “画面变动”；且 real→gray 与 gray→real 的跳变都会被判成运动。故整段无信号期间不触发，
+        // 信号恢复后的首帧当作新基准（不触发），避免灰屏被误报为事件。
+        // 仅对「非低照度」的纯色帧判为无信号：纯黑/近全黑仍交给原有低照度分支处理，
+        // 保持「低照度帧已跳过」语义与文案不变，也避免把夜间正常画面误判成断流灰屏。
+        boolean lowLuma = h.luma() < MIN_LUMA;
+        boolean noSignal = !lowLuma && h.std() < NOSIGNAL_STD;
+        if (noSignal) {
+            s.inNoSignal = true;
+            s.baselineBits = h.bits();
+            s.hasBaseline = true;
+            s.confirm = 0;
+            s.lastScore = 0;
+            s.lastLuma = h.luma();
+            s.lastSampleAtMs = now;
+            s.samples++;
+            s.lastError = "无信号/纯色帧已跳过";
+            return new SampleResult(did, 0, cfg.threshold(), h.luma(), 0, false, false,
+                    remainingSec(s.lastEventAtMs + cfg.cooldownMs(), now),
+                    remainingSec(s.silentUntilMs, now), s.lastError);
+        }
+        if (s.inNoSignal) {
+            // 从无信号恢复：把当前帧当首帧基准，避免 gray→real 被判成运动
+            s.inNoSignal = false;
+            s.hasBaseline = false;
+        }
+
         // 与「稳定基准帧」比较而非上一帧：画面变化一次后稳定时，若只比上一帧就只有 1 帧高分，
         // 连续确认永远不成立；而基准帧保持不变，持续偏离才会连续确认，缓慢光照漂移则因
         // 每帧低于阈值被基准跟随吸收。
@@ -330,10 +364,14 @@ public class MotionDetector {
             }
             double avg = sum / (double) HASH_BITS;
             long bits = 0;
+            double varSum = 0;
             for (int lum : v) {
                 bits = (bits << 1) | (lum >= avg ? 1L : 0L);
+                double d = lum - avg;
+                varSum += d * d;
             }
-            return new HashResult(bits, (int) avg);
+            int std = (int) Math.round(Math.sqrt(varSum / HASH_BITS));
+            return new HashResult(bits, (int) avg, std);
         } catch (IOException | RuntimeException e) {
             return null;
         }
@@ -347,8 +385,8 @@ public class MotionDetector {
         return Math.round(v * 1000.0) / 1000.0;
     }
 
-    /** 单帧哈希结果。 */
-    record HashResult(long bits, int luma) {
+    /** 单帧哈希结果：感知哈希位、平均亮度、8×8 灰度亮度标准差（用于无信号/纯色帧判定）。 */
+    record HashResult(long bits, int luma, int std) {
     }
 
     /** 一次采样的完整判定明细，便于调参时解释「为什么触发 / 为什么没触发」。 */
@@ -359,6 +397,7 @@ public class MotionDetector {
 
     private static final class State {
         boolean hasBaseline = false;
+        boolean inNoSignal = false;
         long baselineBits = 0;
         int confirm = 0;
         long lastEventAtMs = 0;

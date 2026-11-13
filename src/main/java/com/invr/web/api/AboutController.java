@@ -25,7 +25,7 @@ import java.util.Map;
 public class AboutController {
 
     /** 非 fnOS 环境（本地调试）读不到 manifest 时的回落版本。需随每次发版同步手工维护。 */
-    private static final String FALLBACK_VERSION = "1.2.9";
+    private static final String FALLBACK_VERSION = "1.2.12";
 
     @GetMapping("/api/about")
     public Map<String, Object> about() {
@@ -38,6 +38,19 @@ public class AboutController {
         return m;
     }
 
+    /**
+     * 免鉴权版本号端点：锁定页（输入访问密码页）的页脚需要展示版本号，但此时尚未解锁、
+     * {@code /api/about} 受门禁保护会返回 401，导致页脚永远停在 “v?”。该端点只暴露版本号、
+     * 不含运行时长等敏感信息，列入 {@link WebSecurityConfig} 白名单，任何访客（含锁定态）均可读取，
+     * 让页脚始终显示真实版本。
+     */
+    @GetMapping("/api/version")
+    public Map<String, Object> version() {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("version", resolveVersion());
+        return m;
+    }
+
     private String resolveVersion() {
         try {
             URI loc = AboutController.class.getProtectionDomain().getCodeSource().getLocation().toURI();
@@ -46,8 +59,15 @@ public class AboutController {
             if (manifest.isFile()) {
                 for (String line : Files.readAllLines(manifest.toPath(), StandardCharsets.UTF_8)) {
                     String t = line.trim();
-                    if (t.startsWith("version=")) {
-                        return t.substring("version=".length()).trim();
+                    // fnpack 打包时会把 manifest 规范化成 "version               = 1.2.12"
+                    // （等号两侧填充空格），fnOS 安装后又会写成紧凑的 "version=1.2.12"；
+                    // 两种都兼容：按首个 '=' 拆分、分别 trim key 与 value。
+                    int eq = t.indexOf('=');
+                    if (eq > 0 && "version".equalsIgnoreCase(t.substring(0, eq).trim())) {
+                        String v = t.substring(eq + 1).trim();
+                        if (!v.isEmpty()) {
+                            return v;
+                        }
                     }
                 }
             }

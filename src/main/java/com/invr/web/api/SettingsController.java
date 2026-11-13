@@ -24,6 +24,8 @@ import org.springframework.web.bind.annotation.RestController;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -340,16 +342,68 @@ public class SettingsController {
         } catch (SecurityException ignore) {
             // 无权限列出时按空处理
         }
+        java.util.Set<String> seen = new java.util.HashSet<>();
         List<Map<String, Object>> entries = new ArrayList<>();
         if (kids != null) {
             Arrays.sort(kids, Comparator.comparing((File f) -> f.getName().toLowerCase()));
             for (File k : kids) {
-                entries.add(entryOf(k, k.getName()));
+                Map<String, Object> e = entryOf(k, k.getName());
+                if (seen.add(String.valueOf(e.get("path")))) {
+                    entries.add(e);
+                }
             }
         }
+        // fnOS 卷/授权目录的中间层级对应用用户只有「穿越」权限、没有「列举」权限：实测
+        // /vol2、/vol2/1000、/vol2/1000/影视 对 indsvr-invr 均 Permission denied，只有授权的末级
+        // /vol2/1000/影视/cam 可写。此时 listFiles 返回 null，用户从 /vol2 点进去只看到空列表，
+        // 无法逐级下钻到 1000 → 影视 → cam。这里用 fnOS 注入的授权路径反推「当前目录的下一级」，
+        // 把这些中间层级作为虚拟条目补进列表，使逐级下钻真正可达授权目录。
+        int virtual = 0;
+        try {
+            Path cur = dir.toPath().toAbsolutePath().normalize();
+            for (String auth : authorizedPaths()) {
+                Path a = Paths.get(auth).toAbsolutePath().normalize();
+                if (a.startsWith(cur) && !a.equals(cur)) {
+                    String first = cur.relativize(a).getName(0).toString();
+                    File child = cur.resolve(first).toFile();
+                    Map<String, Object> e = entryOf(child, first);
+                    if (seen.add(String.valueOf(e.get("path")))) {
+                        // 中间层级可能不可写（fnOS 只授权末级），标记为「可下钻」供前端单击进入
+                        e.put("virtual", true);
+                        entries.add(e);
+                        virtual++;
+                    }
+                }
+            }
+        } catch (Exception ignore) {
+            // 路径解析异常时忽略虚拟补全，不影响真实列举结果
+        }
+        if (virtual > 0) {
+            entries.sort(Comparator.comparing(e -> String.valueOf(e.get("name")).toLowerCase()));
+        }
         resp.put("entries", entries);
-        resp.put("unreadable", kids == null);
+        // 只要补出了可下钻的层级，就不该再提示「无权限列出内容」
+        resp.put("unreadable", kids == null && entries.isEmpty());
         return resp;
+    }
+
+    /** fnOS 注入的全部授权存储路径（TRIM_DATA_* 两个环境变量，冒号分隔），用于反推目录层级。 */
+    private static List<String> authorizedPaths() {
+        List<String> out = new ArrayList<>();
+        for (String env : new String[]{
+                System.getenv("TRIM_DATA_ACCESSIBLE_PATHS"),
+                System.getenv("TRIM_DATA_SHARE_PATHS")}) {
+            if (env == null || env.isBlank()) {
+                continue;
+            }
+            for (String part : env.split(":", -1)) {
+                String p = part.trim();
+                if (!p.isEmpty()) {
+                    out.add(p);
+                }
+            }
+        }
+        return out;
     }
 
     /** 从 Servlet 上下文路径（如 /app/indsvr-invr）推导出本应用 id；失败回落常量。 */
