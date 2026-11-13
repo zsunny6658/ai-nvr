@@ -85,8 +85,9 @@ class EventsBatchWebTest {
                         .content("{}"))
                 .andExpect(status().isBadRequest());
 
+        // v1.2.15：上限由 200 放宽到 5000
         StringBuilder big = new StringBuilder("{\"ids\":[");
-        for (int i = 0; i < 201; i++) {
+        for (int i = 0; i < 5001; i++) {
             if (i > 0) big.append(',');
             big.append(i + 1);
         }
@@ -95,6 +96,66 @@ class EventsBatchWebTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(big.toString()))
                 .andExpect(status().isBadRequest());
+    }
+
+    /** v1.2.15：批量上限放宽后，一次删 300 条不再被 200 条限制挡住。 */
+    @Test
+    void largeBatchDeleteIsOneShot() throws Exception {
+        for (int i = 0; i < 300; i++) {
+            store.add("d2", "门口", "motion", "info", "bulk-" + i, 0.2, null, List.of());
+        }
+        StringBuilder ids = new StringBuilder("{\"ids\":[");
+        for (int i = 0; i < 300; i++) {
+            if (i > 0) ids.append(',');
+            ids.append(i + 5); // 前 4 条是 setUp 里的事件
+        }
+        ids.append("]}");
+        mvc.perform(post("/api/events/batch/delete")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(ids.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.deleted").value(300))
+                .andExpect(jsonPath("$.remaining").value(4));
+        // 重写日志后重启重放仍一致
+        EventStore reloaded = new EventStore(dir);
+        org.junit.jupiter.api.Assertions.assertEquals(4, reloaded.size());
+    }
+
+    /** v1.2.15：清空全部需显式确认；成功后事件库为空且重启不复活。 */
+    @Test
+    void clearAllRequiresConfirmAndPersists() throws Exception {
+        mvc.perform(post("/api/events/clear")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(post("/api/events/clear")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"confirm\":\"CLEAR\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.deleted").value(4))
+                .andExpect(jsonPath("$.remaining").value(0))
+                .andExpect(jsonPath("$.scope").value("all"));
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .get("/api/events"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(0));
+        org.junit.jupiter.api.Assertions.assertEquals(0, new EventStore(dir).size());
+    }
+
+    /** v1.2.15：按条件清空只删匹配项，未匹配事件保留且重启一致。 */
+    @Test
+    void clearFilteredKeepsOthers() throws Exception {
+        mvc.perform(post("/api/events/clear")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"confirm\":\"CLEAR\",\"type\":\"motion\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.deleted").value(3))
+                .andExpect(jsonPath("$.remaining").value(1))
+                .andExpect(jsonPath("$.scope").value("filtered"));
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .get("/api/events").param("type", "record"))
+                .andExpect(jsonPath("$.total").value(1));
+        org.junit.jupiter.api.Assertions.assertEquals(1, new EventStore(dir).size());
     }
 
     @Test

@@ -33,6 +33,8 @@
         recCollapsed: new Set(), recCounts: {},
         // v1.2.8：事件告警页（选中集 / 已加载行 / 分页游标）
         evSelected: new Set(), evRows: [], evOffset: 0, evTotal: 0, evBusy: false,
+        // v1.2.15：全量事件数 / 删除或清空操作的重入保护
+        evAllTotal: 0, evDeleting: false,
         // v1.2.13：事件按摄像头分组（折叠状态 / 各设备事件数，来自 /api/events/stats）
         evCollapsed: new Set(), evCounts: {},
         // v1.2.14：首页摄像头卡片的最近画面变动快照（did -> 事件数组 / id -> 事件 / 数据签名 / 跳转筛选）
@@ -2583,6 +2585,7 @@
             var st = await api('api/events/stats');
             // v1.2.13：按设备统计用于摄像头快捷标签角标；顺带把历史设备补进筛选下拉
             state.evCounts = st.byDid || {};
+            state.evAllTotal = st.total || 0; // v1.2.15：全量清空按钮的确认条数
             loadEvFilters();
             renderEvChips();
             $('evStats').innerHTML = '<span>累计事件 <b>' + (st.total || 0) + '</b></span>' +
@@ -2713,19 +2716,74 @@
         } catch (e) { toast('操作失败：' + e.message, 'err'); }
     }
 
+    /**
+     * v1.2.15 批量删除：服务端已改为单次原子重写日志、上限 5000 条，
+     * 前端仍按 1000 一组串行提交，避免超大 JSON 请求体，同时给出累计结果。
+     */
     async function evBatchDelete() {
+        if (state.evDeleting) return;
         var ids = Array.from(state.evSelected);
         if (!ids.length) return;
         if (!confirm('确认删除选中的 ' + ids.length + ' 条事件？对应快照也会一并删除，操作不可恢复。')) return;
+        state.evDeleting = true;
         try {
-            var r = await api('api/events/batch/delete', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ids: ids })
-            });
-            toast('已删除 ' + (r.deleted || 0) + ' 条事件', 'ok');
+            var done = 0;
+            for (var i = 0; i < ids.length; i += 1000) {
+                var r = await api('api/events/batch/delete', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ids: ids.slice(i, i + 1000) })
+                });
+                done += r.deleted || 0;
+            }
+            toast('已删除 ' + done + ' 条事件', 'ok');
+            state.camRecentSig = null; // 首页卡片缩略图缓存需刷新
             await loadEvents(true);
             loadDashboard();
         } catch (e) { toast('删除失败：' + e.message, 'err'); }
+        finally { state.evDeleting = false; }
+    }
+
+    /** v1.2.15 当前筛选条件（供清空接口复用，口径与 evQuery 一致）。 */
+    function evFilterBody() {
+        var b = { confirm: 'CLEAR' };
+        var did = $('evFilterDid').value;
+        var type = $('evFilterType').value;
+        var handled = $('evFilterHandled').value;
+        var date = $('evFilterDate').value;
+        if (did) b.did = did;
+        if (type) b.type = type;
+        if (handled !== '') b.handled = (handled === 'true');
+        if (date) b.date = date;
+        return b;
+    }
+
+    /**
+     * v1.2.15 一次清空：filtered=true 只清当前筛选，false 清全部。
+     * 两者都要求二次确认；清空后同步刷新事件页、概览统计与首页卡片快照。
+     */
+    async function evClear(filtered) {
+        if (state.evDeleting) return;
+        var body = filtered ? evFilterBody() : { confirm: 'CLEAR' };
+        var hasFilter = !!(body.did || body.type || body.handled !== undefined || body.date);
+        var all = !filtered || !hasFilter;
+        var n = all ? state.evAllTotal : state.evTotal;
+        if (!n) { toast('当前没有可清空的事件', 'ok'); return; }
+        var scope = (all ? '全部 ' : '当前筛选下的 ') + n + ' 条事件告警';
+        if (!confirm('确认清空' + scope + '？\n对应的快照文件会一并删除，操作不可恢复。\n\n' +
+                (all ? '这是全量清空，无需再分批删除。' : '仅清空匹配当前筛选条件的事件。'))) return;
+        state.evDeleting = true;
+        try {
+            var r = await api('api/events/clear', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            toast('已清空 ' + (r.deleted || 0) + ' 条事件', 'ok');
+            state.evSelected.clear();
+            state.camRecent = {}; state.camRecentIndex = {}; state.camRecentSig = null;
+            await loadEvents(true);
+            loadDashboard();
+        } catch (e) { toast('清空失败：' + e.message, 'err'); }
+        finally { state.evDeleting = false; }
     }
 
     async function evSingle(id, act, val) {
@@ -3273,6 +3331,8 @@
         }, true);
         $('btnEvBatchHandled').addEventListener('click', evBatchHandled);
         $('btnEvBatchDel').addEventListener('click', evBatchDelete);
+        $('btnEvClearFiltered').addEventListener('click', function () { evClear(true); });
+        $('btnEvClearAll').addEventListener('click', function () { evClear(false); });
         $('btnEvClearSel').addEventListener('click', function () {
             state.evSelected.clear();
             Array.prototype.forEach.call(document.querySelectorAll('.ev-check'), function (cb) { cb.checked = false; });

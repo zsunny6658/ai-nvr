@@ -128,6 +128,7 @@ public final class CameraStream {
     public void unsubscribe(StreamSink sink) {
         boolean needStop = false;
         Thread toJoin = null;
+        Subscription removed = null;
         synchronized (lifecycleLock) {
             Subscription found = null;
             for (Subscription s : subscriptions) {
@@ -141,6 +142,7 @@ public final class CameraStream {
             }
             subscriptions.remove(found);
             found.close();
+            removed = found;
             log.info("摄像头 {} 移除订阅者（剩余 {} 个）", did, subscriptions.size());
             if (subscriptions.isEmpty() && running) {
                 running = false;
@@ -162,12 +164,18 @@ public final class CameraStream {
             }
             log.info("摄像头 {} 已无订阅者，唯一上游通道已释放", did);
         }
+        // v1.2.15：退订后等分发线程退出再让调用方 purge()，避免与在途回调并发释放原生资源
+        if (removed != null) {
+            removed.awaitStop();
+        }
     }
 
     /** 彻底停止（服务关闭时调用）。 */
     public void shutdown() {
+        List<Subscription> closing;
         synchronized (lifecycleLock) {
-            for (Subscription s : subscriptions) {
+            closing = new ArrayList<>(subscriptions);
+            for (Subscription s : closing) {
                 s.close();
             }
             subscriptions.clear();
@@ -180,6 +188,9 @@ public final class CameraStream {
                 current = null;
                 closeQuietly(c);
             }
+        }
+        for (Subscription s : closing) {
+            s.awaitStop();
         }
     }
 
@@ -460,7 +471,28 @@ public final class CameraStream {
 
         void close() {
             open = false;
+            // v1.2.15：积压包在退订时已无意义，清空后直接投递 POISON，让分发线程立即收尾；
+            // 否则它还要排空最多 1000 个包，调用方 purge() 会与在途原生写帧长时间重叠。
+            queue.clear();
             queue.offer(POISON);
+        }
+
+        /** 等待分发线程退出（有界，不阻塞上游）；退订后不再有该 sink 的在途回调。 */
+        void awaitStop() {
+            Thread t = dispatcher;
+            if (t == null || t == Thread.currentThread()) {
+                return;
+            }
+            try {
+                t.join(3_000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            if (t.isAlive()) {
+                log.warn("[{}] 订阅分发线程 {} 未能在 3s 内退出，已降级由 sink 自身互斥保护",
+                        did, t.getName());
+            }
         }
 
         private void runDispatch() {

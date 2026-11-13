@@ -20,8 +20,10 @@ import org.springframework.web.bind.annotation.RestController;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 告警事件查询与处理接口。位于 {@code /api/**}，自动受访问密码门禁保护；事件快照供
@@ -42,8 +44,11 @@ public class EventsController {
             "offline", "设备离线",
             "alarm", "设备告警");
 
-    /** 事件页批量操作一次最多处理 200 条，避免一次请求写爆 JSONL。 */
-    private static final int MAX_BATCH = 200;
+    /**
+     * 事件页批量操作上限。v1.2.15 起批量删除/标记改为「单次原子重写日志」，
+     * 不再是每删一条追加一行，因此上限从 200 放宽到 5000，可一次选中整页甚至全库。
+     */
+    private static final int MAX_BATCH = 5000;
 
     private final EventStore store;
 
@@ -130,42 +135,63 @@ public class EventsController {
             @RequestParam(name = "handled", defaultValue = "true") boolean handled,
             @RequestBody(required = false) IdsRequest req) {
         List<Long> ids = batchIds(req);
-        int n = 0;
-        for (Long id : ids) {
-            if (store.markHandled(id, handled).isPresent()) {
-                n++;
-            }
-        }
+        int n = store.markHandledBatch(ids, handled);
         return Map.of("updated", n, "handled", handled);
     }
 
-    /** 事件页批量删除（含各自快照）。 */
+    /** 事件页批量删除（含各自快照，单次原子重写日志）。 */
     @PostMapping("/events/batch/delete")
     public Map<String, Object> deleteBatch(@RequestBody(required = false) IdsRequest req) {
         List<Long> ids = batchIds(req);
-        int n = 0;
-        for (Long id : ids) {
-            if (store.delete(id)) {
-                n++;
-            }
+        int n = store.deleteBatch(ids);
+        return Map.of("deleted", n, "remaining", store.size());
+    }
+
+    /** v1.2.15 清空事件：条件全空为全量清空，否则只清当前筛选结果。 */
+    public record ClearRequest(String confirm, String did, String type, Boolean handled,
+                               String date, Long fromMs, Long toMs) {
+    }
+
+    /**
+     * 一次清空全部（或当前筛选下的）事件告警及其快照。
+     *
+     * <p>显式要求 {@code confirm=CLEAR}，避免脚本/误触直接抹掉全库；操作沿用访问密码门禁。
+     * 服务端内部单次重写日志，不随事件条数产生 N 次文件写入。</p>
+     */
+    @PostMapping("/events/clear")
+    public Map<String, Object> clear(@RequestBody(required = false) ClearRequest req) {
+        if (req == null || !"CLEAR".equals(req.confirm())) {
+            throw ApiException.badRequest("清空事件需要显式确认参数");
         }
-        return Map.of("deleted", n);
+        Filter f = Filter.of(req.did(), req.type(), req.handled(), req.date(),
+                req.fromMs(), req.toMs(), 1, 0);
+        boolean all = f.did() == null && f.type() == null && f.handled() == null
+                && f.date() == null && f.fromMs() == null && f.toMs() == null;
+        int deleted = store.clearMatching(all ? null : f);
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("deleted", deleted);
+        m.put("remaining", store.size());
+        m.put("scope", all ? "all" : "filtered");
+        return m;
     }
 
     private static List<Long> batchIds(IdsRequest req) {
         if (req == null || req.ids() == null || req.ids().isEmpty()) {
             throw ApiException.badRequest("请先选择事件");
         }
-        List<Long> out = new ArrayList<>();
+        Set<Long> seen = new LinkedHashSet<>();
         for (Long id : req.ids()) {
-            if (id != null && !out.contains(id)) {
-                out.add(id);
+            if (id != null) {
+                seen.add(id);
             }
         }
-        if (out.size() > MAX_BATCH) {
+        if (seen.isEmpty()) {
+            throw ApiException.badRequest("请先选择事件");
+        }
+        if (seen.size() > MAX_BATCH) {
             throw ApiException.badRequest("单次最多处理 " + MAX_BATCH + " 条事件，请分批操作");
         }
-        return out;
+        return new ArrayList<>(seen);
     }
 
     /** 事件快照 JPEG；无快照时返回 404。 */

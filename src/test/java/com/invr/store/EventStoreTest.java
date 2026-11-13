@@ -113,6 +113,35 @@ class EventStoreTest {
         assertEquals(100, store().size()); // 重放后仍一致
     }
 
+    /** v1.2.15：批量删除 / 条件清空 / 全量清空后，重写日志重放结果必须与内存一致。 */
+    @Test
+    void bulkDeleteAndClearAreAtomicAndReplayable() throws Exception {
+        EventStore s = store();
+        for (int i = 0; i < 8; i++) {
+            s.add(i < 4 ? "d1" : "d2", "设备", "motion", "info", "e" + i, 0.2, JPEG, List.of());
+        }
+        assertEquals(2, s.deleteBatch(List.of(1L, 3L, 3L, 999L)));
+        assertEquals(6, s.size());
+        assertEquals(6, store().size());
+        assertNull(s.snapshot(1));
+
+        assertEquals(2, s.markHandledBatch(List.of(2L, 4L, 777L), true));
+        EventStore midway = store();
+        assertTrue(midway.find(2).orElseThrow().handled());
+        assertTrue(midway.find(4).orElseThrow().handled());
+
+        // 只清 d2，d1 保留
+        assertEquals(4, s.clearMatching(Filter.of("d2", null, null, null, null, null, 20, 0)));
+        assertEquals(2, s.size());
+        assertEquals(2, store().size());
+
+        // 全量清空：日志写出空文件，重启不会复活
+        assertEquals(2, s.clearMatching(null));
+        assertEquals(0, s.size());
+        assertEquals(0, store().size());
+        assertEquals(0, s.list(all()).total());
+    }
+
     @Test
     void corruptLinesAreSkippedWithoutBreakingStartup() throws Exception {
         Path log = dir.resolve("events").resolve("events.jsonl");

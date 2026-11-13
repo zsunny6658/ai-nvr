@@ -18,6 +18,7 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -171,6 +172,100 @@ public class EventStore {
     }
 
     /**
+     * v1.2.15 批量删除：内存索引一次更新 + 日志单次原子重写。
+     *
+     * <p>旧实现逐个调用 {@link #delete(long)}，N 条事件要开关 N 次 JSONL、追加 N 行删除意图，
+     * 事件量大时在 NAS 慢盘上会长时间占用 EventStore 锁并让日志膨胀；重写后日志只保留
+     * 仍在的事件，重启重放结果一致。快照逐个容错清理，任一异常不影响其余事件。</p>
+     */
+    public synchronized int deleteBatch(Collection<Long> ids) {
+        List<AlarmEvent> doomed = new ArrayList<>();
+        for (Long id : ids) {
+            if (id == null) {
+                continue;
+            }
+            AlarmEvent e = events.remove(id);
+            if (e != null) {
+                doomed.add(e);
+            }
+        }
+        if (doomed.isEmpty()) {
+            return 0;
+        }
+        commitRemoval(doomed);
+        return doomed.size();
+    }
+
+    /** v1.2.15 批量标记已处理：一次重写日志，避免 N 次 append。 */
+    public synchronized int markHandledBatch(Collection<Long> ids, boolean handled) {
+        long at = System.currentTimeMillis();
+        List<Long> touched = new ArrayList<>();
+        for (Long id : ids) {
+            if (id == null) {
+                continue;
+            }
+            AlarmEvent old = events.get(id);
+            if (old == null) {
+                continue;
+            }
+            events.put(id, new AlarmEvent(old.id(), old.did(), old.deviceName(), old.type(),
+                    old.level(), old.title(), old.score(), old.snapshot(), old.createdAt(),
+                    handled, handled ? at : null, old.detections()));
+            touched.add(id);
+        }
+        if (touched.isEmpty()) {
+            return 0;
+        }
+        if (!rewriteLog()) {
+            for (Long id : touched) {
+                Map<String, Object> line = new LinkedHashMap<>();
+                line.put("op", "handled");
+                line.put("id", id);
+                line.put("handled", handled);
+                line.put("at", handled ? at : 0L);
+                append(line);
+            }
+        }
+        return touched.size();
+    }
+
+    /**
+     * v1.2.15 事件清空：条件全空表示清空全部，否则只清与筛选条件匹配的事件。
+     * 全部条件复用于列表查询的 {@link #matches(AlarmEvent, Filter)}，保证「当前筛选」与
+     * 「清空当前筛选」口径一致。
+     */
+    public synchronized int clearMatching(Filter f) {
+        boolean all = f == null || (f.did() == null && f.type() == null && f.handled() == null
+                && f.date() == null && f.fromMs() == null && f.toMs() == null);
+        List<AlarmEvent> doomed = new ArrayList<>();
+        for (AlarmEvent e : events.values()) {
+            if (all || matches(e, f)) {
+                doomed.add(e);
+            }
+        }
+        if (doomed.isEmpty()) {
+            return 0;
+        }
+        for (AlarmEvent e : doomed) {
+            events.remove(e.id());
+        }
+        commitRemoval(doomed);
+        return doomed.size();
+    }
+
+    /** 内存索引已移除后统一提交：优先单次原子重写日志，失败退回逐条追加删除意图。 */
+    private void commitRemoval(List<AlarmEvent> doomed) {
+        if (!rewriteLog()) {
+            for (AlarmEvent e : doomed) {
+                append(Map.of("op", "delete", "id", e.id()));
+            }
+        }
+        for (AlarmEvent e : doomed) {
+            deleteSnapshot(e.snapshot());
+        }
+    }
+
+    /**
      * 按保留天数与条数上限清理最老的事件。由巡检循环周期调用，无需额外定时线程。
      *
      * @return 实际删除条数
@@ -200,17 +295,21 @@ public class EventStore {
                 }
             }
         }
+        List<AlarmEvent> removed = new ArrayList<>();
         for (Long id : doomed) {
             AlarmEvent e = events.remove(id);
             if (e != null) {
-                deleteSnapshot(e.snapshot());
-                append(Map.of("op", "delete", "id", id));
+                removed.add(e);
             }
         }
-        if (lineCount > (long) keepLimit * 2) {
-            compact();
+        // v1.2.15：改为单次重写，顺带完成日志压缩，避免逐条追加让 JSONL 持续膨胀
+        if (!removed.isEmpty()) {
+            commitRemoval(removed);
+        } else if (lineCount > (long) keepLimit * 2) {
+            // 没有删除但历史「标记已处理」行已堆积时，仍按原策略压缩一次
+            rewriteLog();
         }
-        return doomed.size();
+        return removed.size();
     }
 
     // ===================== 读 =====================
@@ -219,13 +318,9 @@ public class EventStore {
     public synchronized Page list(Filter f) {
         List<AlarmEvent> matched = new ArrayList<>();
         for (AlarmEvent e : events.values()) {
-            if (f.did() != null && !f.did().equals(e.did())) continue;
-            if (f.type() != null && !f.type().equals(e.type())) continue;
-            if (f.handled() != null && f.handled() != e.handled()) continue;
-            if (f.date() != null && !f.date().equals(dateOf(e.createdAt()))) continue;
-            if (f.fromMs() != null && e.createdAt() < f.fromMs()) continue;
-            if (f.toMs() != null && e.createdAt() > f.toMs()) continue;
-            matched.add(e);
+            if (matches(e, f)) {
+                matched.add(e);
+            }
         }
         matched.sort(Comparator.comparingLong(AlarmEvent::id).reversed());
         int total = matched.size();
@@ -392,29 +487,48 @@ public class EventStore {
         }
     }
 
-    /** 用当前内存索引重写日志，去掉已被删除/覆盖的历史行。 */
-    private void compact() {
+    /**
+     * 用当前内存索引原子重写日志（临时文件 + rename），去掉已被删除/覆盖的历史行。
+     * 全部清空时写出一个空文件即可，不需要逐条追加删除意图。
+     *
+     * @return 是否重写成功；失败时保留原文件，调用方需降级为追加删除意图
+     */
+    private boolean rewriteLog() {
         Path tmp = logFile.resolveSibling(LOG_FILE + ".tmp");
-        try (BufferedWriter w = Files.newBufferedWriter(tmp, StandardCharsets.UTF_8,
-                StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
-            for (AlarmEvent e : events.values()) {
-                w.write(mapper.writeValueAsString(Map.of("op", "add", "event", e)));
-                w.newLine();
-            }
-        } catch (IOException e) {
-            log.warn("事件日志压缩失败，保留原文件：{}", e.toString());
-            return;
-        }
         try {
+            Files.createDirectories(root);
+            try (BufferedWriter w = Files.newBufferedWriter(tmp, StandardCharsets.UTF_8,
+                    StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
+                for (AlarmEvent e : events.values()) {
+                    w.write(mapper.writeValueAsString(Map.of("op", "add", "event", e)));
+                    w.newLine();
+                }
+            }
             try {
                 Files.move(tmp, logFile, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
             } catch (IOException unsupported) {
                 Files.move(tmp, logFile, StandardCopyOption.REPLACE_EXISTING);
             }
             lineCount = events.size();
-        } catch (IOException e) {
-            log.warn("事件日志压缩替换失败：{}", e.toString());
+            return true;
+        } catch (Exception e) {
+            log.warn("事件日志重写失败，保留原文件：{}", e.toString());
+            return false;
         }
+    }
+
+    /** 与分页查询、条件清空共用的匹配口径。 */
+    private static boolean matches(AlarmEvent e, Filter f) {
+        if (f == null) {
+            return true;
+        }
+        if (f.did() != null && !f.did().equals(e.did())) return false;
+        if (f.type() != null && !f.type().equals(e.type())) return false;
+        if (f.handled() != null && f.handled() != e.handled()) return false;
+        if (f.date() != null && !f.date().equals(dateOf(e.createdAt()))) return false;
+        if (f.fromMs() != null && e.createdAt() < f.fromMs()) return false;
+        if (f.toMs() != null && e.createdAt() > f.toMs()) return false;
+        return true;
     }
 
     private Path snapshotFile(String rel) {
@@ -426,14 +540,15 @@ public class EventStore {
     }
 
     private void deleteSnapshot(String rel) {
-        Path p = snapshotFile(rel);
-        if (p == null) {
-            return;
-        }
         try {
+            Path p = snapshotFile(rel);
+            if (p == null) {
+                return;
+            }
             Files.deleteIfExists(p);
-        } catch (IOException e) {
-            log.debug("事件快照删除失败：{}", e.toString());
+        } catch (Exception e) {
+            // 批量清空时单条异常路径不能中断整批操作（路径篡改 / 权限 / 文件占用）
+            log.debug("事件快照删除失败 rel={}：{}", rel, e.toString());
         }
     }
 

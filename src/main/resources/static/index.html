@@ -10,7 +10,7 @@
     <base href="./">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230891b2'/%3E%3C/svg%3E">
     <title>iNvr · 小米摄像头 NVR</title>
-    <link rel="stylesheet" href="style.css?v=30">
+    <link rel="stylesheet" href="style.css?v=31">
 </head>
 <body>
 <header class="topbar">
@@ -196,6 +196,9 @@
                     <button class="btn tiny soft" id="btnEvBatchHandled" disabled>标记已处理</button>
                     <button class="btn tiny soft-danger" id="btnEvBatchDel" disabled>批量删除</button>
                     <button class="btn tiny" id="btnEvClearSel" hidden>取消选择</button>
+                    <!-- v1.2.15 一次清空：按当前筛选 / 全量，均带二次确认 -->
+                    <button class="btn tiny soft" id="btnEvClearFiltered" type="button">清空当前筛选</button>
+                    <button class="btn tiny soft-danger" id="btnEvClearAll" type="button">清空全部</button>
                 </div>
             </div>
             <div class="ev-list" id="evList"></div>
@@ -620,7 +623,7 @@
 <footer class="app-footer">i-NVR · <span id="appVersion">v?</span></footer>
 
 <script src="vendor/hls.min.js"></script>
-<script src="watchdog.js?v=30"></script>
-<script src="app.js?v=30"></script>
+<script src="watchdog.js?v=31"></script>
+<script src="app.js?v=31"></script>
 </body>
 </html>

@@ -115,6 +115,12 @@ public final class HlsSink implements StreamSink {
 
     private Muxer muxer;
     private boolean h265 = true;
+    /**
+     * v1.2.15：sink 已关闭标记，与 {@link #shutdown()} 共用同一把对象锁。
+     * 退订时 dispatch 线程可能仍在排空积压包；若不置位，关闭后到达的包会重建 muxer，
+     * 与 purge() 删除文件、释放原生上下文形成竞态。
+     */
+    private boolean closed;
 
     private int currentGen;
     private boolean waitKey = true;
@@ -141,8 +147,17 @@ public final class HlsSink implements StreamSink {
         }
     }
 
+    /**
+     * v1.2.15 崩溃修复：所有触碰原生 FFmpeg 上下文的回调与 shutdown/purge 走同一把对象锁。
+     * 此前 unsubscribe() 只投递 POISON、不等分发线程，janitor 随即 purge() 释放
+     * AVFormatContext / AVCodecContext，而分发线程仍在 av_interleaved_write_frame /
+     * avcodec_send_frame 里 → JVM SIGSEGV 退出（线上两次 hs_err_pid 均为此栈）。
+     */
     @Override
-    public void onReset(int generation) {
+    public synchronized void onReset(int generation) {
+        if (closed) {
+            return;
+        }
         currentGen = generation;
         // fMP4 muxer 保持连续；重连后丢弃非关键帧，等 Hub 从 GOP 侧载的下一个 IDR 再续帧
         waitKey = true;
@@ -150,8 +165,8 @@ public final class HlsSink implements StreamSink {
     }
 
     @Override
-    public void onPacket(MissPacket pkt, int generation) {
-        if (generation != currentGen) {
+    public synchronized void onPacket(MissPacket pkt, int generation) {
+        if (closed || generation != currentGen) {
             return;
         }
         try {
@@ -233,7 +248,7 @@ public final class HlsSink implements StreamSink {
     }
 
     private void handleAudio(MissPacket pkt) {
-        if (muxer != null && !waitKey && muxer.aStream != null && audio.isUp()) {
+        if (muxer != null && muxer.ctx != null && !waitKey && muxer.aStream != null && audio.isUp()) {
             // 用与视频同一基准的归一化设备时间（只读，不改动视频维护的 tsOffset/lastOutMs），
             // 让音频 PTS 锚定设备时钟，从根上消除两条独立时间轴的错位。
             long devMs = normalizeView(pkt.timestampMs());
@@ -311,6 +326,7 @@ public final class HlsSink implements StreamSink {
     }
 
     public synchronized void shutdown() {
+        closed = true;
         if (muxer != null) {
             muxer.close();
             muxer = null;
@@ -318,7 +334,8 @@ public final class HlsSink implements StreamSink {
         audio.close();
     }
 
-    public void purge() {
+    /** 与 onPacket 互斥：等分发线程中在途的原生写帧结束，再释放上下文、删除分片文件。 */
+    public synchronized void purge() {
         shutdown();
         File[] fs = dir.listFiles();
         if (fs != null) {
@@ -491,6 +508,10 @@ public final class HlsSink implements StreamSink {
 
         /** 写入一个视频访问单元。{@code au} 为原始 Annex-B 字节（含起始码），由 movenc 的 BSF 转 AVCC。 */
         void writeVideo(byte[] au, long globalMs, boolean key) {
+            // 关闭后残留的在途回调不得再触碰已释放的原生指针（双重保险）
+            if (ctx == null || videoPkt == null || vStream == null) {
+                return;
+            }
             av_new_packet(videoPkt, au.length);
             videoPkt.data().put(au, 0, au.length);
             videoPkt.pts(globalMs);
@@ -503,6 +524,9 @@ public final class HlsSink implements StreamSink {
         }
 
         void close() {
+            if (ctx == null) {
+                return; // 已关闭，避免对已释放的上下文二次 av_write_trailer
+            }
             try {
                 av_write_trailer(ctx);
             } catch (Throwable t) {
@@ -599,7 +623,7 @@ public final class HlsSink implements StreamSink {
          * 把产出的 AAC 帧按设备时间戳写入 fMP4 muxer 的音频流。
          */
         boolean feed(byte[] opus, long devMs, AVFormatContext ctx, AVStream aStream) {
-            if (!up) {
+            if (!up || ctx == null || aStream == null) {
                 return false;
             }
             try {
@@ -678,6 +702,9 @@ public final class HlsSink implements StreamSink {
         }
 
         private void pumpFifo(AVFormatContext ctx, AVStream aStream) {
+            if (!up || ctx == null || aStream == null || aacEnc == null) {
+                return;
+            }
             int fs = aacEnc.frame_size();
             while (av_audio_fifo_size(fifo) >= fs) {
                 av_frame_unref(encFrame);
