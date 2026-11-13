@@ -12,6 +12,8 @@ import com.invr.web.service.DeviceProbe;
 import com.invr.web.service.HlsService;
 import com.invr.web.service.RecordingService;
 import com.invr.web.service.ShareEventService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -36,6 +38,8 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api")
 public class SettingsController {
+
+    private static final Logger log = LoggerFactory.getLogger(SettingsController.class);
 
     private final RecordingService recordingService;
     private final RtspServer rtspServer;
@@ -90,18 +94,23 @@ public class SettingsController {
         q.put("ptzMode", settingsStore.ptzMode());
         List<Map<String, Object>> list = new ArrayList<>();
         for (CameraDevice c : catalog.all()) {
-            String configured = settingsStore.qualityFor(c.did());
-            Map<String, Object> d = new LinkedHashMap<>();
-            d.put("did", c.did());
-            d.put("name", c.name());
-            d.put("model", c.model());
-            d.put("online", c.online());
-            d.put("quality", configured == null ? "default" : configured);
-            d.put("modelDefault", MissCommands.defaultQuality(c.model()));
-            d.put("streamState", streamHub.isHealthy(c.did()) ? "有画面"
-                    : (streamHub.activeDids().contains(c.did()) ? "连接中" : "未取流"));
-            d.put("lanReachable", deviceProbe.reachable(c.did()));
-            list.add(d);
+            try {
+                String configured = settingsStore.qualityFor(c.did());
+                Map<String, Object> d = new LinkedHashMap<>();
+                d.put("did", c.did());
+                d.put("name", c.name());
+                d.put("model", c.model());
+                d.put("online", c.online());
+                d.put("quality", configured == null ? "default" : configured);
+                d.put("modelDefault", MissCommands.defaultQuality(c.model()));
+                d.put("streamState", streamHub.isHealthy(c.did()) ? "有画面"
+                        : (streamHub.activeDids().contains(c.did()) ? "连接中" : "未取流"));
+                d.put("lanReachable", deviceProbe.reachable(c.did()));
+                list.add(d);
+            } catch (Exception e) {
+                // 单台设备状态读取异常不应阻断其余设备与整页设置加载
+                log.warn("qualityInfo 跳过设备 did={}：{}", c.did(), e.toString());
+            }
         }
         q.put("devices", list);
         return q;
@@ -113,21 +122,38 @@ public class SettingsController {
      */
     @PutMapping("/settings/quality")
     public Map<String, Object> updateQuality(@RequestBody(required = false) QualityRequest req) {
-        if (req == null || req.did() == null || req.did().isBlank()) {
-            throw ApiException.badRequest("缺少设备 DID");
+        try {
+            if (req == null || req.did() == null || req.did().isBlank()) {
+                throw ApiException.badRequest("缺少设备 DID");
+            }
+            String v = req.quality() == null ? "default" : req.quality().trim().toLowerCase();
+            if (!List.of("default", "0", "1", "2", "3", "sd", "hd", "auto").contains(v)) {
+                throw ApiException.badRequest("不支持的清晰度档位：" + v);
+            }
+            if (catalog.find(req.did()).isEmpty()) {
+                log.warn("updateQuality 未命中设备 did={}（当前设备数={}）", req.did(), catalog.all().size());
+                throw ApiException.notFound("设备列表中未找到 did=" + req.did());
+            }
+            settingsStore.saveDeviceQuality(req.did(), v);
+            boolean woke = streamHub.wakeup(req.did(), "取流清晰度已修改", true);
+            // 重建整页设置时若某项聚合失败（与本次保存无关），不应表现为“保存失败”
+            Map<String, Object> m;
+            try {
+                m = getSettings();
+            } catch (Exception e) {
+                log.warn("updateQuality 保存成功，但聚合设置读取失败（已降级返回）：{}", e.toString());
+                m = new LinkedHashMap<>();
+                m.put("quality", qualityInfo());
+            }
+            m.put("reconnected", woke);
+            return m;
+        } catch (ApiException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("updateQuality 意外异常 did={} quality={}：{}",
+                    req == null ? null : req.did(), req == null ? null : req.quality(), e.toString(), e);
+            throw e;
         }
-        String v = req.quality() == null ? "default" : req.quality().trim().toLowerCase();
-        if (!List.of("default", "0", "1", "2", "3", "sd", "hd", "auto").contains(v)) {
-            throw ApiException.badRequest("不支持的清晰度档位：" + v);
-        }
-        if (catalog.find(req.did()).isEmpty()) {
-            throw ApiException.notFound("设备列表中未找到 did=" + req.did());
-        }
-        settingsStore.saveDeviceQuality(req.did(), v);
-        boolean woke = streamHub.wakeup(req.did(), "取流清晰度已修改", true);
-        Map<String, Object> m = getSettings();
-        m.put("reconnected", woke);
-        return m;
     }
 
     /** 切换云台命令载荷格式（auto 按型号自动；direction 通用；operation 步进式旧固件）。 */
@@ -242,6 +268,23 @@ public class SettingsController {
         for (File r : rootFiles) {
             roots.add(entryOf(r, r.getPath()));
         }
+        // fnOS 各盘位（/vol1 /vol2 /vol3 …）在 Linux 上 File.listRoots() 只返回 /，
+        // 直接把各卷作为顶层“盘位”根列出，并优先把本应用在各卷的专属数据目录（可写）也列出，
+        // 这样用户无需从 / 层层下钻即可选到其他卷存放录像。
+        String appId = appId();
+        for (File vol : detectFnosVolumes()) {
+            roots.add(entryOf(vol, vol.getAbsolutePath()));
+            if (appId != null) {
+                File appData = new File(vol, "@appdata/" + appId);
+                if (appData.isDirectory()) {
+                    roots.add(entryOf(appData, appData.getAbsolutePath()));
+                    File rec = new File(appData, "recordings");
+                    if (rec.isDirectory() || rec.mkdirs()) {
+                        roots.add(entryOf(rec, rec.getAbsolutePath()));
+                    }
+                }
+            }
+        }
         resp.put("roots", roots);
 
         // 未指定路径：展示文件系统根（盘符）
@@ -294,6 +337,37 @@ public class SettingsController {
         resp.put("entries", entries);
         resp.put("unreadable", kids == null);
         return resp;
+    }
+
+    /** 从 Servlet 上下文路径（如 /app/indsvr-invr）推导出本应用 id；失败回落常量。 */
+    private static String appId() {
+        try {
+            var attrs = org.springframework.web.context.request.RequestContextHolder
+                    .getRequestAttributes();
+            if (attrs instanceof org.springframework.web.context.request.ServletRequestAttributes sra) {
+                String cp = sra.getRequest().getContextPath();
+                if (cp != null && cp.startsWith("/app/")) {
+                    return cp.substring("/app/".length());
+                }
+            }
+        } catch (Exception ignore) {
+            // 非请求上下文（如测试）时回落默认 id
+        }
+        return "indsvr-invr";
+    }
+
+    /** 探测 fnOS 盘位：根目录下名为 vol<数字> 的子目录（/vol1 /vol2 /vol3 …）。 */
+    private static List<File> detectFnosVolumes() {
+        List<File> vols = new ArrayList<>();
+        File root = new File("/");
+        File[] kids = root.listFiles(f -> f.isDirectory() && f.getName().matches("vol\\d+"));
+        if (kids != null) {
+            Arrays.sort(kids, Comparator.comparing(File::getName));
+            for (File k : kids) {
+                vols.add(k);
+            }
+        }
+        return vols;
     }
 
     /** 组装一个目录条目：名称、绝对路径、是否可写。 */
