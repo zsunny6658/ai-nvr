@@ -118,6 +118,29 @@ body {
 .cam-actions { display: flex; gap: 8px; margin-top: 2px; }
 .cam-actions .btn { flex: 1; }
 
+/* v1.2.14 首页摄像头卡片底部：最近几条画面变动事件快照 */
+.cam-events { border-top: 1px solid var(--line); padding-top: 10px; margin-top: 2px; }
+.cam-events-head { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    font-size: 12px; font-weight: 600; color: #475569; margin-bottom: 8px; }
+.cam-events-more { border: 0; background: none; padding: 2px 4px; font-size: 12px;
+    color: var(--primary-d); cursor: pointer; }
+.cam-events-more:hover { text-decoration: underline; }
+.cam-events-body { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.cam-shot { position: relative; display: block; width: 100%; padding: 0;
+    border: 1px solid var(--line); border-radius: 8px; overflow: hidden;
+    background: #0f172a; aspect-ratio: 16 / 9; cursor: zoom-in; }
+.cam-shot img { width: 100%; height: 100%; object-fit: cover; display: block;
+    transition: transform .18s ease; }
+.cam-shot:hover img { transform: scale(1.07); }
+.cam-shot-time { position: absolute; left: 0; right: 0; bottom: 0; padding: 10px 6px 3px;
+    font-size: 10px; line-height: 1.2; color: #fff; text-align: left; pointer-events: none;
+    background: linear-gradient(transparent, rgba(15, 23, 42, .78)); }
+.cam-events-empty { grid-column: 1 / -1; font-size: 12px; color: var(--muted); padding: 6px 0; }
+@media (max-width: 640px) {
+    .cam-events-body { gap: 6px; }
+    .cam-shot-time { font-size: 9px; padding: 8px 4px 2px; }
+}
+
 /* 录像表 */
 .table-wrap { background: var(--panel); border-radius: 12px; box-shadow: var(--shadow);
     overflow-x: auto; -webkit-overflow-scrolling: touch; }

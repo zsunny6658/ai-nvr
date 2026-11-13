@@ -42,6 +42,13 @@ public class EventStore {
     private static final String EVENTS_DIR = "events";
     private static final String LOG_FILE = "events.jsonl";
     private static final String SNAPSHOT_DIR = "snapshots";
+    /**
+     * 有效快照的最小体积：640x360 纯色灰屏 JPEG 约 1.6KB，真实画面约 37KB。
+     * 首页卡片只展示有画面的事件，历史上 v1.2.12 之前产生的灰屏误报快照在此被剔除。
+     */
+    private static final long MIN_VALID_SNAPSHOT_BYTES = 2000L;
+    /** 首页聚合最多回溯扫描的事件条数，避免事件库较大时逐个 stat 全表文件。 */
+    private static final int RECENT_SCAN_LIMIT = 400;
     private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("yyyyMMdd");
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("yyyy-MM-dd");
     private static final TypeReference<LinkedHashMap<String, Object>> MAP_TYPE = new TypeReference<>() {};
@@ -249,6 +256,50 @@ public class EventStore {
         m.put("byType", byType);
         m.put("byDid", byDid);
         return m;
+    }
+
+    /**
+     * 首页摄像头卡片用：按设备取最近若干条「有有效画面快照」的事件（各自倒序）。
+     *
+     * <p>跳过无快照、快照文件已清理、以及文件体积过小的纯色灰屏帧；某台设备近期全是
+     * 灰屏时会继续向前回溯，直到凑够条数或达到 {@link #RECENT_SCAN_LIMIT}。只做元数据
+     * 判断，不解码 JPEG，30 秒一次的首页轮询开销可忽略。</p>
+     */
+    public synchronized Map<String, List<AlarmEvent>> recentWithSnapshots(int perDevice) {
+        int per = Math.max(1, Math.min(6, perDevice));
+        List<AlarmEvent> desc = new ArrayList<>(events.values());
+        desc.sort(Comparator.comparingLong(AlarmEvent::id).reversed());
+        Map<String, List<AlarmEvent>> out = new LinkedHashMap<>();
+        int scanned = 0;
+        for (AlarmEvent e : desc) {
+            if (++scanned > RECENT_SCAN_LIMIT) {
+                break;
+            }
+            if (e.snapshot() == null || e.snapshot().isEmpty()) {
+                continue;
+            }
+            List<AlarmEvent> bucket = out.get(e.did());
+            if (bucket != null && bucket.size() >= per) {
+                continue;
+            }
+            Path p = snapshotFile(e.snapshot());
+            if (p == null || !Files.isRegularFile(p)) {
+                continue;
+            }
+            try {
+                if (Files.size(p) < MIN_VALID_SNAPSHOT_BYTES) {
+                    continue;
+                }
+            } catch (IOException ignore) {
+                continue;
+            }
+            if (bucket == null) {
+                bucket = new ArrayList<>();
+                out.put(e.did(), bucket);
+            }
+            bucket.add(e);
+        }
+        return out;
     }
 
     public synchronized Optional<AlarmEvent> find(long id) {

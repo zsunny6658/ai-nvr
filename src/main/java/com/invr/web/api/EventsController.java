@@ -80,6 +80,25 @@ public class EventsController {
         return store.stats();
     }
 
+    /**
+     * 首页摄像头卡片：一次返回每台设备最近若干条有画面快照的事件。
+     * 返回 {@code {did: [event, ...]}}，避免每张卡片各发一次请求；纯色灰屏快照已剔除。
+     */
+    @GetMapping("/events/recent")
+    public Map<String, Object> recent(@RequestParam(name = "perDevice", defaultValue = "3") int perDevice) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        for (Map.Entry<String, List<AlarmEvent>> en : store.recentWithSnapshots(perDevice).entrySet()) {
+            List<Map<String, Object>> items = new ArrayList<>();
+            for (AlarmEvent e : en.getValue()) {
+                items.add(present(e));
+            }
+            if (!items.isEmpty()) {
+                out.put(en.getKey(), items);
+            }
+        }
+        return out;
+    }
+
     public record HandledRequest(Boolean handled) {
     }
 

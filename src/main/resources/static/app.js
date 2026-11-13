@@ -35,6 +35,8 @@
         evSelected: new Set(), evRows: [], evOffset: 0, evTotal: 0, evBusy: false,
         // v1.2.13：事件按摄像头分组（折叠状态 / 各设备事件数，来自 /api/events/stats）
         evCollapsed: new Set(), evCounts: {},
+        // v1.2.14：首页摄像头卡片的最近画面变动快照（did -> 事件数组 / id -> 事件 / 数据签名 / 跳转筛选）
+        camRecent: {}, camRecentIndex: {}, camRecentSig: null, evPendingDid: '',
         // v1.2.8：PTZ 操作时临时切 JPEG 兼容帧，操作停止后自动切回 HLS
         ptzCompatActive: false, ptzCompatTimer: null,
         // 门禁令牌（内存兜底；主存 localStorage，跨站 iframe 中为分区存储仍可读写）
@@ -217,7 +219,7 @@
         loadDevices(true);
         loadRecordings();
         loadBoards();
-        loadDashboard();
+        loadDashboard(); // 内含卡片最近快照刷新（v1.2.14）
         loadAbout();
         state.pollTimer = setInterval(function () { loadDevices(false); }, 5000);
         // 概览含录像目录扫描，30 秒一次即可，不跟着 5 秒设备轮询走
@@ -465,6 +467,7 @@
         } catch (e) {
             // 概览失败不打断主流程（门禁失效由 api() 统一处理）
         }
+        loadCamEvents(); // 与概览同频（30 秒）刷新卡片快照，内部有签名判重
     }
 
     /** 页脚显示运行版本与已运行时长；失败静默（不影响主流程）。 */
@@ -598,6 +601,14 @@
             '<button class="btn primary" data-act="preview" data-did="' + esc(c.did) + '"' + offlineDis + '>实时预览</button>' +
             recBtn +
             '<button class="btn soft probe-btn" data-act="probe" data-did="' + esc(c.did) + '">自检</button>' +
+            '</div>' +
+            // v1.2.14：米家式卡片底部 —— 最近几条画面变动事件快照（异步填充，不阻塞设备列表）
+            '<div class="cam-events">' +
+                '<div class="cam-events-head"><span>最近画面变动</span>' +
+                '<button class="cam-events-more" type="button" data-act="evmore" data-did="' + esc(c.did) + '">查看全部 ›</button></div>' +
+                '<div class="cam-events-body" data-camev="' + esc(c.did) + '">' +
+                    '<div class="cam-events-empty">加载中…</div>' +
+                '</div>' +
             '</div></div>';
     }
 
@@ -610,6 +621,72 @@
             return;
         }
         grid.innerHTML = state.devices.map(cardHtml).join('');
+        renderCamEvents(); // 卡片重建后用缓存快照重绘，不必重新请求
+    }
+
+    /* ---------- v1.2.14 首页卡片：最近画面变动事件快照 ----------
+       后端 /api/events/recent 一次返回每台设备最近 3 条有画面的事件（已剔除历史灰屏），
+       前端只负责渲染缩略图条；30 秒概览轮询顺带刷新，数据签名不变时不重建 DOM。 */
+    var CAM_SHOTS = 3;
+
+    /** 缩略图时间：今天只显示 HH:mm，跨天补 M/D，避免小卡片里挤长串日期。 */
+    function fmtShotTime(ms) {
+        var d = new Date(ms), now = new Date();
+        function p(x) { return String(x).padStart(2, '0'); }
+        var hm = p(d.getHours()) + ':' + p(d.getMinutes());
+        return d.toDateString() === now.toDateString()
+            ? hm : (d.getMonth() + 1) + '/' + d.getDate() + ' ' + hm;
+    }
+
+    function renderCamEvents() {
+        var boxes = document.querySelectorAll('.cam-events-body[data-camev]');
+        Array.prototype.forEach.call(boxes, function (box) {
+            var did = box.getAttribute('data-camev');
+            var list = state.camRecent[did] || [];
+            if (!list.length) {
+                box.innerHTML = '<div class="cam-events-empty">暂无画面变动快照</div>';
+                return;
+            }
+            box.innerHTML = list.map(function (ev) {
+                return '<button type="button" class="cam-shot" data-act="evsnap" data-evid="' + ev.id +
+                    '" title="' + esc(fmtTime(ev.createdAt) + ' · ' + (ev.typeName || ev.type)) + '">' +
+                    '<img src="' + esc(withToken(snapFullUrl(ev.snapshotUrl))) + '" alt="画面变动快照" loading="lazy">' +
+                    '<span class="cam-shot-time">' + esc(fmtShotTime(ev.createdAt)) + '</span>' +
+                    '</button>';
+            }).join('');
+        });
+    }
+
+    async function loadCamEvents() {
+        try {
+            var data = await api('api/events/recent?perDevice=' + CAM_SHOTS);
+            state.camRecent = data || {};
+            var idx = {};
+            Object.keys(state.camRecent).forEach(function (did) {
+                (state.camRecent[did] || []).forEach(function (ev) { idx[ev.id] = ev; });
+            });
+            state.camRecentIndex = idx;
+            var sig = Object.keys(state.camRecent).map(function (did) {
+                return did + ':' + (state.camRecent[did] || []).map(function (ev) { return ev.id; }).join(',');
+            }).join('|');
+            if (sig === state.camRecentSig) return; // 无新事件，避免图片重加载闪烁
+            state.camRecentSig = sig;
+            renderCamEvents();
+        } catch (e) {
+            // 静默降级：仅把仍停在「加载中」的卡片置为空态，不打断设备列表
+            Array.prototype.forEach.call(document.querySelectorAll('.cam-events-body[data-camev]'), function (box) {
+                if (box.textContent.indexOf('加载中') >= 0) {
+                    box.innerHTML = '<div class="cam-events-empty">暂无画面变动快照</div>';
+                }
+            });
+        }
+    }
+
+    /** 「查看全部」：切到事件告警页并按该摄像头筛选（用 pending 避免与 tab 自带加载打架）。 */
+    function gotoCamEvents(did) {
+        state.evPendingDid = String(did);
+        var tab = document.querySelector('.tab[data-tab="events"]');
+        if (tab) tab.click();
     }
 
     /** 轮询只更新状态徽标、在线态与录像按钮，不重建卡片（避免按钮闪烁 / 点击中断）。 */
@@ -2668,7 +2745,8 @@
     }
 
     function openEvSnapshot(id) {
-        var e = state.evRows.find(function (x) { return x.id === id; });
+        // 事件页行优先；首页摄像头卡片的快照来自 /api/events/recent 的独立缓存
+        var e = state.evRows.find(function (x) { return x.id === id; }) || state.camRecentIndex[id];
         if (!e || !e.snapshotUrl) return;
         $('evSnapshotTitle').textContent = (e.deviceName || e.did) + ' · ' + fmtTime(e.createdAt);
         var img = $('evSnapshotImg');
@@ -3109,7 +3187,9 @@
         $('setupPw1').addEventListener('keydown', function (e) { if (e.key === 'Enter') $('setupPw2').focus(); });
         $('setupPw2').addEventListener('keydown', function (e) { if (e.key === 'Enter') submitSetup(); });
         $('lockPw').addEventListener('keydown', function (e) { if (e.key === 'Enter') submitUnlock(); });
-        $('btnRefresh').addEventListener('click', function () { loadDevices(true); loadRecordings(); });
+        $('btnRefresh').addEventListener('click', function () {
+            loadDevices(true); loadRecordings(); loadCamEvents();
+        });
         $('btnRecRefresh').addEventListener('click', loadRecordings);
         $('recFilter').addEventListener('change', function () {
             // 换筛选条件后清空勾选，避免删到当前列表里看不见的文件
@@ -3332,7 +3412,25 @@
                 $('tab-settings').hidden = name !== 'settings';
                 if (name === 'boards') loadBoards();
                 if (name === 'recordings') loadRecordings();
-                if (name === 'events') { loadEvFilters(); loadEvents(true); }
+                if (name === 'events') {
+                    loadEvFilters();
+                    // v1.2.14：首页卡片「查看全部」带过来的摄像头筛选，先于列表加载设置好
+                    if (state.evPendingDid) {
+                        var sel = $('evFilterDid');
+                        var has = Array.prototype.some.call(sel.options, function (o) {
+                            return o.value === state.evPendingDid;
+                        });
+                        if (!has) {
+                            var opt = document.createElement('option');
+                            opt.value = state.evPendingDid;
+                            opt.textContent = cameraName(state.evPendingDid);
+                            sel.appendChild(opt);
+                        }
+                        sel.value = state.evPendingDid;
+                        state.evPendingDid = '';
+                    }
+                    loadEvents(true);
+                }
                 if (name === 'playback') enterPlayback();
                 else { pausePb(); stopPbLive(); }
                 if (name === 'settings') loadSettings();
@@ -3354,7 +3452,19 @@
                 var box = b.closest('.cam-card').querySelector('.probe-box');
                 if (box) { box.remove(); }
             }
+            else if (act === 'evsnap') openEvSnapshot(Number(b.getAttribute('data-evid')));
+            else if (act === 'evmore') gotoCamEvents(did);
         });
+
+        // 首页卡片缩略图：快照文件已清理/损坏时降级成占位块，不显示破图
+        $('deviceGrid').addEventListener('error', function (e) {
+            var btn = e.target && e.target.parentNode;
+            if (!btn || !btn.classList || !btn.classList.contains('cam-shot') || !btn.parentNode) return;
+            var ph = document.createElement('div');
+            ph.className = 'cam-events-empty';
+            ph.textContent = '快照不可用';
+            btn.parentNode.replaceChild(ph, btn);
+        }, true);
 
         // 共享看板：卡片操作事件委托
         $('boardGrid').addEventListener('click', function (e) {
