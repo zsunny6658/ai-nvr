@@ -78,6 +78,17 @@
         return path + (path.indexOf('?') >= 0 ? '&' : '?') + '__invr_t=' + encodeURIComponent(t);
     }
 
+    /** 把后端返回的相对应用根的绝对 API 路径（如 /api/events/101/snapshot）拼上 fnOS 网关
+     *  context-path，生成可直用于 <img>/<video> 的完整 URL。fetch 用相对路径会自动基于当前页面
+     *  解析到 /app/{appname}/ 下；但 <img> 传入前导 / 的绝对路径会落到域名根而绕开 context-path，
+     *  故在此补齐前缀（与 snapshotApiUrl 的计算方式一致）。 */
+    function snapFullUrl(u) {
+        if (!u) return u;
+        var p = location.pathname;
+        var dir = p.substring(0, p.lastIndexOf('/') + 1);
+        return dir + (u.charAt(0) === '/' ? u.substring(1) : u);
+    }
+
     async function api(path, opts) {
         opts = opts || {};
         opts.headers = Object.assign({}, opts.headers);
@@ -1703,10 +1714,19 @@
             return '<button class="btn tiny dir-drive" type="button" data-path="' + esc(r.path) + '">' + esc(r.name) + '</button>';
         }).join('');
         var box = $('dirList');
-        if (!d.entries || !d.entries.length) {
-            box.innerHTML = '<div class="dir-empty">（此目录下没有子目录）</div>';
-        } else {
-            box.innerHTML = d.entries.map(function (e) {
+        var html = '';
+        // 允许直接选中“当前目录”本身：用户授权的外部卷目录（如 /vol2/1000/影视/cam）常直接作为
+        // 录像根，可能为空；若只允许选子目录会陷入“空目录无可选”的死结，故显式提供“选择此目录”。
+        if (d.current) {
+            var cw = !!d.currentWritable;
+            html += '<div class="dir-item' + (cw ? '' : ' ro') + '" data-path="' + esc(d.current) + '" data-writable="' + (cw ? '1' : '0') + '">' +
+                FOLDER_SVG +
+                '<span class="dir-name">✔ 选择此目录：' + esc(d.current) + '</span>' +
+                '<span class="dir-flag">' + (cw ? '可写' : '不可写') + '</span>' +
+                '</div>';
+        }
+        if (d.entries && d.entries.length) {
+            html += d.entries.map(function (e) {
                 var cls = e.writable ? 'dir-item' : 'dir-item ro';
                 return '<div class="' + cls + '" data-path="' + esc(e.path) + '" data-writable="' + (e.writable ? '1' : '0') + '">' +
                     FOLDER_SVG +
@@ -1715,6 +1735,7 @@
                     '</div>';
             }).join('');
         }
+        box.innerHTML = html || '<div class="dir-empty">（此目录下没有子目录）</div>';
         box.querySelectorAll('.dir-item').forEach(function (el) {
             var p = el.getAttribute('data-path');
             var writable = el.getAttribute('data-writable') === '1';
@@ -2325,7 +2346,7 @@
         }
         box.innerHTML = state.evRows.map(function (e) {
             var thumb = e.snapshotUrl
-                ? '<img class="ev-thumb" src="' + esc(withToken(e.snapshotUrl)) + '" alt="事件快照" data-evact="snapshot" data-evid="' + e.id + '">'
+                ? '<img class="ev-thumb" src="' + esc(withToken(snapFullUrl(e.snapshotUrl))) + '" alt="事件快照" data-evact="snapshot" data-evid="' + e.id + '">'
                 : '<div class="ev-nothumb">无快照</div>';
             var score = (e.score != null && e.score > 0)
                 ? ' · 变化 ' + Number(e.score).toFixed(2) : '';
@@ -2420,7 +2441,7 @@
         var img = $('evSnapshotImg');
         img.alt = '快照不可用或已被清理';
         img.onerror = function () { $('evSnapshotTitle').textContent += ' · 快照不可用或已被清理'; };
-        img.src = withToken(e.snapshotUrl);
+        img.src = withToken(snapFullUrl(e.snapshotUrl));
         $('evSnapshotModal').hidden = false;
     }
 

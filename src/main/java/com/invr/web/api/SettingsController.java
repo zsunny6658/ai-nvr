@@ -285,6 +285,12 @@ public class SettingsController {
                 }
             }
         }
+        // fnOS 应用存储授权：用户在「应用设置→存储管理」授权的外部目录，由 fnOS 在应用启动时
+        // 通过环境变量 TRIM_DATA_ACCESSIBLE_PATHS / TRIM_DATA_SHARE_PATHS（冒号分隔）注入。
+        // 这些才是应用真正可访问的跨卷路径（如 /vol2/1000/影视），必须作为可选根列出；
+        // 上面探测到的 /volN 顶层在 fnOS 下对应用用户不可遍历，无法直接下钻。
+        addEnvRoots(roots, System.getenv("TRIM_DATA_ACCESSIBLE_PATHS"));
+        addEnvRoots(roots, System.getenv("TRIM_DATA_SHARE_PATHS"));
         resp.put("roots", roots);
 
         // 未指定路径：展示文件系统根（盘符）
@@ -319,6 +325,13 @@ public class SettingsController {
         }
         File parent = dir.getParentFile();
         resp.put("current", dir.getAbsolutePath());
+        boolean currentWritable = false;
+        try {
+            currentWritable = Files.isWritable(dir.toPath());
+        } catch (Exception ignore) {
+            currentWritable = false;
+        }
+        resp.put("currentWritable", currentWritable);
         resp.put("parent", (!isRoot && parent != null) ? parent.getAbsolutePath() : null);
 
         File[] kids = null;
@@ -370,8 +383,32 @@ public class SettingsController {
         return vols;
     }
 
+    /** 把 fnOS 注入的授权存储路径（冒号分隔）作为可选根目录加入选择器，去重。 */
+    private static void addEnvRoots(List<Map<String, Object>> roots, String env) {
+        if (env == null || env.isBlank()) {
+            return;
+        }
+        java.util.Set<String> existing = new java.util.HashSet<>();
+        for (Map<String, Object> r : roots) {
+            Object p = r.get("path");
+            if (p instanceof String s) {
+                existing.add(s);
+            }
+        }
+        for (String part : env.split(":", -1)) {
+            String p = part.trim();
+            if (p.isEmpty()) {
+                continue;
+            }
+            File f = new File(p);
+            if (f.isDirectory() && existing.add(f.getAbsolutePath())) {
+                roots.add(entryOf(f, f.getAbsolutePath()));
+            }
+        }
+    }
+
     /** 组装一个目录条目：名称、绝对路径、是否可写。 */
-    private Map<String, Object> entryOf(File f, String name) {
+    private static Map<String, Object> entryOf(File f, String name) {
         Map<String, Object> m = new LinkedHashMap<>();
         boolean writable = false;
         try {
