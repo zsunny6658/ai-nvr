@@ -667,3 +667,41 @@ body {
     .ev-filters .btn { flex: 1 1 44%; }
     .ev-thumb, .ev-nothumb { width: 88px; height: 64px; }
 }
+
+/* ===== v1.2.13 按摄像头分组：快捷标签 + 可折叠分组标题 ===== */
+.cam-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; }
+.cam-chip { display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px;
+    font-size: 12px; line-height: 1.2; color: var(--ink); background: var(--panel);
+    border: 1px solid var(--line); border-radius: 999px; cursor: pointer;
+    box-shadow: var(--shadow); transition: background .15s, border-color .15s; }
+.cam-chip:hover { border-color: var(--primary); }
+.cam-chip.active { background: var(--primary); border-color: var(--primary);
+    color: #fff; font-weight: 600; }
+.cam-chip-n { min-width: 18px; padding: 0 5px; border-radius: 999px;
+    background: #e2e8f0; color: #475569; font-size: 11px; text-align: center;
+    font-variant-numeric: tabular-nums; }
+.cam-chip.active .cam-chip-n { background: rgba(255, 255, 255, .25); color: #fff; }
+
+.cam-group-toggle { display: flex; align-items: center; gap: 8px; width: 100%;
+    padding: 0; border: 0; background: none; cursor: pointer; text-align: left;
+    font: inherit; color: var(--ink); }
+.cam-caret { flex: 0 0 12px; color: var(--muted); font-size: 12px; }
+.cam-group-name { font-weight: 700; font-size: 13px; }
+.cam-group-did { font-family: Consolas, monospace; font-size: 11px; color: var(--muted); }
+.cam-group-count { margin-left: auto; font-size: 11px; color: var(--muted); white-space: nowrap; }
+.is-collapsed { display: none; }
+
+/* 录像表：每个摄像头一个分组标题行 */
+.rec-group td { background: #f1f5f9; padding: 8px 14px !important;
+    border-bottom: 1px solid var(--line); }
+.rec-group:hover td { background: #e8eef6; }
+
+/* 事件页：外层改为分组列表，内层仍是原来的卡片网格 */
+.ev-list { display: flex; flex-direction: column; gap: 16px; }
+.ev-group-head { padding: 8px 12px; margin-bottom: 10px; background: #f1f5f9;
+    border: 1px solid var(--line); border-radius: 10px; }
+.ev-group-head:hover { background: #e8eef6; }
+.ev-list .ev-empty { grid-column: auto; }
+@media (max-width: 640px) {
+    .cam-group-did { display: none; }
+}

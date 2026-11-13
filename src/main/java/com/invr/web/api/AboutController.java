@@ -9,7 +9,9 @@ import java.lang.management.ManagementFactory;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -25,7 +27,9 @@ import java.util.Map;
 public class AboutController {
 
     /** 非 fnOS 环境（本地调试）读不到 manifest 时的回落版本。需随每次发版同步手工维护。 */
-    private static final String FALLBACK_VERSION = "1.2.12";
+    private static final String FALLBACK_VERSION = "1.2.13";
+
+    private static final String APP_ID = "indsvr-invr";
 
     @GetMapping("/api/about")
     public Map<String, Object> about() {
@@ -52,15 +56,15 @@ public class AboutController {
     }
 
     private String resolveVersion() {
-        try {
-            URI loc = AboutController.class.getProtectionDomain().getCodeSource().getLocation().toURI();
-            File jar = new File(loc);
-            File manifest = new File(jar.getParentFile(), "manifest");
-            if (manifest.isFile()) {
+        for (File manifest : manifestCandidates()) {
+            try {
+                if (!manifest.isFile()) {
+                    continue;
+                }
                 for (String line : Files.readAllLines(manifest.toPath(), StandardCharsets.UTF_8)) {
                     String t = line.trim();
-                    // fnpack 打包时会把 manifest 规范化成 "version               = 1.2.12"
-                    // （等号两侧填充空格），fnOS 安装后又会写成紧凑的 "version=1.2.12"；
+                    // fnpack 打包时会把 manifest 规范化成 "version               = 1.2.13"
+                    // （等号两侧填充空格），fnOS 安装后又会写成紧凑的 "version=1.2.13"；
                     // 两种都兼容：按首个 '=' 拆分、分别 trim key 与 value。
                     int eq = t.indexOf('=');
                     if (eq > 0 && "version".equalsIgnoreCase(t.substring(0, eq).trim())) {
@@ -70,10 +74,46 @@ public class AboutController {
                         }
                     }
                 }
+            } catch (Exception ignored) {
+                // 单个候选读失败继续尝试下一个
             }
-        } catch (Exception ignored) {
-            // 读不到时回落内置常量，不影响主流程
         }
         return FALLBACK_VERSION;
+    }
+
+    /**
+     * manifest 候选位置。Spring Boot fat jar 运行时 codeSource 形如
+     * {@code jar:file:/vol3/@appcenter/indsvr-invr/app.jar!/BOOT-INF/classes!/}，
+     * 直接 {@code new File(URI)} 会抛异常而一直回落到内置常量（表现为版本号不随发版更新）；
+     * 这里解析出真实 jar 路径取其同级目录，并补上工作目录与 fnOS 常见安装位置做兜底。
+     */
+    private List<File> manifestCandidates() {
+        List<File> out = new ArrayList<>();
+        try {
+            String s = AboutController.class.getProtectionDomain()
+                    .getCodeSource().getLocation().toString();
+            if (s.startsWith("jar:file:")) {
+                int bang = s.indexOf("!/");
+                if (bang > "jar:file:".length()) {
+                    File jar = new File(s.substring("jar:file:".length(), bang));
+                    if (jar.getParentFile() != null) {
+                        out.add(new File(jar.getParentFile(), "manifest"));
+                    }
+                }
+            } else if (s.startsWith("file:")) {
+                File f = new File(URI.create(s));
+                File dir = f.isDirectory() ? f : f.getParentFile();
+                if (dir != null) {
+                    out.add(new File(dir, "manifest"));
+                }
+            }
+        } catch (Exception ignored) {
+            // 继续走下面的兜底路径
+        }
+        out.add(new File(System.getProperty("user.dir", "."), "manifest"));
+        for (int i = 1; i <= 8; i++) {
+            out.add(new File("/vol" + i + "/@appcenter/" + APP_ID + "/manifest"));
+        }
+        return out;
     }
 }

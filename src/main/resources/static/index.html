@@ -10,7 +10,7 @@
     <base href="./">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230891b2'/%3E%3C/svg%3E">
     <title>iNvr · 小米摄像头 NVR</title>
-    <link rel="stylesheet" href="style.css?v=28">
+    <link rel="stylesheet" href="style.css?v=29">
 </head>
 <body>
 <header class="topbar">
@@ -136,6 +136,8 @@
                     <button class="btn soft" id="btnRecRefresh">刷新</button>
                 </div>
             </div>
+            <!-- v1.2.13 按摄像头分组：快捷标签（与上方下拉联动） -->
+            <div class="cam-chips" id="recChips"></div>
             <!-- v1.2.2 批量操作：勾选文件后统一打包下载 / 删除 -->
             <div class="rec-toolbar">
                 <span class="rec-selinfo" id="recSelInfo">勾选文件后可批量打包下载或删除</span>
@@ -165,6 +167,8 @@
                 <div><button class="btn soft" id="btnEvRefresh" type="button">&#8635; 刷新</button></div>
             </div>
             <div class="ev-stats" id="evStats">-</div>
+            <!-- v1.2.13 按摄像头分组：快捷标签（与下方设备下拉联动） -->
+            <div class="cam-chips" id="evChips"></div>
             <div class="ev-filters">
                 <select id="evFilterDid" class="select" aria-label="设备"><option value="">全部设备</option></select>
                 <select id="evFilterType" class="select" aria-label="类型">
@@ -194,7 +198,7 @@
                     <button class="btn tiny" id="btnEvClearSel" hidden>取消选择</button>
                 </div>
             </div>
-            <div class="ev-grid" id="evList"></div>
+            <div class="ev-list" id="evList"></div>
             <div class="ev-more"><button class="btn soft" id="btnEvMore" hidden>加载更多</button></div>
             <p class="muted small">事件保存在应用数据目录，默认上限 2000 条 / 30 天，可在「设置 → 运动侦测与自动录像」调整。误报偏多时适当提高变化阈值或增大确认帧数。</p>
         </div>
@@ -616,7 +620,7 @@
 <footer class="app-footer">i-NVR · <span id="appVersion">v?</span></footer>
 
 <script src="vendor/hls.min.js"></script>
-<script src="watchdog.js?v=28"></script>
-<script src="app.js?v=28"></script>
+<script src="watchdog.js?v=29"></script>
+<script src="app.js?v=29"></script>
 </body>
 </html>

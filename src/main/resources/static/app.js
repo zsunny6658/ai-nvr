@@ -29,8 +29,12 @@
         // v1.2.2：录像文件页批量选择（name 集合 + 当前列表 name→size，用于显示选中容量）
         recSelected: new Set(),
         recRows: new Map(),
+        // v1.2.13：按摄像头分组展示（折叠状态 / 各设备文件数）
+        recCollapsed: new Set(), recCounts: {},
         // v1.2.8：事件告警页（选中集 / 已加载行 / 分页游标）
         evSelected: new Set(), evRows: [], evOffset: 0, evTotal: 0, evBusy: false,
+        // v1.2.13：事件按摄像头分组（折叠状态 / 各设备事件数，来自 /api/events/stats）
+        evCollapsed: new Set(), evCounts: {},
         // v1.2.8：PTZ 操作时临时切 JPEG 兼容帧，操作停止后自动切回 HLS
         ptzCompatActive: false, ptzCompatTimer: null,
         // 门禁令牌（内存兜底；主存 localStorage，跨站 iframe 中为分区存储仍可读写）
@@ -652,6 +656,65 @@
         return (c && c.name) ? (c.name + '（' + did + '）') : String(did);
     }
 
+    /* ---------- v1.2.13 按摄像头分组展示的公共 helper ---------- */
+    /** 分组标题用的设备名：优先取当前设备列表中的名称；历史/已移除设备明确标注。 */
+    function cameraName(did) {
+        var c = findDevice(did);
+        if (c) return c.name ? c.name : String(did);
+        return '已移除设备 ' + did;
+    }
+
+    /** 分组顺序：与「摄像头」页设备顺序一致，仅存在于历史数据中的设备排最后。 */
+    function cameraGroupKeys(dids) {
+        var known = (state.devices || []).map(function (c) { return String(c.did); });
+        var out = known.filter(function (d) { return dids.indexOf(d) >= 0; });
+        dids.forEach(function (d) { if (out.indexOf(d) < 0) out.push(d); });
+        return out;
+    }
+
+    /** 摄像头快捷标签 HTML：全部 + 每台设备，带数量角标（counts 为全量统计）。 */
+    function camChipsHtml(cur, counts) {
+        var devs = (state.devices || []).map(function (c) {
+            return { did: String(c.did), name: c.name || String(c.did) };
+        });
+        Object.keys(counts || {}).forEach(function (did) {
+            if (!devs.some(function (d) { return d.did === did; })) {
+                devs.push({ did: did, name: '已移除设备 ' + did });
+            }
+        });
+        var html = '<button type="button" class="cam-chip' + (cur ? '' : ' active') +
+            '" data-camdid="">全部摄像头</button>';
+        devs.forEach(function (d) {
+            var n = (counts && counts[d.did] != null) ? counts[d.did] : null;
+            html += '<button type="button" class="cam-chip' + (String(cur) === d.did ? ' active' : '') +
+                '" data-camdid="' + esc(d.did) + '" title="' + esc(d.did) + '">' +
+                '<span>' + esc(d.name) + '</span>' +
+                (n != null ? '<span class="cam-chip-n">' + n + '</span>' : '') + '</button>';
+        });
+        return html;
+    }
+
+    function bindCamChips(boxId, onPick) {
+        var box = $(boxId);
+        if (!box) return;
+        box.querySelectorAll('.cam-chip').forEach(function (b) {
+            b.addEventListener('click', function () { onPick(b.getAttribute('data-camdid') || ''); });
+        });
+    }
+
+    /** 选中某摄像头筛选值；历史/已移除设备不在下拉里时动态补 option，避免选不中。 */
+    function selectCamFilter(selId, did) {
+        var sel = $(selId);
+        if (!sel) return;
+        if (did && !Array.prototype.some.call(sel.options, function (o) { return o.value === did; })) {
+            var opt = document.createElement('option');
+            opt.value = did;
+            opt.textContent = cameraName(did) + ' (' + did + ')';
+            sel.appendChild(opt);
+        }
+        sel.value = did;
+    }
+
     /* 将秒数格式化为友好的分段时长（120 -> 2 分钟、90 -> 1 分 30 秒、10 -> 10 秒）。 */
     function formatSeg(sec) {
         sec = parseInt(sec, 10) || 0;
@@ -915,29 +978,77 @@
             updateBatchUi();
         }
     }
+    /** v1.2.13 摄像头快捷标签：与 recFilter 下拉联动，点击即按该摄像头筛选。 */
+    function renderRecChips() {
+        var box = $('recChips');
+        if (!box) return;
+        box.innerHTML = camChipsHtml($('recFilter').value || '', state.recCounts);
+        bindCamChips('recChips', function (did) {
+            if (($('recFilter').value || '') === did) return;
+            selectCamFilter('recFilter', did);
+            state.recSelected.clear(); // 换设备后清空勾选，避免删到看不见的文件
+            loadRecordings();
+        });
+    }
+
+    /** 单个录像文件行；collapsed 控制整组折叠时不重建 DOM（勾选状态得以保留）。 */
+    function recRowHtml(r, collapsed) {
+        var sel = state.recSelected.has(r.name);
+        // 录制中的分段由后端跳过，前端直接禁用勾选并说明原因，避免选了却没被处理
+        var disabled = r.recording ? ' disabled title="该分段正在录制中，封段后可操作"' : '';
+        var cls = [sel ? 'rec-selected' : '', collapsed ? 'is-collapsed' : ''].filter(Boolean).join(' ');
+        return '<tr' + (cls ? ' class="' + cls + '"' : '') +
+            ' data-recgroup-row="' + esc(String(r.did || '')) + '">' +
+            '<td class="rec-check"><input type="checkbox" data-rsel="' + esc(r.name) + '"' +
+                (sel ? ' checked' : '') + disabled + '></td>' +
+            '<td class="fname">' + esc(r.name) + '</td>' +
+            '<td>' + esc(cameraLabel(r.did)) + (r.recording ? ' <span class="badge rec">录制中</span>' : '') + '</td>' +
+            '<td>' + fmtSize(r.size) + '</td>' +
+            '<td>' + fmtTime(r.lastModified) + '</td>' +
+            '<td class="acts">' +
+            '<button class="btn tiny" data-ract="play" data-name="' + esc(r.name) + '">播放</button>' +
+            '<a class="btn tiny" href="' + withToken('api/recordings/' + encodeURIComponent(r.name) + '?dl=1') + '" download>下载</a>' +
+            '<button class="btn tiny soft-danger" data-ract="del" data-name="' + esc(r.name) + '">删除</button>' +
+            '</td></tr>';
+    }
+
+    /** v1.2.13 录像按摄像头分组：每组一个可折叠标题行（设备名 / 文件数 / 占用空间）。 */
     function renderRecordings(list) {
         var tb = $('recList');
+        renderRecFilter();
         if (!list || !list.length) {
             tb.innerHTML = '<tr><td colspan="6" class="empty">暂无录像文件</td></tr>';
+            renderRecChips();
             updateBatchUi();
             return;
         }
-        tb.innerHTML = list.map(function (r) {
-            var sel = state.recSelected.has(r.name);
-            // 录制中的分段由后端跳过，前端直接禁用勾选并说明原因，避免选了却没被处理
-            var disabled = r.recording ? ' disabled title="该分段正在录制中，封段后可操作"' : '';
-            return '<tr' + (sel ? ' class="rec-selected"' : '') + '>' +
-                '<td class="rec-check"><input type="checkbox" data-rsel="' + esc(r.name) + '"' +
-                    (sel ? ' checked' : '') + disabled + '></td>' +
-                '<td class="fname">' + esc(r.name) + '</td>' +
-                '<td>' + esc(cameraLabel(r.did)) + (r.recording ? ' <span class="badge rec">录制中</span>' : '') + '</td>' +
-                '<td>' + fmtSize(r.size) + '</td>' +
-                '<td>' + fmtTime(r.lastModified) + '</td>' +
-                '<td class="acts">' +
-                '<button class="btn tiny" data-ract="play" data-name="' + esc(r.name) + '">播放</button>' +
-                '<a class="btn tiny" href="' + withToken('api/recordings/' + encodeURIComponent(r.name) + '?dl=1') + '" download>下载</a>' +
-                '<button class="btn tiny soft-danger" data-ract="del" data-name="' + esc(r.name) + '">删除</button>' +
-                '</td></tr>';
+        var groups = new Map();
+        list.forEach(function (r) {
+            var k = String(r.did || '');
+            if (!groups.has(k)) groups.set(k, []);
+            groups.get(k).push(r);
+        });
+        // 仅在「全部摄像头」视图下刷新每台文件数；筛选视图保留全量角标
+        if (!$('recFilter').value) {
+            var counts = {};
+            groups.forEach(function (rows, k) { counts[k] = rows.length; });
+            state.recCounts = counts;
+            renderRecFilter();
+        }
+        renderRecChips();
+        var keys = cameraGroupKeys(Array.from(groups.keys()));
+        tb.innerHTML = keys.map(function (did) {
+            var rows = groups.get(did);
+            var collapsed = state.recCollapsed.has(did);
+            var bytes = rows.reduce(function (s, r) { return s + (r.size || 0); }, 0);
+            var head = '<tr class="rec-group" data-recgroup="' + esc(did) + '"><td colspan="6">' +
+                '<button type="button" class="cam-group-toggle" aria-expanded="' + (!collapsed) + '">' +
+                    '<span class="cam-caret">' + (collapsed ? '▸' : '▾') + '</span>' +
+                    '<span class="cam-group-name">' + esc(cameraName(did)) + '</span>' +
+                    '<span class="cam-group-did">' + esc(did) + '</span>' +
+                    '<span class="cam-group-count">' + rows.length + ' 个文件 · ' + fmtSize(bytes) + '</span>' +
+                '</button></td></tr>';
+            return head + rows.map(function (r) { return recRowHtml(r, collapsed); }).join('');
         }).join('');
         tb.querySelectorAll('button[data-ract]').forEach(function (btn) {
             btn.addEventListener('click', function () {
@@ -945,6 +1056,20 @@
                 var act = btn.getAttribute('data-ract');
                 if (act === 'play') openPlayer(name);
                 else if (act === 'del') delRecording(name);
+            });
+        });
+        tb.querySelectorAll('.rec-group').forEach(function (tr) {
+            tr.querySelector('.cam-group-toggle').addEventListener('click', function () {
+                var did = tr.getAttribute('data-recgroup');
+                var nowCollapsed = !state.recCollapsed.has(did);
+                if (nowCollapsed) state.recCollapsed.add(did); else state.recCollapsed.delete(did);
+                this.querySelector('.cam-caret').textContent = nowCollapsed ? '▸' : '▾';
+                this.setAttribute('aria-expanded', String(!nowCollapsed));
+                tb.querySelectorAll('tr[data-recgroup-row]').forEach(function (row) {
+                    if (row.getAttribute('data-recgroup-row') === did) {
+                        row.classList.toggle('is-collapsed', nowCollapsed);
+                    }
+                });
             });
         });
         updateBatchUi();
@@ -1078,9 +1203,16 @@
         var sel = $('recFilter');
         var cur = sel.value;
         var opts = '<option value="">全部摄像头</option>' +
-            state.devices.map(function (c) {
+            (state.devices || []).map(function (c) {
                 return '<option value="' + esc(c.did) + '">' + esc(c.name) + ' (' + esc(c.did) + ')</option>';
             }).join('');
+        // v1.2.13：历史录像可能属于已移除的设备，也补进下拉，保证快捷标签能选中
+        var known = (state.devices || []).map(function (c) { return String(c.did); });
+        Object.keys(state.recCounts || {}).forEach(function (did) {
+            if (known.indexOf(did) < 0) {
+                opts += '<option value="' + esc(did) + '">' + esc(cameraName(did)) + ' (' + esc(did) + ')</option>';
+            }
+        });
         if (sel.innerHTML !== opts) sel.innerHTML = opts;
         if (cur) sel.value = cur;
     }
@@ -2339,9 +2471,18 @@
     function loadEvFilters() {
         var sel = $('evFilterDid');
         var cur = sel.value;
-        sel.innerHTML = '<option value="">全部设备</option>' + (state.devices || []).map(function (d) {
+        var devs = state.devices || [];
+        var html = '<option value="">全部设备</option>' + devs.map(function (d) {
             return '<option value="' + esc(d.did) + '">' + esc(d.name || d.did) + '</option>';
         }).join('');
+        // v1.2.13：历史事件可能属于已移除设备，补进下拉以便按摄像头查看
+        var known = devs.map(function (d) { return String(d.did); });
+        Object.keys(state.evCounts || {}).forEach(function (did) {
+            if (known.indexOf(did) < 0) {
+                html += '<option value="' + esc(did) + '">' + esc(cameraName(did)) + '</option>';
+            }
+        });
+        sel.innerHTML = html;
         sel.value = cur;
     }
 
@@ -2354,6 +2495,8 @@
         }
         state.evBusy = true;
         try {
+            // 分组标题需要设备名，先确保设备列表已加载（失败则回落到 DID）
+            if (!state.devices.length) { try { await loadDevices(false); } catch (e2) { /* 忽略 */ } }
             var r = await api('api/events?' + evQuery(state.evOffset));
             var list = r.list || [];
             state.evRows = reset ? list : state.evRows.concat(list);
@@ -2361,6 +2504,10 @@
             state.evOffset = state.evRows.length;
             renderEvents();
             var st = await api('api/events/stats');
+            // v1.2.13：按设备统计用于摄像头快捷标签角标；顺带把历史设备补进筛选下拉
+            state.evCounts = st.byDid || {};
+            loadEvFilters();
+            renderEvChips();
             $('evStats').innerHTML = '<span>累计事件 <b>' + (st.total || 0) + '</b></span>' +
                 '<span>今日 <b>' + (st.today || 0) + '</b></span>' +
                 '<span>未处理 <b>' + (st.unhandled || 0) + '</b></span>';
@@ -2372,42 +2519,93 @@
         }
     }
 
+    /** v1.2.13 事件页摄像头快捷标签：与 evFilterDid 联动，角标为全量事件数。 */
+    function renderEvChips() {
+        var box = $('evChips');
+        if (!box) return;
+        box.innerHTML = camChipsHtml($('evFilterDid').value || '', state.evCounts);
+        bindCamChips('evChips', function (did) {
+            if (($('evFilterDid').value || '') === did) return;
+            selectCamFilter('evFilterDid', did);
+            loadEvents(true);
+        });
+    }
+
+    /** 单张事件卡片（DOM 结构保持不变，批量/快照/删除的事件委托继续生效）。 */
+    function evCardHtml(e) {
+        var thumb = e.snapshotUrl
+            ? '<img class="ev-thumb" src="' + esc(withToken(snapFullUrl(e.snapshotUrl))) + '" alt="事件快照" data-evact="snapshot" data-evid="' + e.id + '">'
+            : '<div class="ev-nothumb">无快照</div>';
+        var score = (e.score != null && e.score > 0)
+            ? ' · 变化 ' + Number(e.score).toFixed(2) : '';
+        return '<article class="ev-card' + (state.evSelected.has(e.id) ? ' sel' : '') +
+            '" data-evid="' + e.id + '">' +
+            '<div class="ev-card-top">' +
+                '<input type="checkbox" class="ev-check" data-evid="' + e.id + '"' +
+                    (state.evSelected.has(e.id) ? ' checked' : '') + ' aria-label="选择事件">' + thumb +
+            '</div>' +
+            '<div class="ev-body">' +
+                '<div class="ev-title">' + esc(e.title || e.typeName) + '</div>' +
+                '<div class="ev-meta">' + esc(e.deviceName || e.did) + ' · ' + fmtTime(e.createdAt) + '</div>' +
+                '<div class="ev-meta">' + esc(e.typeName || e.type) + score + '</div>' +
+                '<div class="ev-tags"><span class="ev-tag ' + (e.handled ? 'handled' : 'unhandled') +
+                    '">' + (e.handled ? '已处理' : '未处理') + '</span>' +
+                    (e.level && e.level !== 'info' ? '<span class="ev-tag">' + esc(e.level) + '</span>' : '') +
+                '</div>' +
+                '<div class="ev-actions">' +
+                    (e.snapshotUrl ? '<button class="btn tiny soft" data-evact="snapshot" data-evid="' + e.id + '">查看快照</button>' : '') +
+                    '<button class="btn tiny soft" data-evact="handled" data-evid="' + e.id +
+                        '" data-evval="' + (e.handled ? 'false' : 'true') + '">' +
+                        (e.handled ? '取消处理' : '标记已处理') + '</button>' +
+                    '<button class="btn tiny soft-danger" data-evact="del" data-evid="' + e.id + '">删除</button>' +
+                '</div>' +
+            '</div></article>';
+    }
+
+    /** v1.2.13 事件按摄像头分组：每组一个可折叠标题（设备名 / 条数 / 未处理数），组内仍按时间倒序。 */
     function renderEvents() {
         var box = $('evList');
+        renderEvChips();
         if (!state.evRows.length) {
             box.innerHTML = '<div class="ev-empty">暂无事件。请先在「设置 → 运动侦测与自动录像」启用侦测。</div>';
             updateEvBatchUi();
             return;
         }
-        box.innerHTML = state.evRows.map(function (e) {
-            var thumb = e.snapshotUrl
-                ? '<img class="ev-thumb" src="' + esc(withToken(snapFullUrl(e.snapshotUrl))) + '" alt="事件快照" data-evact="snapshot" data-evid="' + e.id + '">'
-                : '<div class="ev-nothumb">无快照</div>';
-            var score = (e.score != null && e.score > 0)
-                ? ' · 变化 ' + Number(e.score).toFixed(2) : '';
-            return '<article class="ev-card' + (state.evSelected.has(e.id) ? ' sel' : '') +
-                '" data-evid="' + e.id + '">' +
-                '<div class="ev-card-top">' +
-                    '<input type="checkbox" class="ev-check" data-evid="' + e.id + '"' +
-                        (state.evSelected.has(e.id) ? ' checked' : '') + ' aria-label="选择事件">' + thumb +
-                '</div>' +
-                '<div class="ev-body">' +
-                    '<div class="ev-title">' + esc(e.title || e.typeName) + '</div>' +
-                    '<div class="ev-meta">' + esc(e.deviceName || e.did) + ' · ' + fmtTime(e.createdAt) + '</div>' +
-                    '<div class="ev-meta">' + esc(e.typeName || e.type) + score + '</div>' +
-                    '<div class="ev-tags"><span class="ev-tag ' + (e.handled ? 'handled' : 'unhandled') +
-                        '">' + (e.handled ? '已处理' : '未处理') + '</span>' +
-                        (e.level && e.level !== 'info' ? '<span class="ev-tag">' + esc(e.level) + '</span>' : '') +
-                    '</div>' +
-                    '<div class="ev-actions">' +
-                        (e.snapshotUrl ? '<button class="btn tiny soft" data-evact="snapshot" data-evid="' + e.id + '">查看快照</button>' : '') +
-                        '<button class="btn tiny soft" data-evact="handled" data-evid="' + e.id +
-                            '" data-evval="' + (e.handled ? 'false' : 'true') + '">' +
-                            (e.handled ? '取消处理' : '标记已处理') + '</button>' +
-                        '<button class="btn tiny soft-danger" data-evact="del" data-evid="' + e.id + '">删除</button>' +
-                    '</div>' +
-                '</div></article>';
+        var groups = new Map();
+        state.evRows.forEach(function (e) {
+            var k = String(e.did || '');
+            if (!groups.has(k)) groups.set(k, []);
+            groups.get(k).push(e);
+        });
+        var keys = cameraGroupKeys(Array.from(groups.keys()));
+        box.innerHTML = keys.map(function (did) {
+            var rows = groups.get(did);
+            var unhandled = rows.filter(function (e) { return !e.handled; }).length;
+            var collapsed = state.evCollapsed.has(did);
+            return '<section class="ev-group" data-evgroup="' + esc(did) + '">' +
+                '<button type="button" class="cam-group-toggle ev-group-head" aria-expanded="' + (!collapsed) + '">' +
+                    '<span class="cam-caret">' + (collapsed ? '▸' : '▾') + '</span>' +
+                    '<span class="cam-group-name">' + esc(cameraName(did)) + '</span>' +
+                    '<span class="cam-group-did">' + esc(did) + '</span>' +
+                    '<span class="cam-group-count">' + rows.length + ' 条' +
+                        (unhandled ? ' · 未处理 ' + unhandled : '') + '</span>' +
+                '</button>' +
+                '<div class="ev-grid ev-group-body' + (collapsed ? ' is-collapsed' : '') + '">' +
+                    rows.map(evCardHtml).join('') +
+                '</div></section>';
         }).join('');
+        box.querySelectorAll('.ev-group-head').forEach(function (b) {
+            b.addEventListener('click', function () {
+                var sec = b.closest('.ev-group');
+                var did = sec.getAttribute('data-evgroup');
+                var body = sec.querySelector('.ev-group-body');
+                var nowCollapsed = !state.evCollapsed.has(did);
+                if (nowCollapsed) state.evCollapsed.add(did); else state.evCollapsed.delete(did);
+                body.classList.toggle('is-collapsed', nowCollapsed);
+                b.querySelector('.cam-caret').textContent = nowCollapsed ? '▸' : '▾';
+                b.setAttribute('aria-expanded', String(!nowCollapsed));
+            });
+        });
         updateEvBatchUi();
     }
 
