@@ -38,6 +38,18 @@ class EventsBatchWebTest {
     }
 
     @Test
+    void purgeBrokenRequiresExplicitConfirm() throws Exception {
+        mvc.perform(post("/api/events/purge-broken")
+                        .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(post("/api/events/purge-broken")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"confirm\":\"PURGE\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.deleted").value(0))
+                .andExpect(jsonPath("$.remaining").value(4));
+    }
+
+    @Test
     void batchMarkHandledAndUnhandled() throws Exception {
         mvc.perform(put("/api/events/batch/handled")
                         .contentType(MediaType.APPLICATION_JSON)

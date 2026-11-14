@@ -175,6 +175,19 @@ public class EventsController {
         return m;
     }
 
+    /** v1.2.16 一键清理历史糊屏事件（残缺帧 / 纯色灰屏），需显式确认。 */
+    public record PurgeBrokenRequest(String confirm) {
+    }
+
+    @PostMapping("/events/purge-broken")
+    public Map<String, Object> purgeBroken(@RequestBody(required = false) PurgeBrokenRequest req) {
+        if (req == null || !"PURGE".equals(req.confirm())) {
+            throw ApiException.badRequest("清理糊屏事件需要显式确认参数");
+        }
+        int deleted = store.purgeBrokenSnapshots();
+        return Map.of("deleted", deleted, "remaining", store.size());
+    }
+
     private static List<Long> batchIds(IdsRequest req) {
         if (req == null || req.ids() == null || req.ids().isEmpty()) {
             throw ApiException.badRequest("请先选择事件");

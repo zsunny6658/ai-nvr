@@ -83,7 +83,9 @@ public class AccessController {
         session.setUnlocked(true);
         // 把内存中的米家会话按当前模式落盘（opt-in 用访问密码派生密钥；默认用 master.key）
         sessionHolder.persistCurrentIfAny();
-        return gateResult(session);
+        Map<String, Object> m = gateResult(session);
+        m.put("remember", keyStore.regenerateUnlockToken(pw));
+        return m;
     }
 
     /** 校验访问密码并解锁当前会话。 */
@@ -100,6 +102,37 @@ public class AccessController {
         session.setUnlocked(true);
         // opt-in 模式下用访问密码派生密钥恢复此前落盘的米家会话（默认模式为空操作）
         sessionHolder.restoreAfterUnlock();
+        Map<String, Object> m = gateResult(session);
+        m.put("remember", keyStore.regenerateUnlockToken(pw));
+        return m;
+    }
+
+    public record ReauthRequest(String remember) {
+    }
+
+    /**
+     * v1.2.16：凭本地保存的「记住解锁」凭证静默恢复解锁态。
+     *
+     * <p>服务端令牌会话只在内存（进程重启 / 30 分钟滑动过期即失效），而飞牛 App WebView、
+     * 浏览器返回键等场景会重新加载页面，用户因此被反复要求输入访问密码。凭证即由访问密码
+     * 派生的一键解锁令牌（不含原密码），解锁成功时下发、前端存 localStorage；主动「锁定」
+     * 或修改密码后前端清除，旧凭证也随之失效。校验失败不改动会话状态。</p>
+     */
+    @PostMapping("/reauth")
+    public Map<String, Object> reauth(HttpServletRequest request,
+                                       @RequestBody(required = false) ReauthRequest req) {
+        if (!keyStore.isConfigured() || req == null || req.remember() == null
+                || req.remember().isBlank()) {
+            throw ApiException.unauthorized("自动解锁凭证缺失，请输入访问密码");
+        }
+        var sessionKey = keyStore.verifyUnlockTokenAndGetKey(req.remember());
+        if (sessionKey.isEmpty()) {
+            throw ApiException.unauthorized("自动解锁凭证已失效，请输入访问密码");
+        }
+        TokenSession session = obtainSession(request);
+        session.setUnlocked(true);
+        // opt-in 模式：令牌本身就是会话主密钥，可直接恢复落盘的米家会话（进程重启后同样有效）
+        sessionKey.ifPresent(sessionHolder::restoreWithUnlockTokenKey);
         return gateResult(session);
     }
 

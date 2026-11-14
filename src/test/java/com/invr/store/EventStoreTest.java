@@ -55,6 +55,47 @@ class EventStoreTest {
     }
 
     @Test
+    void purgeBrokenSnapshotsKeepsNormalFramesAndEventsWithoutSnapshot() throws Exception {
+        EventStore s = store();
+        byte[] normal = frame("normal-corridor.jpg");
+        byte[] broken = frame("broken-residual.jpg");
+        AlarmEvent good = s.add("d1", "走廊", "motion", "info", "正常画面", 0.4, normal, List.of());
+        AlarmEvent bad = s.add("d1", "走廊", "motion", "info", "残缺帧", 0.9, broken, List.of());
+        AlarmEvent noSnap = s.add("d2", "门口", "offline", "warn", "设备离线", 0.0, null, List.of());
+        assertEquals(3, s.size());
+
+        Path badFile = dir.resolve("events/snapshots").resolve(bad.snapshot());
+        assertTrue(Files.isRegularFile(badFile));
+
+        assertEquals(1, s.purgeBrokenSnapshots());
+        assertEquals(2, s.size());
+        assertTrue(s.find(good.id()).isPresent(), "正常画面事件必须保留");
+        assertTrue(s.find(noSnap.id()).isPresent(), "无快照事件必须保留");
+        assertTrue(s.find(bad.id()).isEmpty());
+        assertFalse(Files.exists(badFile), "残缺快照文件应同步删除");
+
+        // 一次性重写日志后重启仍一致
+        EventStore reloaded = store();
+        assertEquals(2, reloaded.size());
+        assertTrue(reloaded.find(bad.id()).isEmpty());
+        assertEquals(0, reloaded.purgeBrokenSnapshots(), "重复清理应无副作用");
+
+        // 首页卡片聚合不应再把残缺帧挑出来
+        Map<String, List<AlarmEvent>> recent = reloaded.recentWithSnapshots(3);
+        assertTrue(recent.getOrDefault("d1", List.of()).stream()
+                .noneMatch(e -> e.id() == bad.id()));
+    }
+
+    private static byte[] frame(String name) throws Exception {
+        try (var in = EventStoreTest.class.getResourceAsStream("/frames/" + name)) {
+            if (in == null) {
+                throw new IllegalStateException("缺少测试样本：" + name);
+            }
+            return in.readAllBytes();
+        }
+    }
+
+    @Test
     void markHandledAndDeleteAreReplayed() throws Exception {
         EventStore s = store();
         s.add("d1", "客厅", "motion", "info", "事件", 0.4, JPEG, List.of());

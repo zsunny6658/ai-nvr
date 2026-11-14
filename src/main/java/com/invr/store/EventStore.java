@@ -1,5 +1,6 @@
 package com.invr.store;
 
+import com.invr.codec.FrameQuality;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -92,6 +93,8 @@ public class EventStore {
     private final Path snapshotsDir;
     private final ObjectMapper mapper = new ObjectMapper();
     private final LinkedHashMap<Long, AlarmEvent> events = new LinkedHashMap<>();
+    /** 快照质量判定缓存：key = 绝对路径 + ":" + 文件体积，快照写入后不再变化。 */
+    private final Map<String, Boolean> brokenCache = new java.util.HashMap<>();
     private long nextId = 1;
     private long lineCount = 0;
 
@@ -266,6 +269,52 @@ public class EventStore {
     }
 
     /**
+     * v1.2.16：清理历史上「残缺帧 / 纯色灰屏」造成的糊屏事件，供用户在事件页一键调用。
+     * 只删除快照被判定为无效的事件（含快照文件本身），保留所有正常画面事件。
+     *
+     * @return 实际删除条数
+     */
+    public synchronized int purgeBrokenSnapshots() {
+        List<AlarmEvent> doomed = new ArrayList<>();
+        for (AlarmEvent e : events.values()) {
+            Path p = snapshotFile(e.snapshot());
+            if (p != null && Files.isRegularFile(p) && isBrokenSnapshot(p)) {
+                doomed.add(e);
+            }
+        }
+        if (doomed.isEmpty()) {
+            return 0;
+        }
+        for (AlarmEvent e : doomed) {
+            events.remove(e.id());
+        }
+        commitRemoval(doomed);
+        return doomed.size();
+    }
+
+    /** 判定快照是否为残缺帧 / 纯色灰屏；结果按路径+体积缓存，避免首页轮询反复解码。 */
+    private boolean isBrokenSnapshot(Path p) {
+        try {
+            long size = Files.size(p);
+            String key = p + ":" + size;
+            Boolean cached = brokenCache.get(key);
+            if (cached != null) {
+                return cached;
+            }
+            boolean broken = size < MIN_VALID_SNAPSHOT_BYTES
+                    || FrameQuality.isBroken(Files.readAllBytes(p));
+            if (brokenCache.size() > 4000) {
+                brokenCache.clear();
+            }
+            brokenCache.put(key, broken);
+            return broken;
+        } catch (Exception e) {
+            log.debug("事件快照质量判定失败，按有效处理：{}", e.toString());
+            return false;
+        }
+    }
+
+    /**
      * 按保留天数与条数上限清理最老的事件。由巡检循环周期调用，无需额外定时线程。
      *
      * @return 实际删除条数
@@ -356,9 +405,10 @@ public class EventStore {
     /**
      * 首页摄像头卡片用：按设备取最近若干条「有有效画面快照」的事件（各自倒序）。
      *
-     * <p>跳过无快照、快照文件已清理、以及文件体积过小的纯色灰屏帧；某台设备近期全是
-     * 灰屏时会继续向前回溯，直到凑够条数或达到 {@link #RECENT_SCAN_LIMIT}。只做元数据
-     * 判断，不解码 JPEG，30 秒一次的首页轮询开销可忽略。</p>
+     * <p>跳过无快照、快照文件已清理、文件体积过小的纯色灰屏帧，以及 v1.2.16 起识别的
+     * 「大片纯灰 + 局部残差」残缺帧；某台设备近期全是坏帧时会继续向前回溯，直到凑够条数
+     * 或达到 {@link #RECENT_SCAN_LIMIT}。质量判定结果按路径+体积缓存，30 秒一次的首页
+     * 轮询只有首次需要解码 JPEG。</p>
      */
     public synchronized Map<String, List<AlarmEvent>> recentWithSnapshots(int perDevice) {
         int per = Math.max(1, Math.min(6, perDevice));
@@ -381,11 +431,7 @@ public class EventStore {
             if (p == null || !Files.isRegularFile(p)) {
                 continue;
             }
-            try {
-                if (Files.size(p) < MIN_VALID_SNAPSHOT_BYTES) {
-                    continue;
-                }
-            } catch (IOException ignore) {
+            if (isBrokenSnapshot(p)) {
                 continue;
             }
             if (bucket == null) {

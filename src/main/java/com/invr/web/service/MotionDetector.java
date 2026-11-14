@@ -1,5 +1,6 @@
 package com.invr.web.service;
 
+import com.invr.codec.FrameQuality;
 import com.invr.model.CameraDevice;
 import com.invr.store.AppSettingsStore;
 import com.invr.store.EventStore;
@@ -228,7 +229,13 @@ public class MotionDetector {
                     false, 0, remainingSec(s.silentUntilMs, now), s.lastError);
         }
 
-        HashResult h = hash(jpeg);
+        BufferedImage img = decode(jpeg);
+        if (img == null) {
+            s.lastError = "JPEG 解码失败";
+            return new SampleResult(did, 0, cfg.threshold(), 0, s.confirm, false,
+                    false, 0, remainingSec(s.silentUntilMs, now), s.lastError);
+        }
+        HashResult h = hash(img);
         if (h == null) {
             s.lastError = "JPEG 解码失败";
             return new SampleResult(did, 0, cfg.threshold(), 0, s.confirm, false,
@@ -240,9 +247,14 @@ public class MotionDetector {
         // 信号恢复后的首帧当作新基准（不触发），避免灰屏被误报为事件。
         // 仅对「非低照度」的纯色帧判为无信号：纯黑/近全黑仍交给原有低照度分支处理，
         // 保持「低照度帧已跳过」语义与文案不变，也避免把夜间正常画面误判成断流灰屏。
+        //
+        // v1.2.16 追加「残缺帧」：P 帧缺参考帧时解码器输出大片纯灰 + 局部半透明残差，方差未必
+        // 低到无信号阈值，却与正常画面差异极大，会被误判成画面变动并存成糊屏事件快照。
+        // 与无信号同样处理：整段跳过，恢复后首帧重新作为基准。
         boolean lowLuma = h.luma() < MIN_LUMA;
         boolean noSignal = !lowLuma && h.std() < NOSIGNAL_STD;
-        if (noSignal) {
+        boolean broken = !lowLuma && !noSignal && FrameQuality.isBroken(img);
+        if (noSignal || broken) {
             s.inNoSignal = true;
             s.baselineBits = h.bits();
             s.hasBaseline = true;
@@ -251,7 +263,7 @@ public class MotionDetector {
             s.lastLuma = h.luma();
             s.lastSampleAtMs = now;
             s.samples++;
-            s.lastError = "无信号/纯色帧已跳过";
+            s.lastError = broken ? "残缺/糊帧已跳过" : "无信号/纯色帧已跳过";
             return new SampleResult(did, 0, cfg.threshold(), h.luma(), 0, false, false,
                     remainingSec(s.lastEventAtMs + cfg.cooldownMs(), now),
                     remainingSec(s.silentUntilMs, now), s.lastError);
@@ -338,11 +350,22 @@ public class MotionDetector {
      * 只需 JDK 自带 java.desktop（fpk 内 JRE 已含），不引入任何新依赖。
      */
     static HashResult hash(byte[] jpeg) {
+        BufferedImage img = decode(jpeg);
+        return img == null ? null : hash(img);
+    }
+
+    /** 解码一次 JPEG，供哈希与 {@link FrameQuality} 质量判定共用，避免重复解码。 */
+    static BufferedImage decode(byte[] jpeg) {
         try {
-            BufferedImage img = ImageIO.read(new ByteArrayInputStream(jpeg));
-            if (img == null) {
-                return null;
-            }
+            return ImageIO.read(new ByteArrayInputStream(jpeg));
+        } catch (IOException | RuntimeException e) {
+            return null;
+        }
+    }
+
+    /** 对已解码图像做 8×8 感知哈希（调用方保证 img 非 null）。 */
+    static HashResult hash(BufferedImage img) {
+        try {
             BufferedImage small = new BufferedImage(8, 8, BufferedImage.TYPE_BYTE_GRAY);
             Graphics2D g = small.createGraphics();
             try {
@@ -372,7 +395,7 @@ public class MotionDetector {
             }
             int std = (int) Math.round(Math.sqrt(varSum / HASH_BITS));
             return new HashResult(bits, (int) avg, std);
-        } catch (IOException | RuntimeException e) {
+        } catch (RuntimeException e) {
             return null;
         }
     }

@@ -79,6 +79,31 @@
             else { localStorage.removeItem(TOKEN_KEY); }
         } catch (e) { /* 存储被禁用时仅用内存兜底 */ }
     }
+
+    /* v1.2.16「记住解锁」：服务端令牌会话只在内存，进程重启 / 会话过期 / WebView 重新加载
+       都会掉解锁态。解锁成功时保存由访问密码派生的长期凭证，页面重新探测到未解锁时静默恢复，
+       避免预览页按返回后又要重新输入访问密码。主动「锁定」即清除，等价于用户主动退出。 */
+    var REMEMBER_KEY = 'invr_access_remember';
+    function getRemember() {
+        try { var v = localStorage.getItem(REMEMBER_KEY); if (v) return v; }
+        catch (e) { /* 分区存储不可读时继续试 Cookie */ }
+        // 兜底：部分 WebView / 跨站 iframe 会重建 localStorage 分区，而同源 Cookie 仍在
+        try {
+            var m = document.cookie.match(/(?:^|;\s*)invr_access_remember=([^;]*)/);
+            return m ? decodeURIComponent(m[1]) : '';
+        } catch (e) { return ''; }
+    }
+    function setRemember(t) {
+        try {
+            if (t) { localStorage.setItem(REMEMBER_KEY, t); }
+            else { localStorage.removeItem(REMEMBER_KEY); }
+        } catch (e) { /* 存储被禁用时退化为每次输入密码 */ }
+        try {
+            document.cookie = REMEMBER_KEY + '=' + (t ? encodeURIComponent(t) : '')
+                + '; path=/; max-age=' + (t ? 2592000 : 0) + '; SameSite=Lax';
+        } catch (e) { /* Cookie 不可用不影响主路径 */ }
+    }
+    function clearRemember() { setRemember(''); }
     /** 给无法加自定义头的 URL（<video> 媒体、<a download> 下载）追加令牌查询参数。 */
     function withToken(path) {
         var t = getToken();
@@ -115,13 +140,14 @@
                 err.status = res.status;
                 err.code = data.code;
                 // 门禁失效（服务重启 / 会话过期 / 未解锁）：自动回到设置或解锁页（门禁/登录接口除外）
-                if (res.status === 401 && data.code === 'ACCESS_LOCKED') { scheduleGateRelock(); }
+                // noRelock：探测类请求（版本、运行时长、自动解锁）失败不应把用户踢回锁屏页
+                if (res.status === 401 && data.code === 'ACCESS_LOCKED' && !opts.noRelock) { scheduleGateRelock(); }
                 throw err;
             }
             return data;
         }
         if (!res.ok) {
-            if (res.status === 401) { scheduleGateRelock(); }
+            if (res.status === 401 && !opts.noRelock) { scheduleGateRelock(); }
             throw new Error('请求失败 HTTP ' + res.status);
         }
         return res;
@@ -241,13 +267,25 @@
 
     async function refreshGate() {
         try {
-            var r = await Promise.all([api('api/session'), api('api/access/status')]);
+            var r = await Promise.all([api('api/session'), api('api/access/status', { noRelock: true })]);
             var s = r[0], a = r[1];
             state.loggedIn = !!s.loggedIn;
             state.userId = s.userId || a.userId || null;
             state.region = s.region || a.region || null;
             state.accessConfigured = !!a.configured;
             state.unlocked = !!a.unlocked;
+            // v1.2.16：服务端令牌会话失效（应用重启 / 会话过期 / 页面在 WebView 里被重新加载）
+            // 时，用本地「记住解锁」凭证静默恢复，不打断用户直接回主界面。凭证无效才回锁屏页。
+            if (!state.unlocked && state.accessConfigured && getRemember()) {
+                try {
+                    var rr = await api('api/access/reauth', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ remember: getRemember() }), noRelock: true
+                    });
+                    state.unlocked = !!rr.unlocked;
+                    if (!state.unlocked) { clearRemember(); }
+                } catch (e2) { clearRemember(); }
+            }
         } catch (e) {
             state.loggedIn = false;
             state.unlocked = false;
@@ -373,10 +411,11 @@
         if (p1 !== p2) { showSetupError('两次输入的密码不一致'); return; }
         $('btnSetup').disabled = true;
         try {
-            await api('api/access/setup', {
+            var d = await api('api/access/setup', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ password: p1 })
             });
+            if (d && d.remember) { setRemember(d.remember); }
             state.accessConfigured = true;
             state.unlocked = true;
             toast('访问密码已设置', 'ok');
@@ -390,10 +429,11 @@
         if (!p) { showLockError('请输入访问密码'); return; }
         $('btnUnlock').disabled = true;
         try {
-            await api('api/access/unlock', {
+            var d = await api('api/access/unlock', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ password: p })
             });
+            if (d && d.remember) { setRemember(d.remember); }
             state.unlocked = true;
             var s = await api('api/session');
             state.loggedIn = !!s.loggedIn;
@@ -407,6 +447,8 @@
 
     async function lockConsole() {
         try { await api('api/access/lock', { method: 'POST' }); } catch (e) {}
+        // 主动锁定 = 主动退出：清掉本地凭证，下次进入必须重新输入访问密码
+        clearRemember();
         state.unlocked = false;
         route();
     }
@@ -476,12 +518,14 @@
     function loadAbout() {
         var el = $('appVersion');
         if (!el) return;
-        // 版本号走免鉴权端点 /api/version，锁屏（输入访问密码）页也能显示真实版本，不再停在 “v?”
-        api('/api/version').then(function (d) {
+        // v1.2.16：以前用前导 / 的绝对路径，fetch 会打到网关域名根、绕开 fnOS 的
+        // context-path（/app/indsvr-invr），网关 401 后静默失败，锁屏页永远停在 “v?”。
+        // 改为与其它 api() 一致的相对路径，并在 init() 全局调用（原来只在解锁后的 showApp 里调）。
+        api('api/version', { noRelock: true }).then(function (d) {
             var v = d.version || '?';
             el.textContent = 'v' + v;
-            // 解锁后再补运行时长（需鉴权）
-            api('/api/about').then(function (a) {
+            // 解锁后再补运行时长（需鉴权；未解锁时 401 属正常，静默忽略且不触发回锁）
+            api('api/about', { noRelock: true }).then(function (a) {
                 if (a && a.uptimeMs) {
                     el.textContent = 'v' + v + ' · 已运行 ' + fmtDuration(a.uptimeMs / 1000);
                 }
@@ -2786,6 +2830,33 @@
         finally { state.evDeleting = false; }
     }
 
+    /**
+     * v1.2.16 一键清理历史糊屏事件：服务端逐张检查快照，只删「大片纯灰 + 局部残差」
+     * 的残缺帧与体积异常小的纯色灰屏帧，正常画面事件全部保留。全库扫描需数秒。
+     */
+    async function evPurgeBroken() {
+        if (state.evDeleting) return;
+        if (!confirm('确认清理历史糊屏 / 灰屏事件？\n\n系统会检查每条事件的快照，只删除画面残缺（大片灰色、半透明残影）或纯色灰屏的记录，正常画面事件会保留。\n对应快照文件也会一并删除，操作不可恢复。')) return;
+        state.evDeleting = true;
+        var btn = $('btnEvPurgeBroken'), label = btn ? btn.textContent : '';
+        if (btn) { btn.disabled = true; btn.textContent = '检查中…'; }
+        try {
+            var r = await api('api/events/purge-broken', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ confirm: 'PURGE' })
+            });
+            toast(r.deleted ? ('已清理 ' + r.deleted + ' 条糊屏事件') : '没有发现糊屏事件', 'ok');
+            state.evSelected.clear();
+            state.camRecent = {}; state.camRecentIndex = {}; state.camRecentSig = null;
+            await loadEvents(true);
+            loadDashboard();
+        } catch (e) { toast('清理失败：' + e.message, 'err'); }
+        finally {
+            state.evDeleting = false;
+            if (btn) { btn.disabled = false; btn.textContent = label; }
+        }
+    }
+
     async function evSingle(id, act, val) {
         if (act === 'del' && !confirm('确认删除这条事件？快照也会一并删除。')) return;
         try {
@@ -3331,6 +3402,7 @@
         }, true);
         $('btnEvBatchHandled').addEventListener('click', evBatchHandled);
         $('btnEvBatchDel').addEventListener('click', evBatchDelete);
+        $('btnEvPurgeBroken').addEventListener('click', evPurgeBroken);
         $('btnEvClearFiltered').addEventListener('click', function () { evClear(true); });
         $('btnEvClearAll').addEventListener('click', function () { evClear(false); });
         $('btnEvClearSel').addEventListener('click', function () {
@@ -3577,12 +3649,15 @@
     /* ---------- 初始化 ---------- */
     async function init() {
         bind();
+        // 页脚版本号在锁屏页也要显示，故放在全局初始化里，而不是解锁后的 showApp()
+        loadAbout();
         // 一键解锁链接回跳：/?access_token=xxx，落盘令牌后清理地址栏（不依赖 Cookie，
         // iframe 中同样有效）
         var qs = new URLSearchParams(location.search);
         var accessToken = qs.get('access_token');
         if (accessToken) {
             setToken(accessToken);
+            if (qs.get('remember')) { setRemember(qs.get('remember')); }
             history.replaceState(null, '', location.pathname);
         }
         await refreshGate();

@@ -1,6 +1,7 @@
 package com.invr.codec;
 
 import com.invr.miss.MissPacket;
+import com.invr.miss.NalUnits;
 import org.bytedeco.ffmpeg.avcodec.AVCodec;
 import org.bytedeco.ffmpeg.avcodec.AVCodecContext;
 import org.bytedeco.ffmpeg.avcodec.AVPacket;
@@ -68,14 +69,25 @@ public final class LiveFrameDecoder {
     private boolean opened;
     private boolean closed;
     private long lastJpegAt;
+    /**
+     * 必须收到 IDR 才允许编码输出。P 帧缺参考帧时 FFmpeg 会输出「大片纯灰 + 局部残差」
+     * 的残缺帧，既不能展示也会被运动侦测误判为画面变动。见 {@link FrameQuality}。
+     * 包仍然照常送入解码器（维持参数集与参考链），只是关键帧前的输出全部丢弃。
+     */
+    private boolean awaitingKeyframe = true;
+    private long keyframeWaitSince = System.currentTimeMillis();
+    /** 等 IDR 的兜底上限：个别设备 GOP 起始包不带标准 IDR NAL，超时放行以免兼容画面永久黑屏。 */
+    private static final long KEYFRAME_WAIT_MAX_MS = 6_000L;
 
     public LiveFrameDecoder(long minIntervalMs, int maxWidth) {
         this.minIntervalMs = Math.max(50L, minIntervalMs);
         this.maxWidth = maxWidth;
     }
 
-    /** 上游重连（新 generation）：清空解码器缓存，随后到达的新 IDR 可独立解码。 */
+    /** 上游重连（新 generation）：清空解码器缓存，重新等待新 IDR，避免重连后输出残缺帧。 */
     public synchronized void reset() {
+        awaitingKeyframe = true;
+        keyframeWaitSince = System.currentTimeMillis();
         if (opened && decoder != null) {
             avcodec_flush_buffers(decoder);
         }
@@ -89,9 +101,23 @@ public final class LiveFrameDecoder {
                 || pkt.payload() == null || pkt.payload().length == 0) {
             return null;
         }
-        ensureOpen(pkt.isH265());
+        boolean h265 = pkt.isH265();
+        ensureOpen(h265);
 
         byte[] payload = pkt.payload();
+        // 等到 IDR 才允许输出画面：P 帧只有残差、没有可参照的完整画面。包仍照常送入解码器
+        // 以维持参数集与参考链，只是关键帧前的解码结果全部丢弃。IDR 到达时 flush 一次，
+        // 保证从干净的参考链重新开始；若设备始终不带标准 IDR NAL，超时放行由画质检测兜底。
+        if (awaitingKeyframe) {
+            if (NalUnits.containsIdr(h265, payload)) {
+                awaitingKeyframe = false;
+                avcodec_flush_buffers(decoder);
+            } else if (System.currentTimeMillis() - keyframeWaitSince > KEYFRAME_WAIT_MAX_MS) {
+                awaitingKeyframe = false;
+                log.warn("兼容画面等待 IDR 超时，放行解码并由画质检测兜底");
+            }
+        }
+
         int fillRc = av_new_packet(packet, payload.length);
         if (fillRc < 0) {
             throw new IllegalStateException("兼容画面解码分配包失败：" + ffmpegError(fillRc));
@@ -112,9 +138,20 @@ public final class LiveFrameDecoder {
         // 一次送包可能输出 0..N 帧：每帧都要 unref，只在节流窗口内编码其中一帧
         while ((rc = avcodec_receive_frame(decoder, decFrame)) >= 0) {
             try {
-                if (jpeg == null && System.currentTimeMillis() - lastJpegAt >= minIntervalMs) {
-                    jpeg = encodeJpeg(decFrame);
-                    lastJpegAt = System.currentTimeMillis();
+                if (jpeg == null && !awaitingKeyframe
+                        && System.currentTimeMillis() - lastJpegAt >= minIntervalMs) {
+                    byte[] encoded = encodeJpeg(decFrame);
+                    if (FrameQuality.isBroken(encoded)) {
+                        // 传输丢包打断参考帧链：丢掉这帧，flush 解码器并等下一个 IDR 重建，
+                        // 期间 latest 仍保留上一张完整画面，不产生糊屏快照。
+                        awaitingKeyframe = true;
+                        keyframeWaitSince = System.currentTimeMillis();
+                        avcodec_flush_buffers(decoder);
+                        log.debug("兼容画面检测到残缺帧，已丢弃并等待下一个 IDR");
+                    } else {
+                        jpeg = encoded;
+                        lastJpegAt = System.currentTimeMillis();
+                    }
                 }
             } finally {
                 av_frame_unref(decFrame);

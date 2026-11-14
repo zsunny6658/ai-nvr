@@ -89,6 +89,56 @@ class AccessGateFlowTest {
     }
 
     @Test
+    void unlockReturnsRememberCredentialForSilentReauth() {
+        AccessKeyStore keys = keyStoreConfigured(true);
+        when(keys.regenerateUnlockToken(any())).thenReturn("remember-token-123");
+        TokenSessionManager tokens = new TokenSessionManager();
+        AccessController controller = new AccessController(keys, mock(SessionHolder.class), tokens);
+
+        TokenSession session = tokens.create();
+        Map<String, Object> m = controller.unlock(requestCarrying(session),
+                new AccessController.PasswordRequest("pw123456"));
+        assertEquals("remember-token-123", m.get("remember"));
+    }
+
+    @Test
+    void reauthRestoresUnlockedSessionWithRememberCredential() {
+        AccessKeyStore keys = keyStoreConfigured(true);
+        byte[] key = new byte[32];
+        when(keys.verifyUnlockTokenAndGetKey("valid-remember")).thenReturn(java.util.Optional.of(key));
+        SessionHolder holder = mock(SessionHolder.class);
+        TokenSessionManager tokens = new TokenSessionManager();
+        AccessController controller = new AccessController(keys, holder, tokens);
+
+        TokenSession session = tokens.create(); // 模拟页面重载后服务端新签发的未解锁会话
+        assertFalse(session.isUnlocked());
+        Map<String, Object> m = controller.reauth(requestCarrying(session),
+                new AccessController.ReauthRequest("valid-remember"));
+
+        assertEquals(Boolean.TRUE, m.get("unlocked"));
+        assertEquals(session.getToken(), m.get("token"));
+        assertTrue(tokens.resolve(session.getToken()).isUnlocked());
+        org.mockito.Mockito.verify(holder).restoreWithUnlockTokenKey(key);
+    }
+
+    @Test
+    void reauthRejectsMissingOrInvalidCredential() {
+        AccessKeyStore keys = keyStoreConfigured(true);
+        when(keys.verifyUnlockTokenAndGetKey("bad")).thenReturn(java.util.Optional.empty());
+        TokenSessionManager tokens = new TokenSessionManager();
+        AccessController controller = new AccessController(keys, mock(SessionHolder.class), tokens);
+        TokenSession session = tokens.create();
+
+        ApiException e1 = assertThrows(ApiException.class, () -> controller.reauth(
+                requestCarrying(session), new AccessController.ReauthRequest(null)));
+        assertEquals(401, e1.getStatus());
+        ApiException e2 = assertThrows(ApiException.class, () -> controller.reauth(
+                requestCarrying(session), new AccessController.ReauthRequest("bad")));
+        assertEquals(401, e2.getStatus());
+        assertFalse(session.isUnlocked(), "凭证无效时不得解锁");
+    }
+
+    @Test
     void unlockPassesTrimmedPasswordCharsToKeyStore() {
         AccessKeyStore keys = mock(AccessKeyStore.class);
         when(keys.isConfigured()).thenReturn(true);

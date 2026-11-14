@@ -40,7 +40,8 @@ public class UnlockController {
             session.setUnlocked(true);
             // opt-in 模式下用令牌解码出的派生密钥恢复米家会话（默认模式为空操作）
             keyStore.verifyUnlockTokenAndGetKey(key).ifPresent(sessionHolder::restoreWithUnlockTokenKey);
-            return "redirect:/?access_token=" + session.getToken();
+            // v1.2.16：顺带把「记住解锁」凭证交给前端落盘，一键解锁后页面重新加载也无需再输密码
+            return "redirect:/?access_token=" + session.getToken() + "&remember=" + key;
         }
         return "redirect:/?unlock_error=1";
     }
