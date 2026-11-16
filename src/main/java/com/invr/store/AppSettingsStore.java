@@ -40,6 +40,8 @@ public class AppSettingsStore {
     private static final String KEY_SEGMENT_SEC = "recordSegmentSec";
     private static final String KEY_RTSP_PORT = "rtspPort";
     private static final String KEY_RETENTION_DAYS = "recordRetentionDays";
+    /** v1.2.21 录像目录容量水位（占该卷总容量百分比），0/null=关闭循环覆盖。 */
+    private static final String KEY_RECORD_MAX_PERCENT = "recordMaxPercent";
 
     private static final String KEY_HLS_TARGET_SEC = "hlsTargetSec";
     private static final String KEY_HLS_WINDOW = "hlsWindow";
@@ -154,6 +156,16 @@ public class AppSettingsStore {
     /** 保存录像保留天数；null / 0 / 负数表示清除自定义、恢复默认（默认永久保留）。 */
     public void saveRecordRetentionDays(Integer days) {
         putInt(KEY_RETENTION_DAYS, days);
+    }
+
+    /** 已持久化的录像目录容量水位（占该卷总容量百分比，1~95）；未设置 / 非正数返回 null（关闭）。 */
+    public Integer recordMaxPercent() {
+        return getPositiveInt(KEY_RECORD_MAX_PERCENT);
+    }
+
+    /** 保存录像目录容量水位；null / 0 表示关闭水位循环覆盖。 */
+    public void saveRecordMaxPercent(Integer pct) {
+        putInt(KEY_RECORD_MAX_PERCENT, pct);
     }
 
     // ===================== HLS 预览 =====================
@@ -317,7 +329,10 @@ public class AppSettingsStore {
                 intNum(m, "maxEvents", d.maxEvents()),
                 strList(m.get("dids"), d.dids()),
                 bool(m, "autoRecord", d.autoRecord()),
-                intNum(m, "recordTailSec", d.recordTailSec()));
+                intNum(m, "recordTailSec", d.recordTailSec()),
+                bool(m, "scheduleEnabled", d.scheduleEnabled()),
+                intNum(m, "activeStartMin", d.activeStartMin()),
+                intNum(m, "activeEndMin", d.activeEndMin()));
     }
 
     /** 保存运动侦测参数（只写一次文件）；与默认值相同的项不落盘，恢复默认即删除这些键。 */
@@ -337,6 +352,9 @@ public class AppSettingsStore {
         if (!v.dids().equals(d.dids())) sub.put("dids", v.dids());
         if (v.autoRecord() != d.autoRecord()) sub.put("autoRecord", v.autoRecord());
         putIfChanged(sub, "recordTailSec", v.recordTailSec(), d.recordTailSec());
+        if (v.scheduleEnabled() != d.scheduleEnabled()) sub.put("scheduleEnabled", v.scheduleEnabled());
+        putIfChanged(sub, "activeStartMin", v.activeStartMin(), d.activeStartMin());
+        putIfChanged(sub, "activeEndMin", v.activeEndMin(), d.activeEndMin());
         if (sub.isEmpty()) {
             m.remove(KEY_MOTION);
         } else {

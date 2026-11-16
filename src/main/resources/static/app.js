@@ -48,6 +48,7 @@
             inited: false, did: null, dateStr: null,
             zoom: 24, winStart: 0, dayStart: 0, winDur: 86400000,
             segs: [], idx: -1, curStart: 0, pendingOffset: null,
+            motionMs: [],
             liveTimer: null, liveBusy: false
         }
     };
@@ -232,6 +233,14 @@
             if (overlayHistoryBacking) { overlayHistoryBacking = false; clearOverlayHash(); }
         }, 500);
     }
+    /** 已在弹层历史里时切换记录类型（宫格 → 单路预览），不叠加新条目。 */
+    function switchOverlayKind(kind) {
+        if (!overlayHistoryDepth) return;
+        overlayKind = kind;
+        try {
+            history.replaceState({ invrOverlay: kind }, '', overlayBaseUrl() + OVERLAY_HASH + '=' + kind);
+        } catch (e) { /* 地址栏更新失败不影响功能 */ }
+    }
     /** 门禁回锁等异常路径：不做异步回退，只静默复位状态。 */
     function dropOverlayHistoryQuiet() {
         overlayHistoryDepth = 0;
@@ -251,7 +260,10 @@
         overlayHistoryDepth = 0;
         overlayKind = '';
         clearOverlayHash();
-        if (kind === 'preview' && !$('previewModal').hidden) {
+        if (kind === 'grid' && !$('gridModal').hidden) {
+            stopGridOnly();
+            loadDevices(false);
+        } else if (kind === 'preview' && !$('previewModal').hidden) {
             stopPreviewOnly();
             loadDevices(false);
         } else if (kind === 'player' && !$('playerModal').hidden) {
@@ -261,7 +273,7 @@
     window.addEventListener('popstate', onOverlayHistoryBack);
     window.addEventListener('pageshow', function () {
         // 部分壳 App 从 bfcache 恢复文档：避免残留半开的弹层历史状态
-        if (overlayHistoryDepth && $('previewModal').hidden && $('playerModal').hidden) {
+        if (overlayHistoryDepth && $('previewModal').hidden && $('playerModal').hidden && $('gridModal').hidden) {
             dropOverlayHistoryQuiet();
         }
     });
@@ -278,6 +290,7 @@
         $('appView').hidden = true;
         $('topRight').hidden = true;
         stopPoll();
+        if (!$('gridModal').hidden) stopGridOnly();
         if (!$('previewModal').hidden) stopPreviewOnly();
         if (!$('playerModal').hidden) stopPlayerOnly();
         // 门禁回锁 / 切换视图时同步复位弹层历史，避免留下「按返回没反应」的死条目
@@ -1466,6 +1479,8 @@
                 ? '当前保留最近 ' + s.retentionDays + ' 天，超期录像每小时自动清理（'
                     + (s.retentionCustomized ? '自定义值' : '默认值') + '，默认 ' + s.defaultRetentionDays + ' 天）。'
                 : '当前为永久保存，不自动清理（0 表示永久；默认值为 ' + s.defaultRetentionDays + ' 天）。';
+            // v1.2.21 容量水位
+            $('setWaterInput').value = (s.waterPercent == null ? 0 : s.waterPercent);
             // HLS 预览参数
             var h = s.hls || {};
             $('setHlsTargetInput').value = h.targetSec;
@@ -1804,6 +1819,32 @@
             if (e.status === 401) { scheduleGateRelock(); return; }
             toast('切换失败：' + e.message, 'err');
             await loadSettings();
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
+    async function saveWater() {
+        var pct = parseInt($('setWaterInput').value, 10);
+        if (isNaN(pct) || pct < 0 || pct > 95) {
+            toast('容量水位需在 0～95 之间（0 表示关闭）', 'err');
+            return;
+        }
+        if (!confirm(pct === 0
+            ? '确认关闭容量水位循环覆盖？'
+            : '确认将容量水位设为 ' + pct + '%？\n分段总大小超过所在卷容量的 ' + pct + '% 时，将从最旧分段开始自动删除。')) return;
+        var btn = $('btnSaveWater');
+        btn.disabled = true;
+        try {
+            var s = await api('api/settings/water-level', {
+                method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ waterPercent: pct })
+            });
+            toast(pct === 0 ? '已关闭容量水位循环覆盖' : '容量水位已保存：' + s.waterPercent + '%', 'ok');
+            await loadSettings();
+        } catch (e) {
+            if (e.status === 401) { scheduleGateRelock(); return; }
+            toast('保存失败：' + e.message, 'err');
         } finally {
             btn.disabled = false;
         }
@@ -2756,7 +2797,8 @@
             '<div class="ev-body">' +
                 '<div class="ev-title">' + esc(e.title || e.typeName) + '</div>' +
                 '<div class="ev-meta">' + esc(e.deviceName || e.did) + ' · ' + fmtTime(e.createdAt) + '</div>' +
-                '<div class="ev-meta">' + esc(e.typeName || e.type) + score + '</div>' +
+                '<div class="ev-meta">' + esc(e.typeName || e.type) + score +
+                    (e.repeat > 0 ? ' · <span class="ev-repeat" title="持续变动期间的 ' + e.repeat + ' 次重复触发已合并到本条">×' + e.repeat + '</span>' : '') + '</div>' +
                 '<div class="ev-tags"><span class="ev-tag ' + (e.handled ? 'handled' : 'unhandled') +
                     '">' + (e.handled ? '已处理' : '未处理') + '</span>' +
                     (e.level && e.level !== 'info' ? '<span class="ev-tag">' + esc(e.level) + '</span>' : '') +
@@ -3016,6 +3058,10 @@
             $('setAutoRecord').checked = !!m.autoRecord;
             $('setMotionThreshold').value = m.threshold;
             $('setRecordTail').value = m.recordTailSec;
+            $('setMotionSchedule').checked = !!m.scheduleEnabled;
+            $('setMotionScheduleRow').hidden = !m.scheduleEnabled;
+            $('setMotionActiveStart').value = minuteToHHMM(m.activeStartMin);
+            $('setMotionActiveEnd').value = minuteToHHMM(m.activeEndMin);
             $('setEventRetention').value = m.retentionDays;
             $('setEventMax').value = m.maxEvents;
             var selected = (m.dids && m.dids.length) ? m.dids : [];
@@ -3070,6 +3116,9 @@
             autoRecord: $('setAutoRecord').checked,
             threshold: Number($('setMotionThreshold').value),
             recordTailSec: Number($('setRecordTail').value),
+            scheduleEnabled: $('setMotionSchedule').checked,
+            activeStartMin: hhmmToMinute($('setMotionActiveStart').value),
+            activeEndMin: hhmmToMinute($('setMotionActiveEnd').value),
             retentionDays: Number($('setEventRetention').value),
             maxEvents: Number($('setEventMax').value),
             dids: dids
@@ -3332,6 +3381,102 @@
         await saveRoiZones();
     }
 
+    /* ---------- 多宫格预览（v1.2.21） ---------- */
+    var grid = { tiles: [], timer: null, tourTimer: null, page: 0 };
+
+    function gridCells() {
+        var n = parseInt($('gridLayout').value, 10) || 2;
+        return n * n;
+    }
+
+    function gridOnlineDids() {
+        return (state.devices || []).filter(function (c) { return c.online; }).map(function (c) { return String(c.did); });
+    }
+
+    function openGrid() {
+        var dids = gridOnlineDids();
+        if (!dids.length) { toast('当前没有在线摄像头', 'err'); return; }
+        stopGridOnly();
+        $('gridModal').hidden = false;
+        $('gridHint').hidden = true;
+        $('gridLoading').hidden = false;
+        grid.page = 0;
+        grid.dids = dids;
+        enterOverlayHistory('grid');
+        renderGridPage();
+    }
+
+    function renderGridPage() {
+        var cells = gridCells();
+        var cols = Math.sqrt(cells);
+        var dids = grid.dids;
+        var pageCount = Math.max(1, Math.ceil(dids.length / cells));
+        if (grid.page >= pageCount) grid.page = 0;
+        var slice = dids.slice(grid.page * cells, grid.page * cells + cells);
+        $('gridLoading').hidden = true;
+        $('gridTitle').textContent = '多宫格预览 · ' + (grid.dids.length) + ' 路在线'
+            + (pageCount > 1 ? '（第 ' + (grid.page + 1) + '/' + pageCount + ' 页）' : '');
+        var body = $('gridBody');
+        body.style.setProperty('--grid-cols', String(cols));
+        body.innerHTML = slice.map(function (did) {
+            var c = findDevice(did) || {};
+            return '<div class="live-tile" data-griddid="' + esc(did) + '">' +
+                '<img alt="' + esc(c.name || did) + '" loading="lazy">' +
+                '<span class="tile-name">' + esc(c.name || did) + '</span>' +
+                '<span class="tile-go" title="进入高清预览">›</span>' +
+                '</div>';
+        }).join('');
+        grid.tiles = slice.map(function (did) {
+            return { did: did, img: body.querySelector('.live-tile[data-griddid="' + did + '"] img') };
+        });
+        grid.tiles.forEach(function (t, i) { refreshTile(t, i); });
+        if (grid.timer) clearInterval(grid.timer);
+        grid.timer = setInterval(function () {
+            if ($('gridModal').hidden) return;
+            grid.tiles.forEach(function (t, i) { refreshTile(t, i); });
+        }, 1000);
+        setupGridTour(pageCount);
+    }
+
+    function refreshTile(t, i) {
+        if (!t.img) return;
+        // 错峰：第 i 路偏移 i*120ms，避免每秒集中请求
+        setTimeout(function () {
+            if ($('gridModal').hidden || !t.img) return;
+            t.img.src = withToken('api/frame/' + encodeURIComponent(t.did)) + '&t=' + Date.now();
+        }, i * 120);
+    }
+
+    function setupGridTour(pageCount) {
+        if (grid.tourTimer) { clearInterval(grid.tourTimer); grid.tourTimer = null; }
+        var sec = parseInt($('gridTour').value, 10) || 0;
+        if (!sec || pageCount <= 1) return;
+        grid.tourTimer = setInterval(function () {
+            if ($('gridModal').hidden) return;
+            grid.page = (grid.page + 1) % pageCount;
+            renderGridPage();
+        }, sec * 1000);
+    }
+
+    function stopGridOnly() {
+        if (grid.timer) { clearInterval(grid.timer); grid.timer = null; }
+        if (grid.tourTimer) { clearInterval(grid.tourTimer); grid.tourTimer = null; }
+        grid.tiles = [];
+        grid.dids = [];
+        $('gridModal').hidden = true;
+        $('gridBody').innerHTML = '';
+    }
+
+    /** 应用内关闭宫格：退历史条目并停止取帧。 */
+    function closeGrid() {
+        var wasOpen = !$('gridModal').hidden;
+        stopGridOnly();
+        if (wasOpen) {
+            leaveOverlayHistory();
+            loadDevices(false);
+        }
+    }
+
     /* ---------- 录像回放 ---------- */
     function openPlayer(name) {
         $('playerTitle').textContent = '录像回放 · ' + name;
@@ -3409,6 +3554,14 @@
             var data = await api('api/timeline/' + encodeURIComponent(pb.did) + '?date=' + encodeURIComponent(pb.dateStr));
             pb.segs = data.segments || [];
         } catch (e) { pb.segs = []; toast(e.message, 'err'); }
+        // v1.2.21 变动时段高亮：拉当天该摄像头的画面变动事件时刻（失败不阻塞时间轴）
+        pb.motionMs = [];
+        try {
+            var mv = await api('api/events?did=' + encodeURIComponent(pb.did)
+                + '&type=motion&date=' + encodeURIComponent(pb.dateStr) + '&limit=1000');
+            pb.motionMs = (mv.list || []).map(function (e) { return e.createdAt; })
+                .filter(function (t) { return typeof t === 'number' && t > 0; });
+        } catch (e2) { /* 高亮不可用时仅少一个提示层 */ }
         computeWin(true);
         renderTimeline();
     }
@@ -3513,7 +3666,28 @@
             }).join('');
         }
         updateCursor();
+        renderMotionMarks();
         updateMeta();
+    }
+
+    /** v1.2.21 时间轴变动时段高亮：绿色刻度标出画面变动事件时刻（点击时间轴任意处本就精确 seek）。 */
+    function renderMotionMarks() {
+        var pb = state.pb;
+        var layer = $('tlMotion');
+        var ms = pb.motionMs || [];
+        if (!ms.length) { layer.innerHTML = ''; return; }
+        // 视窗内相邻刻度去重：同一像素点只画一个
+        var marks = [];
+        var lastPct = -1;
+        ms.slice().sort(function (a, b) { return a - b; }).forEach(function (t) {
+            var x = pct(t);
+            if (x < 0 || x > 100) return;
+            if (x - lastPct < 0.4) return;
+            lastPct = x;
+            marks.push('<div class="tl-motion-mark" style="left:' + x.toFixed(3) + '%" title="'
+                + esc(hms(t) + ' 画面变动') + '"></div>');
+        });
+        layer.innerHTML = marks.join('');
     }
 
     function updateCursor() {
@@ -3833,6 +4007,9 @@
             if (this.checked) { $('setMotionDids').innerHTML = ''; }
             else { renderMotionDids([], false); }
         });
+        $('setMotionSchedule').addEventListener('change', function () {
+            $('setMotionScheduleRow').hidden = !this.checked;
+        });
 
         // 设置：存储路径 / 分段 / 端口
         $('btnBrowseDir').addEventListener('click', openDirModal);
@@ -3844,6 +4021,7 @@
         $('btnSaveSegment').addEventListener('click', saveSegment);
         $('btnSaveRtsp').addEventListener('click', saveRtsp);
         $('btnSaveRetention').addEventListener('click', saveRetention);
+        $('btnSaveWater').addEventListener('click', saveWater);
         $('btnSaveHls').addEventListener('click', saveHls);
         $('btnSaveShare').addEventListener('click', saveShare);
         $('btnSavePw').addEventListener('click', changeAccessPassword);
@@ -4037,6 +4215,26 @@
 
         $('previewClose').addEventListener('click', closePreview);
         $('btnPreviewBack').addEventListener('click', closePreview);
+        /* v1.2.21 多宫格 */
+        $('btnGridPreview').addEventListener('click', openGrid);
+        $('gridClose').addEventListener('click', closeGrid);
+        $('btnGridBack').addEventListener('click', closeGrid);
+        $('gridLayout').addEventListener('change', function () {
+            if (!$('gridModal').hidden) renderGridPage();
+        });
+        $('gridTour').addEventListener('change', function () {
+            if (!$('gridModal').hidden) setupGridTour(Math.max(1, Math.ceil(grid.dids.length / gridCells())));
+        });
+        $('gridBody').addEventListener('click', function (e) {
+            var tile = e.target.closest('.live-tile');
+            if (!tile) return;
+            var did = tile.getAttribute('data-griddid');
+            if (!did) return;
+            // 从宫格进入单路高清预览：关宫格、复用同一条弹层历史记录（避免栈叠两层）
+            stopGridOnly();
+            switchOverlayKind('preview');
+            openPreview(did);
+        });
         $('playerClose').addEventListener('click', closePlayer);
         $('btnPlayerBack').addEventListener('click', closePlayer);
         $('previewModal').addEventListener('click', function (e) { if (e.target === this) closePreview(); });

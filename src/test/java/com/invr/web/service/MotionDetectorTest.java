@@ -3,6 +3,7 @@ package com.invr.web.service;
 import com.invr.model.CameraDevice;
 import com.invr.store.AppSettingsStore;
 import com.invr.store.EventStore;
+import com.invr.store.EventStore.AlarmEvent;
 import com.invr.store.MotionSettings;
 import com.invr.store.MotionZone;
 import org.junit.jupiter.api.BeforeEach;
@@ -186,8 +187,11 @@ class MotionDetectorTest {
 
         clock.advance(3000);
         tickAfter(1000); // 冷却结束，画面仍偏离基准
-        tickAfter(1000);
-        assertEquals(2, events.size());
+        tickAfter(1000); // v1.2.21：仍在合并窗口（4×冷却=20s）内 → 合并进首条（×1），不新增
+        assertEquals(1, events.size());
+        AlarmEvent merged = events.list(EventStore.Filter.of(DID, "motion", null, null,
+                null, null, 10, 0)).items().get(0);
+        assertEquals(1, merged.repeat(), "持续变动应合并计数");
     }
 
     @Test

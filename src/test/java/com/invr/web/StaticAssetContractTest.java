@@ -30,7 +30,7 @@ class StaticAssetContractTest {
 
         assertTrue(html.contains("btnPreviewBack"), "预览弹层缺少应用内返回按钮");
         assertTrue(html.contains("btnPlayerBack"), "回放弹层缺少应用内返回按钮");
-        assertTrue(html.contains("v=34"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
+        assertTrue(html.contains("v=35"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
 
         assertTrue(js.contains("addEventListener('popstate'"), "未接管宿主返回键");
         assertTrue(js.contains("enterOverlayHistory('preview')"), "预览未建立历史条目");
@@ -54,5 +54,27 @@ class StaticAssetContractTest {
         assertTrue(js.contains("openEvReplay"), "缺少事件跳转回放逻辑");
         assertTrue(js.contains("applyPbPending"), "回放页缺少事件定位待办处理");
         assertTrue(css.contains(".roi-stage"), "缺少 ROI 编辑器样式");
+    }
+
+    /** v1.2.21：多宫格预览、时间轴变动高亮、侦测时段计划、容量水位、事件合并计数。 */
+    @Test
+    void optimizationAssetsArePackaged() throws Exception {
+        String html = resource("index.html");
+        String js = resource("app.js");
+        String css = resource("style.css");
+
+        assertTrue(html.contains("gridModal"), "缺少多宫格弹层");
+        assertTrue(html.contains("btnGridPreview"), "缺少多宫格入口按钮");
+        assertTrue(html.contains("gridTour"), "缺少轮巡控件");
+        assertTrue(js.contains("openGrid"), "缺少多宫格打开逻辑");
+        assertTrue(js.contains("api/frame/"), "宫格应复用 JPEG 帧端点");
+        assertTrue(html.contains("tlMotion"), "时间轴缺少变动高亮层");
+        assertTrue(js.contains("renderMotionMarks"), "缺少变动高亮渲染");
+        assertTrue(html.contains("setMotionSchedule"), "缺少侦测时段计划开关");
+        assertTrue(html.contains("setWaterInput"), "缺少容量水位输入");
+        assertTrue(js.contains("api/settings/water-level"), "缺少水位保存调用");
+        assertTrue(js.contains("ev-repeat"), "缺少事件合并计数标记");
+        assertTrue(css.contains(".live-grid"), "缺少宫格样式");
+        assertTrue(css.contains(".tl-motion-mark"), "缺少变动高亮样式");
     }
 }

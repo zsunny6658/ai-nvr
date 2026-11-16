@@ -235,6 +235,7 @@ public class EventsController {
         m.put("handled", e.handled());
         m.put("handledAt", e.handledAt());
         m.put("detections", e.detections());
+        m.put("repeat", e.repeat());
         m.put("snapshotUrl", EventStore.snapshotUrl(e));
         return m;
     }

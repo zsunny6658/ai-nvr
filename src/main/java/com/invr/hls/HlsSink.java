@@ -60,7 +60,7 @@ import static org.bytedeco.ffmpeg.global.avformat.avformat_write_header;
 import static org.bytedeco.ffmpeg.global.avutil.AVMEDIA_TYPE_AUDIO;
 import static org.bytedeco.ffmpeg.global.avutil.AVMEDIA_TYPE_VIDEO;
 import static org.bytedeco.ffmpeg.global.avutil.AV_CH_LAYOUT_STEREO;
-import static org.bytedeco.ffmpeg.global.avutil.AV_LOG_WARNING;
+import static org.bytedeco.ffmpeg.global.avutil.AV_LOG_ERROR;
 import static org.bytedeco.ffmpeg.global.avutil.AV_PIX_FMT_YUV420P;
 import static org.bytedeco.ffmpeg.global.avutil.AV_SAMPLE_FMT_FLTP;
 import static org.bytedeco.ffmpeg.global.avutil.av_audio_fifo_alloc;
@@ -568,7 +568,7 @@ public final class HlsSink implements StreamSink {
                 return;
             }
             try {
-                av_log_set_level(AV_LOG_WARNING);
+                av_log_set_level(AV_LOG_ERROR);
                 AVCodec decCodec = avcodec_find_decoder(AV_CODEC_ID_OPUS);
                 if (decCodec == null) {
                     throw new IllegalStateException("未找到 Opus 解码器");

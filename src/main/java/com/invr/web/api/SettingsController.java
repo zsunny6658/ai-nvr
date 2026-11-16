@@ -212,6 +212,13 @@ public class SettingsController {
         return recordingService.updateRetentionDays(days);
     }
 
+    /** 修改录像目录容量水位（0=关闭循环覆盖，1~95=分段总大小占该卷总容量的百分比）。 */
+    @PutMapping("/settings/water-level")
+    public Map<String, Object> updateWaterLevel(@RequestBody(required = false) WaterLevelRequest req) {
+        int pct = req == null ? -1 : req.waterPercent();
+        return recordingService.updateWaterPercent(pct);
+    }
+
     /** 修改 HLS 预览参数（分片时长/窗口/空闲/音频/预热），运行时生效并持久化。 */
     @PutMapping("/settings/hls")
     public Map<String, Object> updateHls(@RequestBody(required = false) HlsSettingsRequest req) {
@@ -486,6 +493,9 @@ public class SettingsController {
     }
 
     public record RetentionRequest(int retentionDays) {
+    }
+
+    public record WaterLevelRequest(int waterPercent) {
     }
 
     public record PasswordChangeRequest(String oldPassword, String newPassword) {

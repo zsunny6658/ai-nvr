@@ -759,3 +759,27 @@ body {
 .roi-zone-tag { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px;
     background: #fdf0f0; border: 1px solid #f3c2c2; border-radius: 8px; font-size: 12px; }
 .roi-zone-tag .btn { padding: 1px 8px; font-size: 11px; }
+
+/* ============ v1.2.21 多宫格预览 ============ */
+.live-grid { display: grid; grid-template-columns: repeat(var(--grid-cols, 2), 1fr);
+    gap: 8px; width: 100%; padding: 4px; }
+.live-tile { position: relative; aspect-ratio: 16 / 9; background: #0b1220;
+    border-radius: 10px; overflow: hidden; cursor: pointer; }
+.live-tile img { width: 100%; height: 100%; object-fit: cover; display: block;
+    background: #0b1220; }
+.live-tile .tile-name { position: absolute; left: 8px; top: 6px; max-width: 70%;
+    padding: 2px 8px; border-radius: 8px; background: rgba(0,0,0,.45);
+    color: #fff; font-size: 12px; white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; pointer-events: none; }
+.live-tile .tile-go { position: absolute; right: 8px; top: 6px; width: 22px; height: 22px;
+    line-height: 22px; text-align: center; border-radius: 50%;
+    background: rgba(0,0,0,.45); color: #fff; font-size: 14px; pointer-events: none; }
+
+/* ============ v1.2.21 回放时间轴变动高亮 ============ */
+.tl-motion { position: absolute; inset: 0; pointer-events: none; }
+.tl-motion-mark { position: absolute; top: 0; bottom: 0; width: 3px;
+    transform: translateX(-1.5px); background: rgba(48, 209, 88, .85);
+    border-radius: 2px; box-shadow: 0 0 3px rgba(48,209,88,.6); }
+
+/* ============ v1.2.21 事件合并计数 ============ */
+.ev-repeat { color: #b45309; font-weight: 600; }

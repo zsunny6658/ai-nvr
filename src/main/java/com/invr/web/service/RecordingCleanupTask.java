@@ -50,6 +50,7 @@ public class RecordingCleanupTask {
     private void tick() {
         try {
             recordings.cleanupExpired();
+            recordings.cleanupByWaterLevel(); // v1.2.21 容量水位循环覆盖
         } catch (Throwable t) {
             // 定时任务里绝不让异常逃逸，否则 ScheduledExecutor 会取消后续所有周期。
             log.debug("录像清理本轮失败，下轮重试：{}", t.toString());

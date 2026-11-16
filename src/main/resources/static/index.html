@@ -10,7 +10,7 @@
     <base href="./">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230891b2'/%3E%3C/svg%3E">
     <title>iNvr · 小米摄像头 NVR</title>
-    <link rel="stylesheet" href="style.css?v=34">
+    <link rel="stylesheet" href="style.css?v=35">
 </head>
 <body>
 <header class="topbar">
@@ -112,6 +112,7 @@
             <div class="section-head">
                 <h2>设备列表</h2>
                 <span class="muted" id="camCount"></span>
+                <button class="btn tiny soft" id="btnGridPreview" type="button" title="多宫格同时看多路">▦ 多宫格</button>
             </div>
             <div class="grid" id="deviceGrid"></div>
         </div>
@@ -237,6 +238,7 @@
                 <div class="tl-ruler" id="tlRuler"></div>
                 <div class="tl-track" id="tlTrack">
                     <div class="tl-blocks" id="tlBlocks"></div>
+                    <div class="tl-motion" id="tlMotion"></div>
                     <div class="tl-cursor" id="tlCursor" hidden></div>
                 </div>
             </div>
@@ -287,6 +289,12 @@
                         <button class="btn primary" id="btnSaveRetention" type="button">保存</button>
                     </div>
                     <p class="muted small" id="setRetentionHint"></p>
+                    <label>录像目录容量水位（%，0=关闭；超限时从最旧分段开始循环覆盖，v1.2.21）</label>
+                    <div class="set-edit">
+                        <input type="number" id="setWaterInput" min="0" max="95" step="1">
+                        <button class="btn primary" id="btnSaveWater" type="button">保存</button>
+                    </div>
+                    <p class="muted small" id="setWaterHint">例：设 80 表示录像分段总大小最多占所在卷容量的 80%，超出即自动删除最旧分段。与保留天数互补：天数控制「最多留多久」，水位控制「最多占多少」。</p>
                     <div class="set-kv" id="setMisc"></div>
                 </div>
                 <div class="set-card">
@@ -312,6 +320,13 @@
                     </div>
                     <label>静止多久后停止自动录像（秒，5～600）</label>
                     <div class="set-edit"><input type="number" id="setRecordTail" min="5" max="600" step="5"></div>
+                    <label class="ev-switch"><input type="checkbox" id="setMotionSchedule"> 仅在指定时段侦测（v1.2.21，如仅夜间；支持跨午夜）</label>
+                    <div class="set-edit" id="setMotionScheduleRow" hidden>
+                        <input type="time" id="setMotionActiveStart" step="60">
+                        <span class="muted small">至</span>
+                        <input type="time" id="setMotionActiveEnd" step="60">
+                        <span class="muted small" id="setMotionScheduleHint">时段外不采样、不告警、不自动录像</span>
+                    </div>
                     <label>事件保留天数 / 最大条数</label>
                     <div class="set-edit">
                         <input type="number" id="setEventRetention" min="0" max="365" step="1">
@@ -589,6 +604,38 @@
     </div>
 </div>
 
+<!-- 多宫格预览模态（v1.2.21）：JPEG 帧轮询，轻量看多路 -->
+<div class="modal-mask" id="gridModal" hidden>
+    <div class="modal modal-lg modal-preview">
+        <div class="modal-head preview-head">
+            <button class="preview-back" id="btnGridBack" type="button" aria-label="返回摄像头列表"><span class="chev">‹</span>返回</button>
+            <span class="preview-title" id="gridTitle">多宫格预览</span>
+            <label class="mode-pick" title="每行路数">
+                <span>布局</span>
+                <select id="gridLayout">
+                    <option value="2" selected>2×2</option>
+                    <option value="3">3×3</option>
+                </select>
+            </label>
+            <label class="mode-pick" title="摄像头多于宫格数时自动翻页">
+                <span>轮巡</span>
+                <select id="gridTour">
+                    <option value="0" selected>关</option>
+                    <option value="15">15 秒</option>
+                    <option value="30">30 秒</option>
+                </select>
+            </label>
+            <button class="modal-x" id="gridClose" aria-label="关闭多宫格">×</button>
+        </div>
+        <div class="video-wrap grid-wrap">
+            <div id="gridBody" class="live-grid"></div>
+            <div class="muted small" id="gridHint" hidden></div>
+            <div id="gridLoading" class="loading">正在拉起各路画面…</div>
+        </div>
+        <div class="muted small" id="gridNote">多宫格为兼容画面（JPEG 连续帧，约 1 秒/帧、无声）；点击任一格可进入该路高清实时预览。摄像头多于宫格数且开启轮巡时自动翻页。</div>
+    </div>
+</div>
+
 <!-- 录像回放模态 -->
 <div class="modal-mask" id="playerModal" hidden>
     <div class="modal modal-lg">
@@ -714,7 +761,7 @@
 <footer class="app-footer">i-NVR · <span id="appVersion">v?</span></footer>
 
 <script src="vendor/hls.min.js"></script>
-<script src="watchdog.js?v=34"></script>
-<script src="app.js?v=34"></script>
+<script src="watchdog.js?v=35"></script>
+<script src="app.js?v=35"></script>
 </body>
 </html>

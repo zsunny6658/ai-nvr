@@ -44,14 +44,18 @@ public class MotionController {
     public record ConfigRequest(Boolean enabled, Double threshold, Integer intervalSec,
                                 Integer cooldownSec, Integer confirmFrames, Integer silentSec,
                                 Integer retentionDays, Integer maxEvents, List<String> dids,
-                                Boolean autoRecord, Integer recordTailSec) {
+                                Boolean autoRecord, Integer recordTailSec,
+                                Boolean scheduleEnabled, Integer activeStartMin, Integer activeEndMin) {
+        /** 兼容旧调用方（省略时段计划字段）。 */
+        public ConfigRequest {
+        }
     }
 
     @PutMapping("/config")
     public MotionSettings updateConfig(@RequestBody(required = false) ConfigRequest req) {
         MotionSettings cur = settingsStore.motion();
         ConfigRequest r = req == null ? new ConfigRequest(null, null, null, null,
-                null, null, null, null, null, null, null) : req;
+                null, null, null, null, null, null, null, null, null, null) : req;
 
         double threshold = r.threshold() == null ? cur.threshold() : r.threshold();
         int interval = r.intervalSec() == null ? cur.intervalSec() : r.intervalSec();
@@ -61,6 +65,8 @@ public class MotionController {
         int retention = r.retentionDays() == null ? cur.retentionDays() : r.retentionDays();
         int maxEvents = r.maxEvents() == null ? cur.maxEvents() : r.maxEvents();
         int recordTail = r.recordTailSec() == null ? cur.recordTailSec() : r.recordTailSec();
+        int actStart = r.activeStartMin() == null ? cur.activeStartMin() : r.activeStartMin();
+        int actEnd = r.activeEndMin() == null ? cur.activeEndMin() : r.activeEndMin();
 
         requireRange(threshold, 0.02, 0.50, "threshold");
         requireRange(interval, 1, 60, "intervalSec");
@@ -70,13 +76,17 @@ public class MotionController {
         requireRange(retention, 0, 365, "retentionDays");
         requireRange(maxEvents, 100, 20000, "maxEvents");
         requireRange(recordTail, 5, 600, "recordTailSec");
+        requireRange(actStart, 0, 1440, "activeStartMin");
+        requireRange(actEnd, 0, 1440, "activeEndMin");
 
         MotionSettings next = new MotionSettings(
                 r.enabled() == null ? cur.enabled() : r.enabled(),
                 threshold, interval, cooldown, confirm, silent, retention, maxEvents,
                 r.dids() == null ? cur.dids() : r.dids(),
                 r.autoRecord() == null ? cur.autoRecord() : r.autoRecord(),
-                recordTail);
+                recordTail,
+                r.scheduleEnabled() == null ? cur.scheduleEnabled() : r.scheduleEnabled(),
+                actStart, actEnd);
         settingsStore.saveMotion(next);
         return settingsStore.motion();
     }

@@ -34,7 +34,7 @@ import static org.bytedeco.ffmpeg.global.avformat.avformat_open_input;
 import static org.bytedeco.ffmpeg.global.avformat.avformat_write_header;
 import static org.bytedeco.ffmpeg.global.avformat.avio_closep;
 import static org.bytedeco.ffmpeg.global.avformat.avio_open;
-import static org.bytedeco.ffmpeg.global.avutil.AV_LOG_WARNING;
+import static org.bytedeco.ffmpeg.global.avutil.AV_LOG_ERROR;
 import static org.bytedeco.ffmpeg.global.avutil.AVMEDIA_TYPE_VIDEO;
 import static org.bytedeco.ffmpeg.global.avutil.av_log_set_level;
 
@@ -52,7 +52,7 @@ public final class Mp4Remuxer {
     }
 
     public static void remuxFile(String inPath, String outPath) throws Exception {
-        av_log_set_level(AV_LOG_WARNING);
+        av_log_set_level(AV_LOG_ERROR);
 
         // ---- 输入：H.265 Annex-B 裸流（demuxer 自动生成 hvcC、转 AVCC）----
         AVFormatContext inCtx = avformat_alloc_context();

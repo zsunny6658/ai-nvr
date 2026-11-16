@@ -41,7 +41,7 @@ import static org.bytedeco.ffmpeg.global.avformat.avio_closep;
 import static org.bytedeco.ffmpeg.global.avformat.avio_open;
 import static org.bytedeco.ffmpeg.global.avutil.AVMEDIA_TYPE_AUDIO;
 import static org.bytedeco.ffmpeg.global.avutil.AVMEDIA_TYPE_VIDEO;
-import static org.bytedeco.ffmpeg.global.avutil.AV_LOG_WARNING;
+import static org.bytedeco.ffmpeg.global.avutil.AV_LOG_ERROR;
 import static org.bytedeco.ffmpeg.global.avutil.AV_PIX_FMT_YUV420P;
 import static org.bytedeco.ffmpeg.global.avutil.AV_SAMPLE_FMT_FLTP;
 import static org.bytedeco.ffmpeg.global.avutil.av_log_set_level;
@@ -210,7 +210,7 @@ public final class Mp4SegmentRecorder {
     // ------------------------------------------------------------------
 
     private void run() {
-        av_log_set_level(AV_LOG_WARNING);
+        av_log_set_level(AV_LOG_ERROR);
         videoPkt = av_packet_alloc();
         audioPkt = av_packet_alloc();
 

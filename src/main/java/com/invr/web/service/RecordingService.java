@@ -82,6 +82,8 @@ public class RecordingService {
      * 运行时可在“设置”页修改，初始值优先取 Web 设置。
      */
     private volatile int retentionDays;
+    /** v1.2.21 录像目录容量水位（占该卷总容量百分比，0=关闭循环覆盖），volatile；设置页可改。 */
+    private volatile int waterPercent;
     private final Map<String, RecordingSink> active = new ConcurrentHashMap<>();
 
     public RecordingService(NvrProperties props, StreamHub hub, CameraConnector connector,
@@ -94,6 +96,8 @@ public class RecordingService {
         this.rootDir = resolveInitialRootDir();
         this.segmentSec = effectiveSegmentSec();
         this.retentionDays = effectiveRetentionDays();
+        Integer wp = settingsStore.recordMaxPercent();
+        this.waterPercent = (wp != null && wp > 0) ? Math.min(wp, 95) : 0;
         ensureDir(rootDir);
     }
 
@@ -586,6 +590,7 @@ public class RecordingService {
         m.put("retentionDays", retentionDays);
         m.put("defaultRetentionDays", props.getRecordRetentionDays());
         m.put("retentionCustomized", retCustom != null && retCustom > 0);
+        m.put("waterPercent", waterPercent);
         m.put("recordingCount", count);
         m.put("activeCount", active.size());
         m.put("freeSpace", dir.exists() ? dir.getFreeSpace() : 0L);
@@ -718,6 +723,86 @@ public class RecordingService {
         }
         if (removed > 0) {
             log.info("录像保留清理完成：共删除 {} 个过期分段", removed);
+        }
+        return removed;
+    }
+
+    /**
+     * 修改录像目录容量水位（0=关闭；1~95 表示「分段总大小不超过该卷总容量的百分比」）。
+     * 持久化后立即按新水位清理一次。
+     */
+    public synchronized Map<String, Object> updateWaterPercent(int pct) {
+        if (pct < 0 || pct > 95) {
+            throw ApiException.badRequest("容量水位需在 0～95 之间（0 表示关闭循环覆盖）");
+        }
+        this.waterPercent = pct;
+        settingsStore.saveRecordMaxPercent(pct > 0 ? pct : null);
+        int removed = cleanupByWaterLevel();
+        log.info("录像容量水位已设为 {}%（{}），本次清理 {} 个最旧分段",
+                pct, pct > 0 ? "超限时从最旧开始覆盖" : "关闭", removed);
+        return settingsInfo();
+    }
+
+    /** 水位上限字节数；protected 以便测试注入小上限。 */
+    protected long waterLimitBytes(long volumeTotal) {
+        return volumeTotal * waterPercent / 100;
+    }
+
+    /** 仅供测试：直接设置水位百分比，绕过持久化与「立即清理一次」。 */
+    void setWaterPercentForTest(int pct) {
+        this.waterPercent = pct;
+    }
+
+    /**
+     * 容量水位循环覆盖：分段文件总大小超过「所在卷总容量 × 水位百分比」时，按最后修改时间
+     * 从最旧开始删除（跳过正在写入的分段），直至回落到水位以内。水位为 0 时不清理。
+     *
+     * <p>与保留天数策略（按时间）互补：天数保证"最多留多久"，水位保证"最多占多少"。</p>
+     */
+    public int cleanupByWaterLevel() {
+        int pct = waterPercent;
+        if (pct <= 0) {
+            return 0;
+        }
+        File dir = rootDir;
+        long total = dir.getTotalSpace();
+        if (total <= 0) {
+            return 0; // 无法取得卷容量（网络盘等），跳过，避免误删
+        }
+        long allowed = waterLimitBytes(total);
+        File[] files = dir.listFiles((d, name) ->
+                name.endsWith(".mp4") && FILE_PATTERN.matcher(name).matches());
+        if (files == null || files.length == 0) {
+            return 0;
+        }
+        Set<String> writing = writingSegments();
+        java.util.Arrays.sort(files, Comparator.comparingLong(File::lastModified));
+        long used = 0;
+        for (File f : files) {
+            used += f.length();
+        }
+        int removed = 0;
+        for (File f : files) {
+            if (used <= allowed) {
+                break;
+            }
+            if (writing.contains(f.getName())) {
+                continue;
+            }
+            long len = f.length();
+            try {
+                if (Files.deleteIfExists(f.toPath())) {
+                    used -= len;
+                    removed++;
+                    log.info("容量水位覆盖（水位 {}%）：删除最旧分段 {}", pct, f.getName());
+                }
+            } catch (IOException e) {
+                log.warn("容量水位清理失败 {}：{}", f.getName(), e.getMessage());
+                break; // 删除失败（占用中）则本轮停止，避免反复报错
+            }
+        }
+        if (removed > 0) {
+            log.info("容量水位清理完成：共删除 {} 个分段（当前占用已回落）", removed);
         }
         return removed;
     }

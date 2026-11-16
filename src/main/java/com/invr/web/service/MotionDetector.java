@@ -120,6 +120,9 @@ public class MotionDetector {
         if (!cfg.enabled()) {
             return; // 不取帧：帧服务空闲后自行回收订阅
         }
+        if (!cfg.inActiveWindow(now)) {
+            return; // v1.2.21 侦测时段计划：时段外不采样不告警（帧服务空闲后自动回收订阅）
+        }
         if (now - lastTickSampleMs < cfg.intervalSec() * 1000L) {
             return;
         }
@@ -351,7 +354,10 @@ public class MotionDetector {
         boolean trigger = cooled && s.confirm >= cfg.confirmFrames();
         if (trigger) {
             String name = deviceName(did);
-            events.add(did, name, "motion", "info", "检测到画面变化", score, jpeg, List.of());
+            // v1.2.21 持续变动合并：同设备连续触发在 4 倍冷却窗口内合并进最近一条（repeat+1），
+            // 避免长时间持续运动（如家人在客厅活动一整晚）把事件页刷成同质内容
+            events.addOrMergeMotion(did, name, "检测到画面变化", score, jpeg,
+                    cfg.cooldownMs() * 4);
             s.triggered++;
             s.lastEventAtMs = now;
             s.confirm = 0;

@@ -69,7 +69,9 @@ public class EventStore {
             long createdAt,
             boolean handled,
             Long handledAt,
-            List<Map<String, Object>> detections) {
+            List<Map<String, Object>> detections,
+            /** v1.2.21 持续变动合并计数：0 表示首条，N 表示其后合并进了 N 次重复触发。 */
+            int repeat) {
     }
 
     /** 列表筛选条件；{@code date} 为本地时区 yyyy-MM-dd，fromMs/toMs 为 epoch 毫秒。 */
@@ -143,7 +145,7 @@ public class EventStore {
         }
         AlarmEvent event = new AlarmEvent(id, nullToEmpty(did), nullToEmpty(deviceName),
                 nullToEmpty(type), nullToEmpty(level), nullToEmpty(title), score, rel, now,
-                false, null, detections == null ? List.of() : List.copyOf(detections));
+                false, null, detections == null ? List.of() : List.copyOf(detections), 0);
         events.put(id, event);
         append(Map.of("op", "add", "event", event));
         Consumer<AlarmEvent> l = addListener;
@@ -162,6 +164,51 @@ public class EventStore {
         this.addListener = listener;
     }
 
+    /**
+     * v1.2.21 持续变动事件合并：同设备 motion 事件的最近一条若在 {@code mergeWindowMs} 内，
+     * 不再新增一条（刷屏），而是原位更新该条——repeat 计数 +1、时间戳推进到本次、
+     * 快照替换为最新帧（同日同 id 覆盖）、分数取历史最高。窗口外或无同设备事件时走普通
+     * {@link #add}（repeat 从 0 开始）。
+     *
+     * <p>合并路径<strong>不触发 addListener</strong>：合并的目的就是抑制重复通知。</p>
+     *
+     * @return 落库后的事件（合并时 id 与首条相同）
+     */
+    public synchronized AlarmEvent addOrMergeMotion(String did, String deviceName, String title,
+                                                    double score, byte[] jpeg, long mergeWindowMs) {
+        long now = System.currentTimeMillis();
+        AlarmEvent last = null;
+        for (AlarmEvent e : events.values()) { // LinkedHashMap 按插入序，取最后一条同设备 motion
+            if (did != null && did.equals(e.did()) && "motion".equals(e.type())) {
+                last = e;
+            }
+        }
+        if (last != null && now - last.createdAt() <= mergeWindowMs) {
+            String rel = last.snapshot();
+            if (jpeg != null && jpeg.length > 0) {
+                String candidate = dayOf(now) + "/" + last.id() + ".jpg";
+                try {
+                    Path target = snapshotFile(candidate);
+                    if (target != null) {
+                        Files.createDirectories(target.getParent());
+                        Files.write(target, jpeg);
+                        rel = candidate;
+                    }
+                } catch (IOException e) {
+                    log.warn("合并事件快照更新失败 id={}: {}", last.id(), e.toString());
+                }
+            }
+            AlarmEvent merged = new AlarmEvent(last.id(), last.did(), last.deviceName(),
+                    last.type(), last.level(), last.title(), Math.max(last.score(), score),
+                    rel, now, last.handled(), last.handledAt(), last.detections(),
+                    last.repeat() + 1);
+            events.put(merged.id(), merged);
+            append(Map.of("op", "add", "event", merged)); // 重放时同 id 后者覆盖
+            return merged;
+        }
+        return add(did, deviceName, "motion", "info", title, score, jpeg, List.of());
+    }
+
     /** 标记已处理 / 取消处理；返回更新后的事件，不存在返回空。 */
     public synchronized Optional<AlarmEvent> markHandled(long id, boolean handled) {
         AlarmEvent old = events.get(id);
@@ -171,7 +218,7 @@ public class EventStore {
         long at = handled ? System.currentTimeMillis() : 0L;
         AlarmEvent updated = new AlarmEvent(old.id(), old.did(), old.deviceName(), old.type(),
                 old.level(), old.title(), old.score(), old.snapshot(), old.createdAt(),
-                handled, handled ? at : null, old.detections());
+                handled, handled ? at : null, old.detections(), old.repeat());
         events.put(id, updated);
         Map<String, Object> line = new LinkedHashMap<>();
         line.put("op", "handled");
@@ -232,7 +279,7 @@ public class EventStore {
             }
             events.put(id, new AlarmEvent(old.id(), old.did(), old.deviceName(), old.type(),
                     old.level(), old.title(), old.score(), old.snapshot(), old.createdAt(),
-                    handled, handled ? at : null, old.detections()));
+                    handled, handled ? at : null, old.detections(), old.repeat()));
             touched.add(id);
         }
         if (touched.isEmpty()) {
@@ -524,7 +571,7 @@ public class EventStore {
                                 events.put(id, new AlarmEvent(old.id(), old.did(), old.deviceName(),
                                         old.type(), old.level(), old.title(), old.score(),
                                         old.snapshot(), old.createdAt(), h,
-                                        h && at > 0 ? at : null, old.detections()));
+                                        h && at > 0 ? at : null, old.detections(), old.repeat()));
                             }
                         }
                         case "delete" -> events.remove(id);

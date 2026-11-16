@@ -28,7 +28,7 @@ import static org.bytedeco.ffmpeg.global.avcodec.avcodec_receive_frame;
 import static org.bytedeco.ffmpeg.global.avcodec.avcodec_receive_packet;
 import static org.bytedeco.ffmpeg.global.avcodec.avcodec_send_frame;
 import static org.bytedeco.ffmpeg.global.avcodec.avcodec_send_packet;
-import static org.bytedeco.ffmpeg.global.avutil.AV_LOG_WARNING;
+import static org.bytedeco.ffmpeg.global.avutil.AV_LOG_ERROR;
 import static org.bytedeco.ffmpeg.global.avutil.AV_PIX_FMT_YUVJ420P;
 import static org.bytedeco.ffmpeg.global.avutil.av_frame_alloc;
 import static org.bytedeco.ffmpeg.global.avutil.av_frame_free;
@@ -57,7 +57,7 @@ public final class LiveFrameDecoder {
     private static final Logger log = LoggerFactory.getLogger(LiveFrameDecoder.class);
 
     static {
-        av_log_set_level(AV_LOG_WARNING);
+        av_log_set_level(AV_LOG_ERROR);
     }
 
     private final long minIntervalMs;
