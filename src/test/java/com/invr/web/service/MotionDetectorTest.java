@@ -4,6 +4,7 @@ import com.invr.model.CameraDevice;
 import com.invr.store.AppSettingsStore;
 import com.invr.store.EventStore;
 import com.invr.store.MotionSettings;
+import com.invr.store.MotionZone;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -50,6 +51,7 @@ class MotionDetectorTest {
 
     private LiveFrameService frames;
     private EventStore events;
+    private AppSettingsStore settings;
     private MotionDetector detector;
 
     @BeforeEach
@@ -63,8 +65,10 @@ class MotionDetectorTest {
         Mockito.when(catalog.all()).thenReturn(List.of(device));
         Mockito.when(catalog.find(DID)).thenReturn(Optional.of(device));
 
-        AppSettingsStore settings = Mockito.mock(AppSettingsStore.class);
+        settings = Mockito.mock(AppSettingsStore.class);
         Mockito.when(settings.motion()).thenAnswer(inv -> config.get());
+        Mockito.when(settings.motionExcludeZones()).thenReturn(Map.of());
+        Mockito.when(settings.excludeZonesFor(anyString())).thenReturn(List.of());
 
         events = new EventStore(dir);
         detector = new MotionDetector(frames, catalog, settings, events, clock);
@@ -227,6 +231,59 @@ class MotionDetectorTest {
         assertEquals(0.0, first.score()); // 首帧只建基准
         assertFalse(first.triggered());
         assertEquals(0.12, first.threshold());
+    }
+
+    // ===================== v1.2.19 排除区域（ROI） =====================
+
+    /**
+     * 左半幅反相构造下：整幅变化必然触发；排除左半后右半静止，帧差为 0，不触发。
+     * 掩码只影响评分，不影响基准建立与低照度/静默等既有语义。
+     */
+    @Test
+    void excludedZoneSuppressesMotionInMaskedArea() throws Exception {
+        config.set(cfg(true, 0.12, 1, 5, 2, 0));
+
+        // 不排除：左半反相变化 → 照常触发
+        tickAfter(1000);
+        tickAfter(1000);
+        currentFrame.set(image(false));
+        tickAfter(1000);
+        tickAfter(1000);
+        assertEquals(1, events.size(), "无排除区时左半变化应触发");
+
+        // 排除左半（bx 0..3 全高）：右半始终黑，帧差应恒为 0
+        java.util.List<MotionZone> zones = List.of(new MotionZone(0, 0, 0.5, 1.0));
+        Mockito.when(settings.motionExcludeZones()).thenReturn(Map.of(DID, zones));
+        Mockito.when(settings.excludeZonesFor(anyString())).thenReturn(zones);
+
+        tickAfter(1000); // 重建基准（A 画面）
+        tickAfter(1000);
+        currentFrame.set(image(false)); // 左半反相（被排除），右半不变
+        tickAfter(1000);
+        tickAfter(1000);
+        assertEquals(1, events.size(), "排除左半后不应新增事件（仍为之前的 1 条）");
+        Map<?, ?> perDevice = (Map<?, ?>) detector.status().get("devices");
+        Map<?, ?> one = (Map<?, ?>) perDevice.get(DID);
+        assertEquals(32, ((Number) one.get("excludedBlocks")).intValue(), "应排除 32 个侦测块");
+    }
+
+    @Test
+    void fullyMaskedFrameNeverTriggers() throws Exception {
+        config.set(cfg(true, 0.12, 1, 5, 2, 0));
+        java.util.List<MotionZone> zones = List.of(new MotionZone(0, 0, 1.0, 1.0));
+        Mockito.when(settings.motionExcludeZones()).thenReturn(Map.of(DID, zones));
+        Mockito.when(settings.excludeZonesFor(anyString())).thenReturn(zones);
+
+        tickAfter(1000);
+        tickAfter(1000);
+        currentFrame.set(image(false));
+        for (int i = 0; i < 4; i++) {
+            tickAfter(1000);
+        }
+        assertEquals(0, events.size(), "全画面排除等于禁用侦测，不应触发");
+        Map<?, ?> perDevice = (Map<?, ?>) detector.status().get("devices");
+        Map<?, ?> one = (Map<?, ?>) perDevice.get(DID);
+        assertEquals("排除区域覆盖全画面，本帧未判定", one.get("lastError"));
     }
 
     private static final class MutableClock extends Clock {

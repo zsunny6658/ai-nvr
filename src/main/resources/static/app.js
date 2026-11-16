@@ -1491,6 +1491,8 @@
             loadApiKey();
             // v1.2.8 运动侦测与自动录像（独立接口，失败不阻塞其余设置项）
             loadMotionSettings();
+            // v1.2.19 事件通知推送（独立接口，失败不阻塞其余设置项）
+            loadNotifySettings();
         } catch (e) {
             if (e.status === 401) return; // 门禁失效由全局逻辑切回解锁页
             toast('加载设置失败：' + e.message, 'err');
@@ -2761,6 +2763,7 @@
                 '</div>' +
                 '<div class="ev-actions">' +
                     (e.snapshotUrl ? '<button class="btn tiny soft" data-evact="snapshot" data-evid="' + e.id + '">查看快照</button>' : '') +
+                    '<button class="btn tiny soft" data-evact="replay" data-evid="' + e.id + '">看回放</button>' +
                     '<button class="btn tiny soft" data-evact="handled" data-evid="' + e.id +
                         '" data-evval="' + (e.handled ? 'false' : 'true') + '">' +
                         (e.handled ? '取消处理' : '标记已处理') + '</button>' +
@@ -2960,6 +2963,7 @@
         // 事件页行优先；首页摄像头卡片的快照来自 /api/events/recent 的独立缓存
         var e = state.evRows.find(function (x) { return x.id === id; }) || state.camRecentIndex[id];
         if (!e || !e.snapshotUrl) return;
+        state.evSnapshotId = id;
         $('evSnapshotTitle').textContent = (e.deviceName || e.did) + ' · ' + fmtTime(e.createdAt);
         var img = $('evSnapshotImg');
         img.alt = '快照不可用或已被清理';
@@ -2970,9 +2974,38 @@
 
     function closeEvSnapshot() {
         $('evSnapshotModal').hidden = true;
+        state.evSnapshotId = 0;
         var img = $('evSnapshotImg');
         img.onerror = null;
         img.removeAttribute('src');
+    }
+
+    /**
+     * v1.2.19 事件跳转回放：把回放页切到该摄像头、该事件日期，并 seek 到事件时刻。
+     * 该时刻没有录像时 seekTo 会给出明确提示，不做静默失败。
+     */
+    function openEvReplay(id) {
+        // 事件页行优先；首页卡片快照对应的缓存事件可能不在 evRows 里，找不到时提示
+        var e = state.evRows.find(function (x) { return x.id === id; });
+        if (!e || !e.createdAt) { toast('该事件没有可定位的时间信息', 'err'); return; }
+        closeEvSnapshot();
+        state.pbPending = { did: e.did, tMs: Number(e.createdAt) };
+        var tab = document.querySelector('.tab[data-tab="playback"]');
+        if (tab) tab.click();
+    }
+
+    /** 回放页就绪后应用「事件跳转」待办：定位摄像头 + 日期 + 时刻（一次性）。 */
+    async function applyPbPending() {
+        var p = state.pbPending;
+        if (!p || !p.did) return;
+        state.pbPending = null;
+        var pb = state.pb;
+        pb.did = p.did;
+        pb.dateStr = localDateStr(new Date(p.tMs));
+        $('pbCam').value = p.did;
+        $('pbDate').value = pb.dateStr;
+        await loadTimeline();
+        seekTo(p.tMs);
     }
 
     /* ---------- 设置页：运动侦测与自动录像 ---------- */
@@ -2989,6 +3022,7 @@
             var all = selected.length === 0;
             $('setMotionAllDids').checked = all;
             await renderMotionDids(selected, all);
+            await refreshRoiDeviceOptions();
             $('setMotionHint').textContent = m.enabled
                 ? '当前已启用运动侦测' + (m.autoRecord ? '与自动录像' : '') + '，参数保存后立即生效，无需重启。'
                 : '当前未启用，不会产生事件，也不会自动录像。';
@@ -3051,6 +3085,119 @@
         } catch (e) { toast('保存失败：' + e.message, 'err'); }
     }
 
+    /* ---------- v1.2.19 事件通知推送 ---------- */
+    function minuteToHHMM(min) {
+        if (min == null || min < 0) return '';
+        var h = Math.floor(min / 60), m = min % 60;
+        return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m;
+    }
+
+    function hhmmToMinute(v) {
+        if (!v) return -1;
+        var p = v.split(':');
+        var n = (Number(p[0]) || 0) * 60 + (Number(p[1]) || 0);
+        return (n >= 0 && n <= 1439) ? n : -1;
+    }
+
+    async function loadNotifySettings() {
+        try {
+            var n = await api('api/notify/settings');
+            $('setNotifyEnabled').checked = !!n.enabled;
+            var types = n.types || [];
+            document.querySelectorAll('#setNotifyTypes input[type=checkbox]').forEach(function (i) {
+                i.checked = types.length === 0 || types.indexOf(i.value) >= 0;
+            });
+            // 全空 = 推送全部类型，勾上全部复选框直观呈现
+            $('setNotifyQuietStart').value = minuteToHHMM(n.quietStartMin);
+            $('setNotifyQuietEnd').value = minuteToHHMM(n.quietEndMin);
+            $('setNotifyWebhook').value = n.webhookUrl || '';
+            $('setNotifySecret').value = '';
+            $('setNotifySecret').placeholder = n.webhookSecretSet ? '已配置，留空保持原值' : '未配置';
+            $('setNotifyMailEnabled').checked = !!n.mailEnabled;
+            $('setNotifySmtpHost').value = n.smtpHost || '';
+            $('setNotifySmtpPort').value = n.smtpPort || 465;
+            $('setNotifySmtpSsl').checked = n.smtpSsl !== false;
+            $('setNotifySmtpUser').value = n.smtpUser || '';
+            $('setNotifySmtpPass').value = '';
+            $('setNotifySmtpPass').placeholder = n.smtpPassSet ? '已配置，留空保持原值' : '未配置';
+            $('setNotifyMailFrom').value = n.mailFrom || '';
+            $('setNotifyMailTo').value = n.mailTo || '';
+            $('setNotifyHint').textContent = (n.enabled ? '推送已启用。' : '推送未启用。')
+                + (n.webhookUrl ? 'Webhook 已配置。' : '') + (n.mailEnabled ? '邮件通道已开启。' : '');
+        } catch (e) {
+            $('setNotifyHint').textContent = '读取通知设置失败：' + e.message;
+        }
+    }
+
+    function collectNotifyBody() {
+        var types = Array.prototype.slice
+            .call(document.querySelectorAll('#setNotifyTypes input[type=checkbox]:checked'))
+            .map(function (i) { return i.value; });
+        var body = {
+            enabled: $('setNotifyEnabled').checked,
+            types: types,
+            quietStartMin: hhmmToMinute($('setNotifyQuietStart').value),
+            quietEndMin: hhmmToMinute($('setNotifyQuietEnd').value),
+            webhookUrl: $('setNotifyWebhook').value.trim(),
+            mailEnabled: $('setNotifyMailEnabled').checked,
+            smtpHost: $('setNotifySmtpHost').value.trim(),
+            smtpPort: Number($('setNotifySmtpPort').value) || 465,
+            smtpSsl: $('setNotifySmtpSsl').checked,
+            smtpUser: $('setNotifySmtpUser').value.trim(),
+            mailFrom: $('setNotifyMailFrom').value.trim(),
+            mailTo: $('setNotifyMailTo').value.trim()
+        };
+        var secret = $('setNotifySecret').value.trim();
+        if (secret) body.webhookSecret = secret;
+        var pass = $('setNotifySmtpPass').value;
+        if (pass) body.smtpPass = pass;
+        return body;
+    }
+
+    async function saveNotifySettings() {
+        var start = hhmmToMinute($('setNotifyQuietStart').value);
+        var end = hhmmToMinute($('setNotifyQuietEnd').value);
+        if ((start >= 0) !== (end >= 0)) {
+            toast('静默时段需要同时填写开始和结束（或都留空）', 'err');
+            return;
+        }
+        try {
+            await api('api/notify/settings', {
+                method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(collectNotifyBody())
+            });
+            toast('通知推送设置已保存', 'ok');
+            loadNotifySettings();
+        } catch (e) { toast('保存失败：' + e.message, 'err'); }
+    }
+
+    async function testNotify(channel) {
+        // 先保存再测试：保证测试用的是页面上的最新配置
+        var start = hhmmToMinute($('setNotifyQuietStart').value);
+        var end = hhmmToMinute($('setNotifyQuietEnd').value);
+        if ((start >= 0) !== (end >= 0)) {
+            toast('静默时段需要同时填写开始和结束（或都留空）', 'err');
+            return;
+        }
+        $('setNotifyHint').textContent = '正在发送测试' + (channel === 'all' ? '通知' : channel) + '…';
+        try {
+            await api('api/notify/settings', {
+                method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(collectNotifyBody())
+            });
+            var r = await api('api/notify/test?channel=' + channel, { method: 'POST' });
+            var lines = [];
+            ['webhook', 'mail'].forEach(function (k) {
+                if (r[k] !== undefined) lines.push(k + '：' + (r[k] === null ? '发送成功' : r[k]));
+            });
+            $('setNotifyHint').textContent = lines.join(' · ') || '未选择通道';
+            toast(lines.join(' · ') || '测试完成', 'ok');
+        } catch (e) {
+            $('setNotifyHint').textContent = '测试失败：' + e.message;
+            toast('测试失败：' + e.message, 'err');
+        }
+    }
+
     async function showMotionStatus() {
         try {
             var s = await api('api/motion/status');
@@ -3065,6 +3212,124 @@
                 ' · 事件 ' + ((s.events && s.events.total) || 0) + ' 条' +
                 (lines.length ? '\n' + lines.join('\n') : '\n（尚无采样数据）');
         } catch (e) { toast('读取运行状态失败：' + e.message, 'err'); }
+    }
+
+    /* ---------- 设置页：检测排除区域（ROI）编辑器（v1.2.19） ---------- */
+    var roi = { did: '', zones: [], drag: null };
+
+    /** 填充「检测排除区域」设备下拉；与生效摄像头复选共用设备列表口径。 */
+    async function refreshRoiDeviceOptions() {
+        var sel = $('setRoiDid');
+        try {
+            var dev = await api('api/devices');
+            var list = (dev && dev.devices) || [];
+            sel.innerHTML = list.length
+                ? list.map(function (c) {
+                    return '<option value="' + escapeHtml(c.did) + '">'
+                        + escapeHtml(c.name || c.did) + (c.online ? '' : '（离线）') + '</option>';
+                }).join('')
+                : '<option value="">暂无设备</option>';
+        } catch (e) {
+            sel.innerHTML = '<option value="">设备列表读取失败</option>';
+        }
+    }
+
+    function sizeRoiCanvas() {
+        var img = $('roiImg'), cv = $('roiCanvas');
+        var w = img.clientWidth || img.naturalWidth || 320;
+        var h = img.clientHeight || img.naturalHeight || 180;
+        cv.width = w;
+        cv.height = h;
+        drawRoi();
+    }
+
+    /** 依归一化坐标把所有矩形（含拖拽预览）画到覆盖层。 */
+    function drawRoi() {
+        var cv = $('roiCanvas'), g = cv.getContext('2d');
+        g.clearRect(0, 0, cv.width, cv.height);
+        var rects = roi.zones.map(function (z) {
+            return { x: z.x * cv.width, y: z.y * cv.height, w: z.w * cv.width, h: z.h * cv.height };
+        });
+        if (roi.drag) rects.push(roi.drag.cur);
+        rects.forEach(function (r) {
+            g.fillStyle = 'rgba(255,72,72,0.28)';
+            g.strokeStyle = '#ff4848';
+            g.lineWidth = 2;
+            g.fillRect(r.x, r.y, r.w, r.h);
+            g.strokeRect(r.x, r.y, r.w, r.h);
+        });
+    }
+
+    function renderRoiZones() {
+        var box = $('roiZones');
+        if (!roi.zones.length) {
+            box.innerHTML = '<span class="muted small">未框选任何区域（全画面参与侦测）</span>';
+            return;
+        }
+        box.innerHTML = roi.zones.map(function (z, i) {
+            return '<span class="roi-zone-tag">区域 ' + (i + 1)
+                + ' · ' + Math.round(z.w * 100) + '%×' + Math.round(z.h * 100) + '%'
+                + ' <button class="btn tiny soft" data-roidel="' + i + '" type="button">删除</button></span>';
+        }).join('');
+    }
+
+    async function openRoiEditor() {
+        var did = $('setRoiDid').value;
+        if (!did) { toast('暂无设备可选，请先在首页刷新设备列表', 'err'); return; }
+        roi.did = did;
+        roi.zones = [];
+        roi.drag = null;
+        $('roiTitle').textContent = '框选排除区域';
+        $('roiImg').removeAttribute('src');
+        $('roiModal').hidden = false;
+        var img = $('roiImg');
+        img.onerror = function () {
+            img.onerror = null;
+            $('roiTitle').textContent = '框选排除区域 · 最近画面加载失败（设备离线或抓拍超时）';
+        };
+        img.onload = function () {
+            img.onerror = null;
+            sizeRoiCanvas();
+        };
+        img.src = withToken('api/snapshot/' + encodeURIComponent(did) + '?t=' + Date.now());
+        try {
+            var r = await api('api/motion/zones/' + encodeURIComponent(did));
+            roi.zones = (r.zones || []).slice();
+            renderRoiZones();
+            if (img.complete && img.naturalWidth) sizeRoiCanvas();
+        } catch (e) {
+            toast('排除区域读取失败：' + e.message, 'err');
+        }
+    }
+
+    function closeRoiEditor() {
+        $('roiModal').hidden = true;
+        roi.drag = null;
+        var img = $('roiImg');
+        img.onload = null;
+        img.onerror = null;
+        img.removeAttribute('src');
+    }
+
+    async function saveRoiZones() {
+        try {
+            var r = await api('api/motion/zones/' + encodeURIComponent(roi.did), {
+                method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ zones: roi.zones })
+            });
+            roi.zones = r.zones || [];
+            toast('排除区域已保存并立即生效（'
+                + (r.excludedBlocks || 0) + '/64 个侦测块被排除）', 'ok');
+            closeRoiEditor();
+        } catch (e) {
+            toast('保存失败：' + e.message, 'err');
+        }
+    }
+
+    async function clearRoiZones() {
+        if (!roi.zones.length) { toast('当前没有排除区域', 'ok'); return; }
+        roi.zones = [];
+        await saveRoiZones();
     }
 
     /* ---------- 录像回放 ---------- */
@@ -3476,6 +3741,7 @@
             var id = Number(b.getAttribute('data-evid'));
             var act = b.getAttribute('data-evact');
             if (act === 'snapshot') openEvSnapshot(id);
+            else if (act === 'replay') openEvReplay(id);
             else if (act === 'handled') evSingle(id, 'handled', b.getAttribute('data-evval'));
             else if (act === 'del') evSingle(id, 'del');
         });
@@ -3500,11 +3766,69 @@
         });
         $('evSnapshotClose').addEventListener('click', closeEvSnapshot);
         $('evSnapshotCloseBtn').addEventListener('click', closeEvSnapshot);
+        $('btnEvSnapshotReplay').addEventListener('click', function () {
+            if (state.evSnapshotId) openEvReplay(state.evSnapshotId);
+        });
         $('evSnapshotModal').addEventListener('click', function (e) {
             if (e.target === this) closeEvSnapshot();
         });
         $('btnSaveMotion').addEventListener('click', saveMotionSettings);
         $('btnMotionStatus').addEventListener('click', showMotionStatus);
+        $('btnSaveNotify').addEventListener('click', saveNotifySettings);
+        $('btnTestNotifyWebhook').addEventListener('click', function () { testNotify('webhook'); });
+        $('btnTestNotifyMail').addEventListener('click', function () { testNotify('mail'); });
+
+        // v1.2.19 检测排除区域（ROI）编辑器
+        $('btnOpenRoi').addEventListener('click', openRoiEditor);
+        $('roiClose').addEventListener('click', closeRoiEditor);
+        $('roiCancel').addEventListener('click', closeRoiEditor);
+        $('roiModal').addEventListener('click', function (e) { if (e.target === this) closeRoiEditor(); });
+        $('btnRoiSave').addEventListener('click', saveRoiZones);
+        $('btnRoiClear').addEventListener('click', clearRoiZones);
+        $('roiZones').addEventListener('click', function (e) {
+            var b = e.target.closest('[data-roidel]');
+            if (!b) return;
+            roi.zones.splice(parseInt(b.getAttribute('data-roidel'), 10), 1);
+            renderRoiZones();
+            drawRoi();
+        });
+        (function () {
+            var cv = $('roiCanvas');
+            function roiPos(e) {
+                var rect = cv.getBoundingClientRect();
+                var x = Math.min(Math.max((e.clientX - rect.left) / rect.width, 0), 1);
+                var y = Math.min(Math.max((e.clientY - rect.top) / rect.height, 0), 1);
+                return { x: x, y: y };
+            }
+            cv.addEventListener('pointerdown', function (e) {
+                if (!roi.did || !$('roiImg').complete) return;
+                var p = roiPos(e);
+                roi.drag = { ox: p.x, oy: p.y, cur: { x: p.x, y: p.y, w: 0, h: 0 } };
+                try { cv.setPointerCapture(e.pointerId); } catch (err) { /* 旧 WebView 无此 API */ }
+                e.preventDefault();
+            });
+            cv.addEventListener('pointermove', function (e) {
+                if (!roi.drag) return;
+                var p = roiPos(e), d = roi.drag;
+                d.cur = {
+                    x: Math.min(d.ox, p.x), y: Math.min(d.oy, p.y),
+                    w: Math.abs(p.x - d.ox), h: Math.abs(p.y - d.oy)
+                };
+                drawRoi();
+            });
+            cv.addEventListener('pointerup', function () {
+                if (!roi.drag) return;
+                var cur = roi.drag.cur;
+                roi.drag = null;
+                if (roi.zones.length >= 8) {
+                    toast('最多框选 8 个区域', 'err');
+                } else if (cur.w >= 0.02 && cur.h >= 0.02) {
+                    roi.zones.push(cur);
+                    renderRoiZones();
+                }
+                drawRoi();
+            });
+        })();
         $('setMotionAllDids').addEventListener('change', function () {
             if (this.checked) { $('setMotionDids').innerHTML = ''; }
             else { renderMotionDids([], false); }
@@ -3651,7 +3975,11 @@
                     }
                     loadEvents(true);
                 }
-                if (name === 'playback') enterPlayback();
+                if (name === 'playback') {
+                    enterPlayback();
+                    // v1.2.19：事件页「看回放」带来的定位待办（摄像头 + 日期 + 时刻）
+                    applyPbPending();
+                }
                 else { pausePb(); stopPbLive(); }
                 if (name === 'settings') loadSettings();
             });

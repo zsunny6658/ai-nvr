@@ -746,3 +746,16 @@ body {
 @media (max-width: 640px) {
     .cam-group-did { display: none; }
 }
+
+/* ============ v1.2.19 检测排除区域（ROI）编辑器 ============ */
+.roi-modal { width: min(720px, 94vw); }
+.roi-stage { position: relative; background: #0b1220; border-radius: 10px; overflow: hidden;
+    display: flex; justify-content: center; }
+.roi-stage img { max-width: 100%; max-height: 52vh; display: block; user-select: none;
+    -webkit-user-select: none; }
+.roi-stage canvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%;
+    cursor: crosshair; touch-action: none; }
+.roi-zone-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; min-height: 20px; }
+.roi-zone-tag { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px;
+    background: #fdf0f0; border: 1px solid #f3c2c2; border-radius: 8px; font-size: 12px; }
+.roi-zone-tag .btn { padding: 1px 8px; font-size: 11px; }

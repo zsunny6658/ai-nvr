@@ -10,7 +10,7 @@
     <base href="./">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230891b2'/%3E%3C/svg%3E">
     <title>iNvr · 小米摄像头 NVR</title>
-    <link rel="stylesheet" href="style.css?v=33">
+    <link rel="stylesheet" href="style.css?v=34">
 </head>
 <body>
 <header class="topbar">
@@ -299,6 +299,12 @@
                         <label class="ev-switch inline"><input type="checkbox" id="setMotionAllDids" checked> 全部设备</label>
                     </div>
                     <div id="setMotionDids" class="did-checklist"></div>
+                    <label>检测排除区域（v1.2.19，树影 / 马路 / 常亮屏幕等误报来源）</label>
+                    <div class="set-edit">
+                        <select id="setRoiDid"></select>
+                        <button class="btn" id="btnOpenRoi" type="button">框选排除区域</button>
+                    </div>
+                    <p class="muted small" id="setRoiHint">在最近画面上拖拽框选不参与侦测的区域；排除区不产生事件，也不会影响自动录像之外的画面。</p>
                     <label>变化阈值（0.02～0.50，越大越不灵敏）</label>
                     <div class="set-edit">
                         <input type="number" id="setMotionThreshold" min="0.02" max="0.5" step="0.01">
@@ -316,6 +322,57 @@
                         <button class="btn" id="btnMotionStatus" type="button">查看运行状态</button>
                     </div>
                     <div id="setMotionHint" class="muted small"></div>
+                </div>
+                <div class="set-card">
+                    <h3>事件通知推送</h3>
+                    <p class="muted small">画面变动 / 设备离线等事件产生时，通过 Webhook 或邮件推送到外部（v1.2.19）。发送失败自动重试 2 次；SMTP 授权码保存在本机设置文件中，不会回显明文。</p>
+                    <label class="ev-switch"><input type="checkbox" id="setNotifyEnabled"> 启用事件通知推送</label>
+                    <label>推送的事件类型</label>
+                    <div class="did-checklist" id="setNotifyTypes">
+                        <label class="ev-switch inline"><input type="checkbox" value="motion"> 画面变动</label>
+                        <label class="ev-switch inline"><input type="checkbox" value="offline"> 设备离线</label>
+                        <label class="ev-switch inline"><input type="checkbox" value="reconnect"> 设备重连</label>
+                    </div>
+                    <label>静默时段（该时间段内不发通知；留空不启用）</label>
+                    <div class="set-edit">
+                        <input type="time" id="setNotifyQuietStart">
+                        <span class="muted small">至</span>
+                        <input type="time" id="setNotifyQuietEnd">
+                    </div>
+                    <div class="set-divider"></div>
+                    <label>Webhook 出向地址（POST JSON，可空）</label>
+                    <div class="set-edit">
+                        <input type="url" id="setNotifyWebhook" placeholder="https://example.com/hook">
+                    </div>
+                    <label>Webhook 验签密钥（可选，HMAC-SHA256 于 X-invr-Signature 头；留空保持原值，填 - 清除）</label>
+                    <div class="set-edit">
+                        <input type="password" id="setNotifySecret" placeholder="留空保持原值">
+                    </div>
+                    <div class="set-divider"></div>
+                    <label class="ev-switch"><input type="checkbox" id="setNotifyMailEnabled"> 通过邮件推送</label>
+                    <label>SMTP 服务器 / 端口</label>
+                    <div class="set-edit">
+                        <input type="text" id="setNotifySmtpHost" placeholder="smtp.example.com">
+                        <input type="number" id="setNotifySmtpPort" min="1" max="65535" step="1">
+                        <label class="ev-switch inline"><input type="checkbox" id="setNotifySmtpSsl"> TLS</label>
+                    </div>
+                    <p class="muted small">465 端口为隐式 TLS；587 自动 STARTTLS。勾选 TLS 且端口非 465 时也会尝试 STARTTLS。</p>
+                    <label>SMTP 账号 / 密码（授权码；密码留空保持原值，填 - 清除）</label>
+                    <div class="set-edit">
+                        <input type="text" id="setNotifySmtpUser" autocomplete="off">
+                        <input type="password" id="setNotifySmtpPass" autocomplete="new-password" placeholder="留空保持原值">
+                    </div>
+                    <label>发件人（默认取 SMTP 账号）/ 收件人（多个用逗号分隔）</label>
+                    <div class="set-edit">
+                        <input type="text" id="setNotifyMailFrom" placeholder="可选">
+                        <input type="text" id="setNotifyMailTo" placeholder="me@example.com">
+                    </div>
+                    <div class="set-actions">
+                        <button class="btn primary" id="btnSaveNotify" type="button">保存设置</button>
+                        <button class="btn" id="btnTestNotifyWebhook" type="button">测试 Webhook</button>
+                        <button class="btn" id="btnTestNotifyMail" type="button">测试邮件</button>
+                    </div>
+                    <div id="setNotifyHint" class="muted small"></div>
                 </div>
                 <div class="set-card">
                     <h3>门禁访问密码</h3>
@@ -618,7 +675,37 @@
             <button class="modal-x" id="evSnapshotClose" aria-label="关闭快照">×</button>
         </div>
         <img id="evSnapshotImg" alt="事件快照">
-        <div class="modal-foot"><button class="btn" id="evSnapshotCloseBtn" type="button">关闭</button></div>
+        <div class="modal-foot">
+            <div class="set-actions">
+                <button class="btn primary" id="btnEvSnapshotReplay" type="button">跳转回放该时刻</button>
+                <button class="btn" id="evSnapshotCloseBtn" type="button">关闭</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- v1.2.19 检测排除区域（ROI）编辑器 -->
+<div class="modal-mask" id="roiModal" hidden>
+    <div class="modal roi-modal">
+        <div class="modal-head">
+            <span id="roiTitle">框选排除区域</span>
+            <button class="modal-x" id="roiClose" type="button" aria-label="关闭">×</button>
+        </div>
+        <div class="modal-body">
+            <p class="muted small">拖拽框选不需要侦测的区域（可框多个）；矩形内的画面变化不会产生事件。保存后立即生效，无需重启。</p>
+            <div class="roi-stage" id="roiStage">
+                <img id="roiImg" alt="正在加载最近画面…">
+                <canvas id="roiCanvas"></canvas>
+            </div>
+            <div id="roiZones" class="roi-zone-list"></div>
+        </div>
+        <div class="modal-foot">
+            <div class="set-actions">
+                <button class="btn primary" id="btnRoiSave" type="button">保存并生效</button>
+                <button class="btn soft" id="btnRoiClear" type="button">清空全部</button>
+                <button class="btn" id="roiCancel" type="button">取消</button>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -627,7 +714,7 @@
 <footer class="app-footer">i-NVR · <span id="appVersion">v?</span></footer>
 
 <script src="vendor/hls.min.js"></script>
-<script src="watchdog.js?v=33"></script>
-<script src="app.js?v=33"></script>
+<script src="watchdog.js?v=34"></script>
+<script src="app.js?v=34"></script>
 </body>
 </html>

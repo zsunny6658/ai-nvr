@@ -2,6 +2,7 @@ package com.invr.web.api;
 
 import com.invr.store.AppSettingsStore;
 import com.invr.store.MotionSettings;
+import com.invr.store.MotionZone;
 import com.invr.web.service.MotionDetector;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -11,6 +12,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -89,6 +91,42 @@ public class MotionController {
     @PostMapping("/sample/{did}")
     public MotionDetector.SampleResult sample(@PathVariable String did) {
         return detector.sample(did);
+    }
+
+    // ===================== 检测排除区域（v1.2.19 ROI） =====================
+
+    /** 某设备的排除区域与映射后的有效侦测块数。 */
+    @GetMapping("/zones/{did}")
+    public Map<String, Object> zones(@PathVariable String did) {
+        List<MotionZone> zones = settingsStore.excludeZonesFor(did);
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("did", did);
+        m.put("zones", zones);
+        m.put("excludedBlocks", 64 - Long.bitCount(MotionZone.mask64(zones)));
+        return m;
+    }
+
+    /** 保存某设备的排除区域；空列表表示清除、恢复全画面侦测。 */
+    public record ZonesRequest(List<MotionZone> zones) {
+    }
+
+    @PutMapping("/zones/{did}")
+    public Map<String, Object> updateZones(@PathVariable String did,
+                                           @RequestBody(required = false) ZonesRequest req) {
+        List<MotionZone> zones = req == null || req.zones() == null
+                ? List.of() : req.zones();
+        try {
+            settingsStore.saveExcludeZones(did, zones);
+        } catch (IllegalArgumentException e) {
+            throw ApiException.badRequest(e.getMessage());
+        }
+        List<MotionZone> saved = settingsStore.excludeZonesFor(did);
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("did", did);
+        m.put("zones", saved);
+        m.put("excludedBlocks", 64 - Long.bitCount(MotionZone.mask64(saved)));
+        m.put("saved", true);
+        return m;
     }
 
     private static void requireRange(double v, double lo, double hi, String name) {

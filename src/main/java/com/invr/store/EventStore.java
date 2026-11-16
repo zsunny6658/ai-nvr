@@ -25,6 +25,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Consumer;
 
 /**
  * 告警事件存储：append-only JSONL + 内存索引 + 独立 JPEG 快照文件。
@@ -97,6 +98,11 @@ public class EventStore {
     private final Map<String, Boolean> brokenCache = new java.util.HashMap<>();
     private long nextId = 1;
     private long lineCount = 0;
+    /**
+     * 事件新增监听（v1.2.19 通知推送）：在 {@link #add} 内同步回调。
+     * 监听方必须自行异步化并吞掉异常，且不得回调本类的写方法（当前持锁）。
+     */
+    private volatile Consumer<AlarmEvent> addListener;
 
     public EventStore() {
         this(DataDir.get());
@@ -140,7 +146,20 @@ public class EventStore {
                 false, null, detections == null ? List.of() : List.copyOf(detections));
         events.put(id, event);
         append(Map.of("op", "add", "event", event));
+        Consumer<AlarmEvent> l = addListener;
+        if (l != null) {
+            try {
+                l.accept(event);
+            } catch (RuntimeException e) {
+                log.warn("事件监听回调失败 id={}: {}", id, e.toString());
+            }
+        }
         return event;
+    }
+
+    /** 注册新增事件监听（重复调用覆盖前者）；传 null 取消。供通知推送等出向通道使用。 */
+    public void setAddListener(Consumer<AlarmEvent> listener) {
+        this.addListener = listener;
     }
 
     /** 标记已处理 / 取消处理；返回更新后的事件，不存在返回空。 */

@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -57,6 +58,13 @@ public class AppSettingsStore {
     private static final String KEY_PTZ_MODE = "ptzMode";
     /** 运动侦测参数（子对象，只存与默认值不同的项）。 */
     private static final String KEY_MOTION = "motion";
+    /**
+     * 运动侦测按设备排除区域：{@code {did: [{x,y,w,h}, ...]}}，坐标为画面归一化比例。
+     * v1.2.19：排除区内的 8×8 哈希块不参与帧差比较（见 {@link MotionZone#mask64}）。
+     */
+    private static final String KEY_MOTION_EXCLUDE_ZONES = "motionExcludeZones";
+    /** 事件通知推送（子对象，只存与默认值不同的项）。v1.2.19 新增。 */
+    private static final String KEY_NOTIFY = "notify";
 
     private static final TypeReference<LinkedHashMap<String, Object>> MAP_TYPE = new TypeReference<>() {};
 
@@ -341,6 +349,148 @@ public class AppSettingsStore {
         if (value != defaultV) {
             m.put(key, value);
         }
+    }
+
+    // ===================== 事件通知推送（v1.2.19） =====================
+
+    /** 读取通知推送设置；未配置或字段缺失时逐项回落到 {@link NotificationSettings#DEFAULTS}。 */
+    @SuppressWarnings("unchecked")
+    public synchronized NotificationSettings notifySettings() {
+        NotificationSettings d = NotificationSettings.DEFAULTS;
+        Object v = all().get(KEY_NOTIFY);
+        if (!(v instanceof Map<?, ?> raw)) {
+            return d;
+        }
+        Map<String, Object> m = (Map<String, Object>) raw;
+        return new NotificationSettings(
+                bool(m, "enabled", d.enabled()),
+                strList(m.get("types"), d.types()),
+                intNum(m, "quietStartMin", d.quietStartMin()),
+                intNum(m, "quietEndMin", d.quietEndMin()),
+                str(m, "webhookUrl", d.webhookUrl()),
+                str(m, "webhookSecret", d.webhookSecret()),
+                bool(m, "mailEnabled", d.mailEnabled()),
+                str(m, "smtpHost", d.smtpHost()),
+                intNum(m, "smtpPort", d.smtpPort()),
+                bool(m, "smtpSsl", d.smtpSsl()),
+                str(m, "smtpUser", d.smtpUser()),
+                str(m, "smtpPass", d.smtpPass()),
+                str(m, "mailFrom", d.mailFrom()),
+                str(m, "mailTo", d.mailTo()));
+    }
+
+    /** 保存通知推送设置；与默认值相同的项不落盘。 */
+    public synchronized void saveNotify(NotificationSettings s) {
+        NotificationSettings v = s == null ? NotificationSettings.DEFAULTS : s;
+        NotificationSettings d = NotificationSettings.DEFAULTS;
+        Map<String, Object> m = all();
+        Map<String, Object> sub = new LinkedHashMap<>();
+        if (v.enabled() != d.enabled()) sub.put("enabled", v.enabled());
+        if (!v.types().equals(d.types())) sub.put("types", v.types());
+        putIfChanged(sub, "quietStartMin", v.quietStartMin(), d.quietStartMin());
+        putIfChanged(sub, "quietEndMin", v.quietEndMin(), d.quietEndMin());
+        if (!v.webhookUrl().equals(d.webhookUrl())) sub.put("webhookUrl", v.webhookUrl());
+        if (!v.webhookSecret().equals(d.webhookSecret())) sub.put("webhookSecret", v.webhookSecret());
+        if (v.mailEnabled() != d.mailEnabled()) sub.put("mailEnabled", v.mailEnabled());
+        if (!v.smtpHost().equals(d.smtpHost())) sub.put("smtpHost", v.smtpHost());
+        putIfChanged(sub, "smtpPort", v.smtpPort(), d.smtpPort());
+        if (v.smtpSsl() != d.smtpSsl()) sub.put("smtpSsl", v.smtpSsl());
+        if (!v.smtpUser().equals(d.smtpUser())) sub.put("smtpUser", v.smtpUser());
+        if (!v.smtpPass().equals(d.smtpPass())) sub.put("smtpPass", v.smtpPass());
+        if (!v.mailFrom().equals(d.mailFrom())) sub.put("mailFrom", v.mailFrom());
+        if (!v.mailTo().equals(d.mailTo())) sub.put("mailTo", v.mailTo());
+        if (sub.isEmpty()) {
+            m.remove(KEY_NOTIFY);
+        } else {
+            m.put(KEY_NOTIFY, sub);
+        }
+        persist(m);
+    }
+
+    private static String str(Map<String, Object> m, String key, String fallback) {
+        Object v = m.get(key);
+        return v == null ? fallback : String.valueOf(v);
+    }
+
+    // ===================== 运动侦测排除区域（v1.2.19 ROI） =====================
+
+    /**
+     * 全部设备的排除区域快照（{@code {did: [zone...]}}）；未配置的设备不在结果里。
+     * 供侦测巡检每轮一次性读取，避免逐设备重复读设置文件。
+     */
+    public synchronized Map<String, List<MotionZone>> motionExcludeZones() {
+        Object v = all().get(KEY_MOTION_EXCLUDE_ZONES);
+        Map<String, List<MotionZone>> out = new LinkedHashMap<>();
+        if (v instanceof Map<?, ?> raw) {
+            for (Map.Entry<?, ?> e : raw.entrySet()) {
+                if (!(e.getValue() instanceof List<?> list)) {
+                    continue;
+                }
+                List<MotionZone> zones = new ArrayList<>();
+                for (Object o : list) {
+                    if (o instanceof Map<?, ?> rawZone) {
+                        Map<String, Object> z = new LinkedHashMap<>();
+                        for (Map.Entry<?, ?> ze : rawZone.entrySet()) {
+                            z.put(String.valueOf(ze.getKey()), ze.getValue());
+                        }
+                        zones.add(new MotionZone(
+                                num(z, "x", 0), num(z, "y", 0),
+                                num(z, "w", 0), num(z, "h", 0)));
+                    }
+                }
+                List<MotionZone> sanitized = MotionZone.sanitize(zones);
+                if (!sanitized.isEmpty()) {
+                    out.put(String.valueOf(e.getKey()), sanitized);
+                }
+            }
+        }
+        return out;
+    }
+
+    /** 某设备的排除区域；未配置返回空列表（全画面参与侦测）。 */
+    public synchronized List<MotionZone> excludeZonesFor(String did) {
+        return motionExcludeZones().getOrDefault(did, List.of());
+    }
+
+    /**
+     * 保存某设备的排除区域；空列表 / null 表示清除该设备配置、恢复全画面侦测。
+     * 总面积超过 90% 视为「框满全画面」，抛出异常拒绝保存。
+     */
+    public synchronized void saveExcludeZones(String did, List<MotionZone> zones) {
+        List<MotionZone> sanitized = MotionZone.sanitize(zones);
+        if (!sanitized.isEmpty() && MotionZone.totalArea(sanitized) > 0.90) {
+            throw new IllegalArgumentException("排除区域总面积超过画面 90%，请缩小范围；"
+                    + "如需关闭侦测请直接关闭运动侦测开关");
+        }
+        Map<String, Object> m = all();
+        Map<String, Object> all2 = new LinkedHashMap<>();
+        Object v = m.get(KEY_MOTION_EXCLUDE_ZONES);
+        if (v instanceof Map<?, ?> raw) {
+            for (Map.Entry<?, ?> e : raw.entrySet()) {
+                all2.put(String.valueOf(e.getKey()), e.getValue());
+            }
+        }
+        if (sanitized.isEmpty()) {
+            all2.remove(did);
+            if (all2.isEmpty()) {
+                m.remove(KEY_MOTION_EXCLUDE_ZONES);
+            } else {
+                m.put(KEY_MOTION_EXCLUDE_ZONES, all2);
+            }
+        } else {
+            List<Map<String, Object>> list = new ArrayList<>();
+            for (MotionZone z : sanitized) {
+                Map<String, Object> one = new LinkedHashMap<>();
+                one.put("x", z.x());
+                one.put("y", z.y());
+                one.put("w", z.w());
+                one.put("h", z.h());
+                list.add(one);
+            }
+            all2.put(did, list);
+            m.put(KEY_MOTION_EXCLUDE_ZONES, all2);
+        }
+        persist(m);
     }
 
     private static double num(Map<String, Object> m, String key, double fallback) {

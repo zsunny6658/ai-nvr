@@ -5,6 +5,7 @@ import com.invr.model.CameraDevice;
 import com.invr.store.AppSettingsStore;
 import com.invr.store.EventStore;
 import com.invr.store.MotionSettings;
+import com.invr.store.MotionZone;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
@@ -136,15 +137,28 @@ public class MotionDetector {
             log.debug("设备目录读取失败，本轮跳过巡检：{}", t.toString());
             return;
         }
+        // v1.2.19：每轮一次性读取排除区配置，逐设备映射为 8×8 哈希掩码（避免逐设备重复读文件）
+        Map<String, List<MotionZone>> zones;
+        try {
+            zones = settingsStore.motionExcludeZones();
+        } catch (Throwable t) {
+            zones = Map.of();
+        }
         for (CameraDevice d : targets) {
-            sampleOne(d.did(), cfg, now);
+            sampleOne(d.did(), cfg, now, MotionZone.mask64(zones.get(d.did())));
         }
     }
 
     /** 手动采样一台设备（真实参与状态机，可能落一条事件），用于调阈值时观察即时评分。 */
     public SampleResult sample(String did) {
         MotionSettings cfg = settingsStore.motion();
-        return sampleOne(did, cfg, clock.millis());
+        List<MotionZone> zones;
+        try {
+            zones = settingsStore.excludeZonesFor(did);
+        } catch (Throwable t) {
+            zones = List.of();
+        }
+        return sampleOne(did, cfg, clock.millis(), MotionZone.mask64(zones));
     }
 
     /** 云台动作后静默一段时间并重置帧差基准，避免转动过程被判成运动事件。 */
@@ -201,6 +215,7 @@ public class MotionDetector {
             one.put("lastSampleAt", s.lastSampleAtMs);
             one.put("lastEventAt", s.lastEventAtMs);
             one.put("lastMotionAt", s.lastMotionAtMs);
+            one.put("excludedBlocks", s.excludedBlocks);
             one.put("cooldownRemainingSec", remainingSec(s.lastEventAtMs + cfg.cooldownMs(), now));
             one.put("silentRemainingSec", remainingSec(s.silentUntilMs, now));
             one.put("lastError", s.lastError);
@@ -212,8 +227,9 @@ public class MotionDetector {
 
     // ===================== 判定核心 =====================
 
-    private SampleResult sampleOne(String did, MotionSettings cfg, long now) {
+    private SampleResult sampleOne(String did, MotionSettings cfg, long now, long mask) {
         State s = states.computeIfAbsent(did, k -> new State());
+        s.excludedBlocks = 64 - Long.bitCount(mask);
         byte[] jpeg;
         try {
             jpeg = frames.frame(did);
@@ -278,14 +294,25 @@ public class MotionDetector {
         // 连续确认永远不成立；而基准帧保持不变，持续偏离才会连续确认，缓慢光照漂移则因
         // 每帧低于阈值被基准跟随吸收。
         // 注意：64 bit 左移后最高位可能为 1 使 long 变负数，不能用 < 0 表示「无基准」
+        //
+        // v1.2.19 排除区域（ROI）：帧差只统计掩码内哈希块的汉明距离，排除区（树影、马路、
+        // 常亮屏幕等）不贡献变化分数。掩码为全 0（整幅画面都被排除）时视为无效配置，
+        // 不触发任何事件，仅透出提示避免静默失效。
         boolean firstFrame = !s.hasBaseline;
-        double score = firstFrame ? 0.0
-                : Long.bitCount(s.baselineBits ^ h.bits()) / (double) HASH_BITS;
+        int effectiveBlocks = Long.bitCount(mask);
+        double score;
+        if (firstFrame || effectiveBlocks == 0) {
+            score = 0.0;
+        } else {
+            score = Long.bitCount((s.baselineBits ^ h.bits()) & mask) / (double) effectiveBlocks;
+        }
         s.lastScore = score;
         s.lastLuma = h.luma();
         s.lastSampleAtMs = now;
         s.samples++;
-        s.lastError = "";
+        // 全画面被排除时透出提示，避免「框满全画面 = 静默失效」无人察觉
+        s.lastError = (!firstFrame && effectiveBlocks == 0)
+                ? "排除区域覆盖全画面，本帧未判定" : "";
 
         boolean silent = now < s.silentUntilMs;
         if (firstFrame || h.luma() < MIN_LUMA) {
@@ -431,6 +458,7 @@ public class MotionDetector {
         long triggered = 0;
         double lastScore = 0;
         int lastLuma = 0;
+        int excludedBlocks = 0;
         String lastError = "";
     }
 }
