@@ -188,6 +188,84 @@
         });
     }
 
+    /* ---------- v1.2.17 弹层历史栈（iPhone 飞牛 App / WKWebView 返回键） ----------
+       飞牛 App 左上角的返回键属于宿主 WebView：只有 canGoBack=true 时才会回退网页，
+       否则直接关闭整个应用容器（用户看到「退出 invr」）。预览/回放原本只是同页弹层，
+       不产生历史条目，用户一点返回就退出了应用；再次进入时 WebView 重建、内存会话
+       丢失，于是又要重新输入访问密码（v1.2.16 的记住解锁只是补了后半段）。
+       这里在打开弹层时压入一条历史记录，接管 popstate / pageshow 把宿主返回动作
+       收敛为「关闭当前弹层」，并在弹层头部提供应用内返回按钮作为宿主不支持时的兜底。 */
+    var OVERLAY_HASH = '#view';
+    var overlayHistoryDepth = 0;       // 0 = 首页条目；1 = 已压入弹层条目
+    var overlayHistoryBacking = false; // 区分「应用内关闭触发的 back」与「宿主返回」
+    var overlayKind = '';              // 'preview' | 'player'
+
+    function overlayBaseUrl() { return location.pathname + location.search; }
+    function clearOverlayHash() {
+        if (location.hash.indexOf(OVERLAY_HASH) !== 0) return;
+        try { history.replaceState(null, '', overlayBaseUrl()); } catch (e) { /* WebView 禁用历史 API */ }
+    }
+    function enterOverlayHistory(kind) {
+        if (overlayHistoryDepth) return;
+        var url = overlayBaseUrl() + OVERLAY_HASH + '=' + kind;
+        try {
+            if (location.hash.indexOf(OVERLAY_HASH) === 0 && history.state && history.state.invrOverlay) {
+                // 异常路径遗留的同名条目：直接覆盖，避免历史栈无限增长
+                history.replaceState({ invrOverlay: kind }, '', url);
+            } else {
+                history.pushState({ invrOverlay: kind }, '', url);
+            }
+            overlayHistoryDepth = 1;
+            overlayKind = kind;
+        } catch (e) { overlayHistoryDepth = 0; overlayKind = ''; }
+    }
+    /** 应用内关闭弹层：主动退掉那条历史记录，避免残留成「按返回没反应」。 */
+    function leaveOverlayHistory() {
+        overlayKind = '';
+        if (!overlayHistoryDepth) { clearOverlayHash(); return; }
+        overlayHistoryDepth = 0;
+        overlayHistoryBacking = true;
+        try { history.back(); }
+        catch (e) { overlayHistoryBacking = false; clearOverlayHash(); }
+        // 少数 WebView 对 pushState 条目不派发 popstate：超时后自行清理地址栏
+        setTimeout(function () {
+            if (overlayHistoryBacking) { overlayHistoryBacking = false; clearOverlayHash(); }
+        }, 500);
+    }
+    /** 门禁回锁等异常路径：不做异步回退，只静默复位状态。 */
+    function dropOverlayHistoryQuiet() {
+        overlayHistoryDepth = 0;
+        overlayHistoryBacking = false;
+        overlayKind = '';
+        clearOverlayHash();
+    }
+    function onOverlayHistoryBack() {
+        if (overlayHistoryBacking) {
+            // 由应用内 × / 返回按钮触发的 back：界面已关闭，只清理地址栏
+            overlayHistoryBacking = false;
+            clearOverlayHash();
+            return;
+        }
+        if (!overlayHistoryDepth) return;
+        var kind = overlayKind;
+        overlayHistoryDepth = 0;
+        overlayKind = '';
+        clearOverlayHash();
+        if (kind === 'preview' && !$('previewModal').hidden) {
+            stopPreviewOnly();
+            loadDevices(false);
+        } else if (kind === 'player' && !$('playerModal').hidden) {
+            stopPlayerOnly();
+        }
+    }
+    window.addEventListener('popstate', onOverlayHistoryBack);
+    window.addEventListener('pageshow', function () {
+        // 部分壳 App 从 bfcache 恢复文档：避免残留半开的弹层历史状态
+        if (overlayHistoryDepth && $('previewModal').hidden && $('playerModal').hidden) {
+            dropOverlayHistoryQuiet();
+        }
+    });
+
     /* ---------- 视图切换 ---------- */
     function stopPoll() {
         if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer = null; }
@@ -201,6 +279,9 @@
         $('topRight').hidden = true;
         stopPoll();
         if (!$('previewModal').hidden) stopPreviewOnly();
+        if (!$('playerModal').hidden) stopPlayerOnly();
+        // 门禁回锁 / 切换视图时同步复位弹层历史，避免留下「按返回没反应」的死条目
+        if (overlayHistoryDepth) dropOverlayHistoryQuiet();
         pausePb();
     }
     function showLogin() {
@@ -2461,6 +2542,7 @@
         loadLiveShareStatus(did);
         applyPreviewPlayback(did, withToken(c.hlsUrl));
         startLiveBadge();
+        enterOverlayHistory('preview');
     }
 
     /**
@@ -2570,6 +2652,7 @@
     }
     function closePreview() {
         stopPreviewOnly();
+        leaveOverlayHistory();
         loadDevices(false);
     }
 
@@ -2991,11 +3074,16 @@
         var v = $('playerVideo');
         v.src = withToken('api/recordings/' + encodeURIComponent(name));
         v.play().catch(function () {});
+        enterOverlayHistory('player');
     }
-    function closePlayer() {
+    function stopPlayerOnly() {
         $('playerModal').hidden = true;
         var v = $('playerVideo');
         v.pause(); v.removeAttribute('src'); v.load();
+    }
+    function closePlayer() {
+        stopPlayerOnly();
+        if (overlayKind === 'player') leaveOverlayHistory();
     }
 
     /* ---------- 时间轴回放 ---------- */
@@ -3620,7 +3708,9 @@
         });
 
         $('previewClose').addEventListener('click', closePreview);
+        $('btnPreviewBack').addEventListener('click', closePreview);
         $('playerClose').addEventListener('click', closePlayer);
+        $('btnPlayerBack').addEventListener('click', closePlayer);
         $('previewModal').addEventListener('click', function (e) { if (e.target === this) closePreview(); });
         $('playerModal').addEventListener('click', function (e) { if (e.target === this) closePlayer(); });
         $('btnCopyRtsp').addEventListener('click', function () { copyText($('previewRtsp').textContent); });
@@ -3651,6 +3741,8 @@
         bind();
         // 页脚版本号在锁屏页也要显示，故放在全局初始化里，而不是解锁后的 showApp()
         loadAbout();
+        // 带 #view=... 重新加载（分享链接 / bfcache 恢复）时不自动重开取流，只清标记
+        clearOverlayHash();
         // 一键解锁链接回跳：/?access_token=xxx，落盘令牌后清理地址栏（不依赖 Cookie，
         // iframe 中同样有效）
         var qs = new URLSearchParams(location.search);
