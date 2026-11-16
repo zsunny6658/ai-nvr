@@ -53,6 +53,8 @@ public class NotifyService {
     /** 投递执行器：生产为单线程守护线程 worker；同步模式（测试）直接在调用线程执行。 */
     private final Executor worker;
 
+    /** 主构造器：类存在多个构造器（另两个供测试注入），必须显式标注注入入口。 */
+    @org.springframework.beans.factory.annotation.Autowired
     public NotifyService(AppSettingsStore settingsStore, EventStore events) {
         this(settingsStore, events, new SmtpMailer());
     }
@@ -177,7 +179,7 @@ public class NotifyService {
                     .uri(URI.create(cfg.webhookUrl()))
                     .timeout(java.time.Duration.ofSeconds(8))
                     .header("Content-Type", "application/json; charset=utf-8")
-                    .header("User-Agent", "invr-notify/1.2.19")
+                    .header("User-Agent", "invr-notify/1.2")
                     .POST(HttpRequest.BodyPublishers.ofByteArray(body));
             if (!cfg.webhookSecret().isBlank()) {
                 rb.header("X-invr-Signature", "sha256=" + hmacSha256Hex(cfg.webhookSecret(), body));
