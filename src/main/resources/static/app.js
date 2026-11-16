@@ -2134,6 +2134,12 @@
     function goManualDir() {
         var p = $('dirManualPath').value.trim();
         if (!p) { $('dirStatus').textContent = '请先输入绝对路径，如 /vol2/1000/cam'; return; }
+        // v1.2.23：漏写前导 / 时自动补齐（后端会按进程工作目录拼接相对路径，必错）；
+        // 去掉末尾多余斜杠。Windows 盘符形态不处理（fnOS 场景不存在）。
+        if (p.charAt(0) !== '/' && !/^[A-Za-z]:[\\/]/.test(p)) { p = '/' + p; }
+        p = p.replace(/\/+$/, '');
+        if (p === '') { p = '/'; }
+        $('dirManualPath').value = p;
         loadDir(p, $('dirManualCreate').checked);
     }
 

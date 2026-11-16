@@ -20,6 +20,13 @@ JAVA_OPTS="${JAVA_OPTS} -Dfile.encoding=UTF-8 -Dsun.stdout.encoding=UTF-8 -Dsun.
 # 避免容器内 /dev/random 熵不足阻塞 SecureRandom 初始化。二者都不改变应用行为，
 # 也不受 install_callback 重写 jvm.conf 影响（始终在最后追加）。
 JAVA_OPTS="${JAVA_OPTS} -Xshare:auto -Djava.security.egd=file:/dev/urandom"
+# v1.2.23 修复：手动输入含中文的目录（如 /vol2/1000/影视/cam）时目录名全部变成 '?'。
+# 根因：fnOS 容器 locale 为 C/POSIX，JVM 启动时 sun.jnu.encoding 退化为 ANSI_X3.4-1968，
+# java.io.File / 环境变量（含 fnOS 注入的授权路径）中的非 ASCII 字符在 native 层全部被
+# 替换为 '?'。-Dsun.jnu.encoding 只改 Java 属性、改不了 native 层，必须在 java 启动前
+# 导出 UTF-8 locale 才有效。
+export LANG=C.UTF-8
+export LC_ALL=C.UTF-8
 
 SPRING_ARGS="--spring.config.additional-location=file:${TRIM_PKGETC}/ --spring.profiles.active=fnos"
 mkdir -p "${LOG_DIR}"

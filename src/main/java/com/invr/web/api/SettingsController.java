@@ -335,7 +335,17 @@ public class SettingsController {
 
         File dir;
         try {
-            dir = new File(path.trim()).getAbsoluteFile().getCanonicalFile();
+            // v1.2.23 手动输入容错：缺前导 / 的绝对路径自动补齐（如 vol2/1000/cam → /vol2/1000/cam），
+            // 否则 File.getAbsoluteFile() 会按进程 CWD（TRIM_PKGVAR）拼接出错误路径；
+            // Windows 盘符（C:\ 或 C:/）除外。末尾多余 / 一并去掉。
+            String p = path.trim();
+            if (!p.startsWith("/") && !p.matches("^[A-Za-z]:[\\\\/].*")) {
+                p = "/" + p;
+            }
+            while (p.length() > 1 && p.endsWith("/")) {
+                p = p.substring(0, p.length() - 1);
+            }
+            dir = new File(p).getAbsoluteFile().getCanonicalFile();
         } catch (IOException e) {
             throw ApiException.badRequest("路径无效：" + e.getMessage());
         }

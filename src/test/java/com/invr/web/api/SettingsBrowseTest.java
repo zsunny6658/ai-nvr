@@ -80,4 +80,28 @@ class SettingsBrowseTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.currentWritable").value(true));
     }
+
+    @Test
+    void missingLeadingSlashIsNormalizedToAbsolute() throws Exception {
+        // v1.2.23：手动输入漏写前导 / 时按绝对路径处理，不得按进程 CWD 拼接。
+        // 构造已存在的绝对目录，去掉首位 / 后作为参数传入，应返回同一目录。
+        Path dir = tmp.resolve("noslash");
+        Files.createDirectories(dir);
+        String abs = dir.toFile().getCanonicalPath();
+        String withoutSlash = abs.startsWith("/") ? abs.substring(1) : abs;
+        mvc().perform(get("/api/settings/browse")
+                        .param("path", withoutSlash))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.current").value(abs));
+    }
+
+    @Test
+    void trailingSlashesAreTrimmed() throws Exception {
+        Path dir = tmp.resolve("trail");
+        Files.createDirectories(dir);
+        mvc().perform(get("/api/settings/browse")
+                        .param("path", dir.toAbsolutePath() + "//"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.current").value(dir.toFile().getCanonicalPath()));
+    }
 }
