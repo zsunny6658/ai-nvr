@@ -42,6 +42,8 @@ public class AppSettingsStore {
     private static final String KEY_RETENTION_DAYS = "recordRetentionDays";
     /** v1.2.21 录像目录容量水位（占该卷总容量百分比），0/null=关闭循环覆盖。 */
     private static final String KEY_RECORD_MAX_PERCENT = "recordMaxPercent";
+    /** v1.2.22 RTSP 下行访问令牌（?t= 参数）；null/空=不鉴权。 */
+    private static final String KEY_RTSP_TOKEN = "rtspToken";
 
     private static final String KEY_HLS_TARGET_SEC = "hlsTargetSec";
     private static final String KEY_HLS_WINDOW = "hlsWindow";
@@ -146,6 +148,27 @@ public class AppSettingsStore {
     /** 保存 RTSP 端口；null / 非正数表示清除自定义、恢复默认。 */
     public void saveRtspPort(Integer port) {
         putInt(KEY_RTSP_PORT, port);
+    }
+
+    /** 已持久化的 RTSP 下行访问令牌；未设置 / 空白返回 null（不鉴权）。v1.2.22。 */
+    public String rtspToken() {
+        Object v = all().get(KEY_RTSP_TOKEN);
+        if (v == null) {
+            return null;
+        }
+        String s = String.valueOf(v).trim();
+        return s.isEmpty() ? null : s;
+    }
+
+    /** 保存 RTSP 下行访问令牌；null / 空白表示清除（恢复不鉴权）。 */
+    public void saveRtspToken(String token) {
+        Map<String, Object> m = all();
+        if (token == null || token.trim().isEmpty()) {
+            m.remove(KEY_RTSP_TOKEN);
+        } else {
+            m.put(KEY_RTSP_TOKEN, token.trim());
+        }
+        persist(m);
     }
 
     /** 已持久化的录像保留天数；未设置 / 非正数（0 表示永久保留）时返回 null，沿用配置默认。 */

@@ -74,7 +74,8 @@ public class DeviceController {
         m.put("recording", recordingService.isRecording(c.did()));
         m.put("previewing", hlsService.isPreviewing(c.did()));
         String rtspUrl = "rtsp://" + host + ":" + rtspServer.getPort() + "/" + c.did();
-        String tok = props.getRtspToken();
+        // v1.2.22：令牌运行时可在设置页更换，从 RtspServer 取当前值（回落配置文件）
+        String tok = rtspServer.getToken() != null ? rtspServer.getToken() : props.getRtspToken();
         if (tok != null && !tok.isEmpty()) {
             rtspUrl += "?t=" + tok;
         }

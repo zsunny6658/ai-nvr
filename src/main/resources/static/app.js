@@ -1473,6 +1473,11 @@
             $('setRtspInput').value = s.rtspPort;
             $('setRtspHint').textContent = '当前为' + (s.rtspCustomized ? '自定义' : '默认') + '端口，默认 ' + s.defaultRtspPort
                 + '。保存后立即切换，现有 RTSP 播放器会短暂断开，需用新地址重连。';
+            // v1.2.22 RTSP 访问令牌
+            $('setRtspTokenInput').value = '';
+            $('setRtspTokenHint').textContent = s.rtspTokenSet
+                ? '已启用令牌：RTSP 地址需带 ?t=令牌（设备卡片已自动拼接，可直接复制）。'
+                : '未启用令牌：任何能访问该端口的播放器都可以直接取流。';
             // 录像保留天数
             $('setRetentionInput').value = s.retentionDays;
             $('setRetentionHint').textContent = (s.retentionDays > 0)
@@ -1824,6 +1829,39 @@
         }
     }
 
+    /** v1.2.22 RTSP 访问令牌：设置 / 清除（输入 "-"），立即生效并持久化。 */
+    async function saveRtspToken() {
+        var t = $('setRtspTokenInput').value.trim();
+        var clearing = (t === '-' || t === '');
+        if (clearing) {
+            if (!confirm('确认清除 RTSP 访问令牌？清除后任何能访问该端口的播放器都可以直接取流。')) return;
+            t = '-';
+        } else if (t.length < 4 || t.length > 64 || /[\s/?#]/.test(t)) {
+            toast('令牌需为 4～64 个字符且不含空格 / ? #', 'err');
+            return;
+        } else if (!confirm('确认设置 RTSP 访问令牌？设置后 RTSP 播放地址需带 ?t=' + t + ' 才能取流。')) {
+            return;
+        }
+        var btn = $('btnSaveRtspToken');
+        btn.disabled = true;
+        try {
+            var s = await api('api/settings/rtsp', {
+                method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ rtspPort: parseInt($('setRtspInput').value, 10) || 8554, rtspToken: t })
+            });
+            toast(s.rtspTokenSet ? 'RTSP 访问令牌已生效，设备卡片的 RTSP 地址已自动带上令牌' : 'RTSP 访问令牌已清除', 'ok');
+            $('setRtspTokenInput').value = '';
+            await loadSettings();
+            loadDevices(false);
+        } catch (e) {
+            if (e.status === 401) { scheduleGateRelock(); return; }
+            toast('保存失败：' + e.message, 'err');
+            await loadSettings();
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
     async function saveWater() {
         var pct = parseInt($('setWaterInput').value, 10);
         if (isNaN(pct) || pct < 0 || pct > 95) {
@@ -2076,12 +2114,13 @@
         $('dirModal').hidden = true;
     }
 
-    async function loadDir(path) {
+    async function loadDir(path, create) {
         var box = $('dirList');
         box.innerHTML = '<div class="dir-empty">加载中…</div>';
         $('dirStatus').textContent = '';
         try {
             var q = path ? ('?path=' + encodeURIComponent(path)) : '';
+            if (create) { q += (q ? '&' : '?') + 'create=1'; }
             dirData = await api('api/settings/browse' + q);
             renderDir();
         } catch (e) {
@@ -2089,6 +2128,13 @@
             box.innerHTML = '';
             $('dirStatus').textContent = '无法打开该目录：' + e.message;
         }
+    }
+
+    /** v1.2.22 手动路径前往：fnOS 授权层级列举不到时，直接按绝对路径定位 / 创建。 */
+    function goManualDir() {
+        var p = $('dirManualPath').value.trim();
+        if (!p) { $('dirStatus').textContent = '请先输入绝对路径，如 /vol2/1000/cam'; return; }
+        loadDir(p, $('dirManualCreate').checked);
     }
 
     function renderDir() {
@@ -2674,6 +2720,30 @@
         h.textContent = text;
         $('previewLoading').hidden = true;
     }
+    /**
+     * v1.2.22 退出 iOS / Android WebView 的原生视频全屏层。
+     * 返回 true 表示该 video 正处于原生全屏（调用方需延迟销毁流，
+     * 否则 iOS 在全屏展示中销毁 video 会残留一个「僵尸全屏播放页」，
+     * 用户表现为：关掉预览后按返回，屏幕上又出现一个全屏播放器，再点一次叉才回到列表）。
+     */
+    function exitNativeFullscreen(video) {
+        if (!video) return false;
+        try {
+            if (document.fullscreenElement === video || document.webkitFullscreenElement === video) {
+                var f = document.exitFullscreen || document.webkitExitFullscreen;
+                if (f) { f.call(document); return true; }
+            }
+        } catch (e) { /* 继续尝试 webkit 私有接口 */ }
+        try {
+            if (video.webkitDisplayingFullscreen) { video.webkitExitFullscreen(); return true; }
+        } catch (e) { /* 忽略 */ }
+        return false;
+    }
+    /** 统一的视频流销毁：暂停 + 移除 src + reset。 */
+    function teardownVideoEl(video) {
+        if (!video) return;
+        try { video.pause(); video.removeAttribute('src'); video.load(); } catch (e) {}
+    }
     function stopPreviewOnly() {
         cancelPtzCompat();
         state.previewDid = null;
@@ -2687,13 +2757,18 @@
         stopPreviewWatchdog();
         stopLiveBadge();
         if (state.hls) { try { state.hls.destroy(); } catch (e) {} state.hls = null; }
-        video.pause();
-        video.removeAttribute('src');
-        video.load();
+        // v1.2.22：先退出原生全屏再销毁；刚退出全屏时延迟销毁，等 iOS 收回全屏层
+        if (exitNativeFullscreen(video)) {
+            setTimeout(function () { teardownVideoEl(video); }, 400);
+        } else {
+            teardownVideoEl(video);
+        }
         $('previewHint').hidden = true;
         $('previewLoading').hidden = true;
     }
     function closePreview() {
+        // 双击 / 触摸+click 重复触发守卫：避免二次 leaveOverlayHistory 退掉首页历史条目
+        if ($('previewModal').hidden && !overlayHistoryDepth) return;
         stopPreviewOnly();
         leaveOverlayHistory();
         loadDevices(false);
@@ -3489,9 +3564,15 @@
     function stopPlayerOnly() {
         $('playerModal').hidden = true;
         var v = $('playerVideo');
-        v.pause(); v.removeAttribute('src'); v.load();
+        // v1.2.22：与预览一致——先退原生全屏，刚退出时延迟销毁，避免僵尸全屏播放层
+        if (exitNativeFullscreen(v)) {
+            setTimeout(function () { teardownVideoEl(v); }, 400);
+        } else {
+            teardownVideoEl(v);
+        }
     }
     function closePlayer() {
+        if ($('playerModal').hidden && overlayKind !== 'player') return;
         stopPlayerOnly();
         if (overlayKind === 'player') leaveOverlayHistory();
     }
@@ -4020,6 +4101,7 @@
         $('btnRefreshDir').addEventListener('click', loadSettings);
         $('btnSaveSegment').addEventListener('click', saveSegment);
         $('btnSaveRtsp').addEventListener('click', saveRtsp);
+        $('btnSaveRtspToken').addEventListener('click', saveRtspToken);
         $('btnSaveRetention').addEventListener('click', saveRetention);
         $('btnSaveWater').addEventListener('click', saveWater);
         $('btnSaveHls').addEventListener('click', saveHls);
@@ -4068,6 +4150,8 @@
         $('dirConfirm').addEventListener('click', confirmDir);
         $('dirUp').addEventListener('click', function () { if (dirData.parent) loadDir(dirData.parent); });
         $('dirReload').addEventListener('click', function () { loadDir(dirData.current); });
+        $('dirGo').addEventListener('click', goManualDir);
+        $('dirManualPath').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); goManualDir(); } });
         $('dirModal').addEventListener('click', function (e) { if (e.target === this) closeDirModal(); });
 
         // 时间轴回放

@@ -53,4 +53,24 @@ class AppSettingsStoreTest {
         assertEquals(Integer.valueOf(30), new AppSettingsStore(dir).hlsIdleSec());
         assertEquals("1", new AppSettingsStore(dir).qualityFor("d1"));
     }
+
+    /** v1.2.22 RTSP 访问令牌：设置 / 重启读回 / 清除，且不影响其他键。 */
+    @Test
+    void rtspTokenPersistsAndCanBeCleared() {
+        AppSettingsStore store = new AppSettingsStore(dir);
+        assertNull(store.rtspToken());
+
+        store.saveRtspToken(" my-secret ");
+        assertEquals("my-secret", new AppSettingsStore(dir).rtspToken());
+
+        // 清除（null / 空白 / "-" 由调用方归一为 null）后其他设置不受影响
+        store.saveHls(3, 8, 30, true, false);
+        store.saveRtspToken(null);
+        assertNull(new AppSettingsStore(dir).rtspToken());
+        assertEquals(Integer.valueOf(30), new AppSettingsStore(dir).hlsIdleSec());
+
+        store.saveRtspToken("tok2");
+        store.saveRtspToken("   ");
+        assertNull(new AppSettingsStore(dir).rtspToken());
+    }
 }

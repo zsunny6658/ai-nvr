@@ -78,6 +78,7 @@ public class SettingsController {
         m.put("rtspPort", rtspServer.getPort());
         m.put("defaultRtspPort", props.getRtspPort());
         m.put("rtspCustomized", settingsStore.rtspPort() != null);
+        m.put("rtspTokenSet", rtspServer.getToken() != null && !rtspServer.getToken().isEmpty());
         m.put("hls", hlsService.hlsSettingsInfo());
         m.put("share", shareEventService.shareSettingsInfo());
         m.put("quality", qualityInfo());
@@ -188,13 +189,16 @@ public class SettingsController {
         return getSettings();
     }
 
-    /** 修改 RTSP 端口并立即重绑定；绑定失败时保留旧端口，且不落盘。 */
+    /** 修改 RTSP 端口并立即重绑定；绑定失败时保留旧端口，且不落盘。可同时更换访问令牌。 */
     @PutMapping("/settings/rtsp")
     public Map<String, Object> updateRtsp(@RequestBody(required = false) RtspRequest req) {
         int port = req == null ? -1 : req.rtspPort();
         if (port < 1024 || port > 65535) {
             throw ApiException.badRequest("RTSP 端口需在 1024～65535 之间");
         }
+        // v1.2.22 访问令牌：仅在请求体显式携带 rtspToken 字段时变更；
+        // "-" 或空串=清除（恢复不鉴权），非空=设置并立即生效（含取流地址拼接）。
+        boolean tokenChanged = req != null && req.rtspToken() != null;
         try {
             // 先在新端口绑定成功（rebind 内部保证失败时旧服务仍可用），再持久化
             rtspServer.rebind(port);
@@ -202,6 +206,19 @@ public class SettingsController {
             throw ApiException.badRequest(e.getMessage());
         }
         settingsStore.saveRtspPort(port == props.getRtspPort() ? null : port);
+        if (tokenChanged) {
+            String t = req.rtspToken().trim();
+            if (t.isEmpty() || "-".equals(t)) {
+                rtspServer.setToken(null);
+                settingsStore.saveRtspToken(null);
+            } else {
+                if (t.length() < 4 || t.length() > 64 || t.matches(".*[\\s/?#].*")) {
+                    throw ApiException.badRequest("令牌需为 4～64 个字符且不含空格 / ? # 等分隔符");
+                }
+                rtspServer.setToken(t);
+                settingsStore.saveRtspToken(t);
+            }
+        }
         return getSettings();
     }
 
@@ -268,9 +285,14 @@ public class SettingsController {
      * <p>path 为空时返回文件系统根（Windows 盘符 / Linux /）；否则返回该目录下的子目录，
      * 每个条目带 {@code writable} 标识（仅可写目录允许最终选择）。浏览器无法直接访问服务端
      * 文件系统，故由该接口代为浏览。</p>
+     *
+     * <p>v1.2.22：{@code create=1} 时，若 path 不存在则尝试逐级创建（要求父级可写），
+     * 配合目录选择器的「手动输入路径」，解决 fnOS 授权目录层级无法逐级列举时
+     * 用户知道路径却选不到的问题（如 /vol2/1000 下的子目录）。</p>
      */
     @GetMapping("/settings/browse")
-    public Map<String, Object> browse(@RequestParam(name = "path", required = false) String path) {
+    public Map<String, Object> browse(@RequestParam(name = "path", required = false) String path,
+                                      @RequestParam(name = "create", required = false) String create) {
         Map<String, Object> resp = new LinkedHashMap<>();
         File[] rootFiles = File.listRoots();
         List<Map<String, Object>> roots = new ArrayList<>();
@@ -317,7 +339,21 @@ public class SettingsController {
         } catch (IOException e) {
             throw ApiException.badRequest("路径无效：" + e.getMessage());
         }
-        if (!dir.exists() || !dir.isDirectory()) {
+        if (!dir.exists()) {
+            // v1.2.22 手动路径兜底：显式 create=1 且父级可写时自动逐级创建
+            boolean wantCreate = "1".equals(create) || "true".equalsIgnoreCase(create);
+            if (!wantCreate) {
+                throw ApiException.badRequest("目录不存在：" + dir.getAbsolutePath()
+                        + "（可在选择器中勾选「不存在时创建」后重试）");
+            }
+            try {
+                Files.createDirectories(dir.toPath());
+            } catch (IOException | SecurityException e) {
+                throw ApiException.badRequest("目录不存在且自动创建失败（父级可能不可写）："
+                        + dir.getAbsolutePath() + "：" + e.getMessage());
+            }
+        }
+        if (!dir.isDirectory()) {
             throw ApiException.badRequest("不是有效的目录：" + dir.getAbsolutePath());
         }
 
@@ -489,7 +525,7 @@ public class SettingsController {
     public record SegmentRequest(long segmentSec) {
     }
 
-    public record RtspRequest(int rtspPort) {
+    public record RtspRequest(int rtspPort, String rtspToken) {
     }
 
     public record RetentionRequest(int retentionDays) {

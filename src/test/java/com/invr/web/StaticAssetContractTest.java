@@ -30,7 +30,7 @@ class StaticAssetContractTest {
 
         assertTrue(html.contains("btnPreviewBack"), "预览弹层缺少应用内返回按钮");
         assertTrue(html.contains("btnPlayerBack"), "回放弹层缺少应用内返回按钮");
-        assertTrue(html.contains("v=35"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
+        assertTrue(html.contains("v=36"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
 
         assertTrue(js.contains("addEventListener('popstate'"), "未接管宿主返回键");
         assertTrue(js.contains("enterOverlayHistory('preview')"), "预览未建立历史条目");
@@ -76,5 +76,23 @@ class StaticAssetContractTest {
         assertTrue(js.contains("ev-repeat"), "缺少事件合并计数标记");
         assertTrue(css.contains(".live-grid"), "缺少宫格样式");
         assertTrue(css.contains(".tl-motion-mark"), "缺少变动高亮样式");
+    }
+
+    /** v1.2.22：目录选择器手动路径、原生全屏退出、RTSP 访问令牌的关键标记。 */
+    @Test
+    void manualDirAndFullscreenAndRtspTokenAssetsArePackaged() throws Exception {
+        String html = resource("index.html");
+        String js = resource("app.js");
+        String css = resource("style.css");
+
+        assertTrue(html.contains("dirManualPath"), "目录选择器缺少手动路径输入");
+        assertTrue(html.contains("dirManualCreate"), "缺少「不存在时创建」开关");
+        assertTrue(html.contains("setRtspTokenInput"), "缺少 RTSP 访问令牌输入");
+        assertTrue(js.contains("goManualDir"), "缺少手动路径前往逻辑");
+        assertTrue(js.contains("exitNativeFullscreen"), "缺少原生全屏退出");
+        assertTrue(js.contains("teardownVideoEl"), "缺少统一视频流销毁");
+        assertTrue(js.contains("saveRtspToken"), "缺少令牌保存逻辑");
+        assertTrue(js.contains("rtspToken"), "缺少令牌接口字段");
+        assertTrue(css.contains(".dir-manual"), "缺少手动路径行样式");
     }
 }

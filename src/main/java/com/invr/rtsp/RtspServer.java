@@ -34,7 +34,7 @@ public final class RtspServer {
     private final StreamHub hub;
     private final CameraConnector connector;
     /** RTSP 下行访问令牌；非空时所有请求须带 {@code ?t=<token>} 才放行。CLI 路径传 null（不鉴权）。 */
-    private final String rtspToken;
+    private volatile String rtspToken;
 
     private EventLoopGroup bossGroup;
     private EventLoopGroup workerGroup;
@@ -54,6 +54,16 @@ public final class RtspServer {
 
     public int getPort() {
         return port;
+    }
+
+    /** 当前 RTSP 访问令牌（可能为 null=不鉴权）。DeviceController 组装 rtspUrl 时取用。 */
+    public String getToken() {
+        return rtspToken;
+    }
+
+    /** 运行时更换访问令牌（立即生效，对已建立会话不追溯）；null/空=关闭鉴权。 */
+    public void setToken(String token) {
+        this.rtspToken = token == null || token.trim().isEmpty() ? null : token.trim();
     }
 
     public void start() throws InterruptedException {
@@ -76,7 +86,7 @@ public final class RtspServer {
                     protected void initChannel(SocketChannel ch) {
                         ch.pipeline()
                                 .addLast(new RtspRequestDecoder())
-                                .addLast(biz, new RtspServerHandler(hub, connector, rtspToken));
+                                .addLast(biz, new RtspServerHandler(hub, connector, RtspServer.this::getToken));
                     }
                 });
         return b.bind(listenPort).sync().channel();

@@ -303,6 +303,13 @@ body {
 .dir-current { flex: 1; min-width: 0; font-family: Consolas, monospace; font-size: 12px; color: var(--muted);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dir-roots { display: flex; gap: 6px; flex-wrap: wrap; padding: 10px 18px 0; }
+/* v1.2.22 手动路径输入行：fnOS 授权层级列举不到时按绝对路径直达 */
+.dir-manual { display: flex; gap: 8px; align-items: center; padding: 8px 18px 0; }
+.dir-manual input[type="text"] { flex: 1; min-width: 0; font-family: Consolas, monospace; font-size: 12px;
+    padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; }
+.dir-manual-create { display: flex; gap: 4px; align-items: center; white-space: nowrap;
+    font-size: 12px; color: var(--muted); cursor: pointer; }
+.dir-manual-create input { accent-color: var(--primary); }
 .dir-drive { font-family: Consolas, monospace; }
 .dir-crumbs { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; padding: 8px 18px 0;
     font-family: Consolas, monospace; font-size: 12px; }

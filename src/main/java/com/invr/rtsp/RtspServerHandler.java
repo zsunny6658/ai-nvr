@@ -25,8 +25,12 @@ public final class RtspServerHandler extends SimpleChannelInboundHandler<RtspReq
 
     private final StreamHub hub;
     private final CameraConnector connector;
-    /** 非空时，所有取流请求须带 {@code ?t=<token>} 且值匹配才放行；null/空表示不鉴权。 */
-    private final String rtspToken;
+    /**
+     * 非空时，所有取流请求须带 {@code ?t=<token>} 且值与 supplier 当前值匹配才放行；
+     * null 或 supplier 返回空串表示不鉴权。v1.2.22 改为 supplier：令牌可在设置页运行时更换，
+     * 无需重建 pipeline。
+     */
+    private final java.util.function.Supplier<String> tokenSupplier;
 
     private String did;
     private RtspStreamSink sink;
@@ -36,13 +40,24 @@ public final class RtspServerHandler extends SimpleChannelInboundHandler<RtspReq
     private boolean subscribed;
 
     public RtspServerHandler(StreamHub hub, CameraConnector connector) {
-        this(hub, connector, null);
+        this(hub, connector, (String) null);
     }
 
     public RtspServerHandler(StreamHub hub, CameraConnector connector, String rtspToken) {
+        this(hub, connector, rtspToken == null || rtspToken.isEmpty()
+                ? null : () -> rtspToken);
+    }
+
+    public RtspServerHandler(StreamHub hub, CameraConnector connector,
+                             java.util.function.Supplier<String> tokenSupplier) {
         this.hub = hub;
         this.connector = connector;
-        this.rtspToken = rtspToken == null ? "" : rtspToken;
+        this.tokenSupplier = tokenSupplier;
+    }
+
+    /** 当前生效的 RTSP 访问令牌；空串=不鉴权。 */
+    private String currentToken() {
+        return tokenSupplier == null ? "" : java.util.Objects.toString(tokenSupplier.get(), "");
     }
 
     @Override
@@ -86,8 +101,9 @@ public final class RtspServerHandler extends SimpleChannelInboundHandler<RtspReq
         }
     }
 
-    /** 令牌鉴权：未配置则不限制；已配置则要求 URI 上的 {@code ?t=<token>} 与配置值恒定时间匹配。 */
+    /** 令牌鉴权：未配置则不限制；已配置则要求 URI 上的 {@code ?t=<token>} 与当前令牌恒定时间匹配。 */
     private boolean tokenAllowed(RtspRequest req) {
+        String rtspToken = currentToken();
         if (rtspToken.isEmpty()) {
             return true;
         }
