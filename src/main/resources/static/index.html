@@ -9,15 +9,15 @@
     <!-- 相对 base：直连根路径解析到 /，fnOS 网关 /app/{appname}/ 下解析到该前缀；资源/API 全部用相对路径 -->
     <base href="./">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230891b2'/%3E%3C/svg%3E">
-    <title>iNvr · 小米摄像头 NVR</title>
-    <link rel="stylesheet" href="style.css?v=37">
+    <title>aiNVR · AI 增强摄像头 NVR</title>
+    <link rel="stylesheet" href="style.css?v=38">
 </head>
 <body>
 <header class="topbar">
     <div class="brand">
         <span class="brand-dot"></span>
-        <span class="brand-name">iNvr</span>
-        <span class="brand-sub">小米摄像头 NVR</span>
+        <span class="brand-name">aiNVR</span>
+        <span class="brand-sub">AI 增强摄像头 NVR</span>
     </div>
     <div class="top-right" id="topRight" hidden>
         <span class="user-chip" id="userChip"></span>
@@ -66,7 +66,7 @@
     <section id="setupView" class="login-wrap" hidden>
         <div class="login-card">
             <h1>设置访问密码</h1>
-            <p class="muted">米家账号已连接。首次使用请为本系统设置一个访问密码，此后每次打开 iNvr 都需输入该密码才能进入。密码以 PBKDF2 加盐哈希保存在本机，不存明文。</p>
+            <p class="muted">米家账号已连接。首次使用请为本系统设置一个访问密码，此后每次打开 aiNVR 都需输入该密码才能进入。密码以 PBKDF2 加盐哈希保存在本机，不存明文。</p>
             <label>访问密码（至少 6 位）</label>
             <input type="password" id="setupPw1" autocomplete="new-password" placeholder="设置访问密码">
             <label>确认访问密码</label>
@@ -80,7 +80,7 @@
     <section id="lockView" class="login-wrap" hidden>
         <div class="login-card">
             <h1>输入访问密码</h1>
-            <p class="muted">iNvr 已受访问密码保护，请输入访问密码解锁进入。</p>
+            <p class="muted">aiNVR 已受访问密码保护，请输入访问密码解锁进入。</p>
             <label>访问密码</label>
             <input type="password" id="lockPw" autocomplete="current-password" placeholder="请输入访问密码">
             <button class="btn primary block" id="btnUnlock">解锁进入</button>
@@ -772,7 +772,7 @@
 <footer class="app-footer">i-NVR · <span id="appVersion">v?</span></footer>
 
 <script src="vendor/hls.min.js"></script>
-<script src="watchdog.js?v=37"></script>
-<script src="app.js?v=37"></script>
+<script src="watchdog.js?v=38"></script>
+<script src="app.js?v=38"></script>
 </body>
 </html>
