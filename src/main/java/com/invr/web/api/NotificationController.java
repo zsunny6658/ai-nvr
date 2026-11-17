@@ -104,7 +104,7 @@ public class NotificationController {
                 out.put("mail", "邮件通道未就绪（需要开启并填写 SMTP 服务器与收件人）");
             } else {
                 String body = "这是 invr 事件通知的测试邮件。\n\n—— invr 网络录像服务";
-                out.put("mail", mailer.send(cfg, "[invr] " + title, body));
+                out.put("mail", mailer.send(cfg, "[aiNVR] " + title, body));
             }
         }
         out.put("ok", true);

@@ -52,6 +52,14 @@
             <version>${okhttp.version}</version>
         </dependency>
 
+        <!-- v2.1.0 A2 本地 AI 检测：ONNX Runtime 推理（MIT），运行 SSD-MobileNetV1（MIT，ONNX Model Zoo）
+             对事件快照做本地人/车/宠物分类。全平台 natives 约 93MB，启动仅解压当前平台的一份。 -->
+        <dependency>
+            <groupId>com.microsoft.onnxruntime</groupId>
+            <artifactId>onnxruntime</artifactId>
+            <version>1.20.0</version>
+        </dependency>
+
         <!-- JSON -->
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>

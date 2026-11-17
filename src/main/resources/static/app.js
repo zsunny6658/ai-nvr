@@ -49,7 +49,8 @@
             zoom: 24, winStart: 0, dayStart: 0, winDur: 86400000,
             segs: [], idx: -1, curStart: 0, pendingOffset: null,
             motionMs: [],
-            liveTimer: null, liveBusy: false
+            liveTimer: null, liveBusy: false,
+            loop: 'off' // v2.1.0 循环播放：off | seg（单段）| day（当天）
         }
     };
 
@@ -1403,7 +1404,7 @@
             var url = URL.createObjectURL(blob);
             var a = document.createElement('a');
             a.href = url;
-            a.download = 'invr-recordings-' + fileStamp() + '.zip';
+            a.download = 'ainvr-recordings-' + fileStamp() + '.zip';
             document.body.appendChild(a);
             a.click();
             a.remove();
@@ -1472,6 +1473,14 @@
             $('setSegmentInput').value = s.segmentSec;
             $('setSegmentHint').textContent = (s.segmentCustomized ? '当前为自定义值，默认 ' + s.defaultSegmentSec + ' 秒。' : '当前为默认值。')
                 + '保存后正在录制的分段会封段并按新时长续录。';
+            // 本地 AI 检测
+            var ai = s.ai || {};
+            $('setAiEnabled').checked = ai.enabled !== false;
+            $('setAiMinScore').value = ai.minScore != null ? ai.minScore : 0.5;
+            $('setAiHint').textContent = '模型：' + (ai.modelAvailable === false ? '不可用（重启应用重试）' : '已内置（SSD-MobileNetV1，离线推理）')
+                + '；置信度阈值 0.3～0.9，低于阈值的目标不计类型。'
+                + (ai.pending > 0 ? ' 待分类 ' + ai.pending + ' 条。' : '');
+
             // RTSP 端口
             $('setRtspInput').value = s.rtspPort;
             $('setRtspHint').textContent = '当前为' + (s.rtspCustomized ? '自定义' : '默认') + '端口，默认 ' + s.defaultRtspPort
@@ -3847,8 +3856,16 @@
 
     function pbNextSeg() {
         var pb = state.pb;
+        // v2.1.0 循环播放：单段=重放当前段；当天=最后一段后回到第一段
+        if (pb.loop === 'seg' && pb.idx >= 0) {
+            loadSeg(pb.idx, 0);
+            return;
+        }
         if (pb.idx + 1 < pb.segs.length) {
             loadSeg(pb.idx + 1, 0);
+            if (pb.zoom !== 24) { computeWin(true); renderTimeline(); }
+        } else if (pb.loop === 'day' && pb.segs.length > 0) {
+            loadSeg(0, 0);
             if (pb.zoom !== 24) { computeWin(true); renderTimeline(); }
         } else {
             toast('已到当天最后一段', 'ok');
@@ -4116,6 +4133,63 @@
         $('btnSaveHls').addEventListener('click', saveHls);
         $('btnSaveShare').addEventListener('click', saveShare);
         $('btnSavePw').addEventListener('click', changeAccessPassword);
+        $('btnSaveAi').addEventListener('click', saveAi);
+
+        /* v2.1.0 本地 AI 检测设置 */
+        async function saveAi() {
+            var btn = $('btnSaveAi');
+            btn.disabled = true;
+            try {
+                var body = JSON.stringify({
+                    enabled: $('setAiEnabled').checked,
+                    minScore: parseFloat($('setAiMinScore').value) || 0.5
+                });
+                await api('api/settings/ai', { method: 'PUT', body: body });
+                toast('AI 检测设置已保存', 'ok');
+                await loadSettings();
+            } catch (e) {
+                if (e.status === 401) { scheduleGateRelock(); return; }
+                toast('保存失败：' + e.message, 'err');
+                await loadSettings();
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        /* v2.1.0 备份与恢复 */
+        $('btnBackupExport').addEventListener('click', function () {
+            // 用 <a download> 下载；withToken 满足门禁签名
+            var a = document.createElement('a');
+            a.href = withToken('api/settings/export');
+            a.download = '';
+            document.body.appendChild(a); a.click(); a.remove();
+            var st = $('backupStatus');
+            if (st) { st.textContent = '已开始下载备份文件（含敏感信息，请妥善保管）。'; }
+        });
+        $('backupImportFile').addEventListener('change', async function () {
+            var file = this.files && this.files[0];
+            if (!file) return;
+            var st = $('backupStatus');
+            if (!confirm('导入将覆盖当前全部应用设置、共享看板与访问密码凭据（导入后访问密码以备份文件中的为准），确定继续？')) {
+                this.value = '';
+                return;
+            }
+            try {
+                var text = await file.text();
+                var data = JSON.parse(text);
+                var res = await api('api/settings/import', { method: 'POST', body: JSON.stringify(data) });
+                if (st) { st.textContent = '导入成功，设置已生效。'; }
+                toast('配置导入成功', 'ok');
+                await loadSettings();
+                loadDevices(false);
+            } catch (e) {
+                if (e.status === 401) { scheduleGateRelock(); return; }
+                toast('导入失败：' + e.message, 'err');
+                if (st) { st.textContent = '导入失败：' + e.message; }
+            } finally {
+                this.value = '';
+            }
+        });
 
         // 按设备清晰度 / 云台命令格式
         $('btnRefreshQuality').addEventListener('click', loadSettings);
@@ -4220,6 +4294,50 @@
             pv.addEventListener('timeupdate', function () { updateCursor(); updateMeta(); autoFollow(); });
             pv.addEventListener('ended', pbNextSeg);
             $('pbSpeed').addEventListener('change', function () { applyPbRate(); });
+            $('pbLoop').addEventListener('change', function () {
+                state.pb.loop = this.value;
+                toast('循环：' + (this.value === 'seg' ? '单段循环' : this.value === 'day' ? '当天循环' : '关闭'), 'ok');
+            });
+
+            /* v2.1.0 回放键盘快捷键：仅在回放页可见且焦点不在输入控件时生效。
+               空格=播放/暂停；←/→=±5 秒（段内裁剪，到段首/尾则切相邻段）；Home/End=跳到当天第一/最后一段。 */
+            function pbKeysActive() {
+                var a = document.activeElement;
+                if (a && (a.tagName === 'INPUT' || a.tagName === 'SELECT' || a.tagName === 'TEXTAREA' || a.isContentEditable)) return false;
+                return $('tab-playback').hidden === false;
+            }
+            document.addEventListener('keydown', function (e) {
+                if (!pbKeysActive()) return;
+                var v2 = $('pbVideo');
+                function seekDelta(delta) {
+                    if (pb.idx < 0 || !v2.src) return;
+                    var t = (v2.currentTime || 0) + delta;
+                    if (t < 0) {
+                        if (pb.idx > 0) { loadSeg(pb.idx - 1, Math.max(0, (pb.segs[pb.idx - 1].durMs / 1000) - 0.5)); }
+                        return;
+                    }
+                    var dur = v2.duration || 0;
+                    if (dur && t > dur - 0.3) { pbNextSeg(); return; }
+                    v2.currentTime = t;
+                }
+                switch (e.key) {
+                    case ' ':
+                        e.preventDefault();
+                        if (pb.idx < 0 || !v2.src) return;
+                        if (v2.paused) { v2.play().catch(function () {}); } else { v2.pause(); }
+                        break;
+                    case 'ArrowLeft': e.preventDefault(); seekDelta(-5); break;
+                    case 'ArrowRight': e.preventDefault(); seekDelta(5); break;
+                    case 'Home':
+                        e.preventDefault();
+                        if (pb.segs.length) { loadSeg(0, 0); }
+                        break;
+                    case 'End':
+                        e.preventDefault();
+                        if (pb.segs.length) { loadSeg(pb.segs.length - 1, 0); }
+                        break;
+                }
+            });
         })();
 
         /** v2.0.1 一级导航收敛为 4 个：摄像头 / 回放 / 事件告警 / 设置（看板并入设置、录像文件并入回放）。 */

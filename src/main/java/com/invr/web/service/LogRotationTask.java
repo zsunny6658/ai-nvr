@@ -122,7 +122,7 @@ public class LogRotationTask {
         }
         try (RandomAccessFile raf = new RandomAccessFile(logFile.toFile(), "rw")) {
             raf.setLength(0);
-            raf.write(("[invr] app.log 于超限（原 " + (size / 1024 / 1024)
+            raf.write(("[aiNVR] app.log 于超限（原 " + (size / 1024 / 1024)
                     + "MB）后截断，保留最近上下文；更早内容见 app.log.1.gz（如存在）\n")
                     .getBytes(StandardCharsets.UTF_8));
             raf.write(body);

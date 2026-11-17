@@ -65,7 +65,7 @@ class LogRotationTaskTest {
         }
         assertTrue(head.contains("日志内容"), "归档应含日志正文");
         String current = Files.readString(log);
-        assertTrue(current.contains("[invr] app.log"), "截断后文件头有轮转说明");
+        assertTrue(current.contains("[aiNVR] app.log"), "截断后文件头有轮转说明");
     }
 
     @Test

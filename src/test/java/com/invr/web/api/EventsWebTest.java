@@ -49,7 +49,7 @@ class EventsWebTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.total").value(3))
                 .andExpect(jsonPath("$.list[0].id").value(3))
-                .andExpect(jsonPath("$.list[0].typeName").value("人形检测"));
+                .andExpect(jsonPath("$.list[0].typeName").value("AI 人形检测"));
 
         mvc.perform(get("/api/events").param("did", "d1").param("limit", "1"))
                 .andExpect(status().isOk())

@@ -3,18 +3,26 @@ package com.invr.web.api;
 import com.invr.hub.StreamHub;
 import com.invr.miss.MissCommands;
 import com.invr.model.CameraDevice;
+import com.invr.model.ShareBoard;
 import com.invr.rtsp.RtspServer;
 import com.invr.store.AccessKeyStore;
 import com.invr.store.AppSettingsStore;
+import com.invr.store.ShareBoardStore;
 import com.invr.web.config.NvrProperties;
+import com.invr.web.service.AiDetectService;
 import com.invr.web.service.DeviceCatalog;
 import com.invr.web.service.DeviceProbe;
 import com.invr.web.service.HlsService;
 import com.invr.web.service.RecordingService;
 import com.invr.web.service.ShareEventService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -48,15 +56,19 @@ public class SettingsController {
     private final NvrProperties props;
     private final AppSettingsStore settingsStore;
     private final AccessKeyStore accessKeyStore;
+    private final ShareBoardStore boardStore;
+    private final ObjectMapper mapper;
     private final HlsService hlsService;
     private final ShareEventService shareEventService;
     private final DeviceCatalog catalog;
     private final StreamHub streamHub;
     private final DeviceProbe deviceProbe;
+    private final AiDetectService aiDetectService;
 
     public SettingsController(RecordingService recordingService, RtspServer rtspServer,
                               NvrProperties props, AppSettingsStore settingsStore,
-                              AccessKeyStore accessKeyStore,
+                              AccessKeyStore accessKeyStore, ShareBoardStore boardStore,
+                              ObjectMapper mapper, AiDetectService aiDetectService,
                               HlsService hlsService, ShareEventService shareEventService,
                               DeviceCatalog catalog, StreamHub streamHub, DeviceProbe deviceProbe) {
         this.recordingService = recordingService;
@@ -64,11 +76,14 @@ public class SettingsController {
         this.props = props;
         this.settingsStore = settingsStore;
         this.accessKeyStore = accessKeyStore;
+        this.boardStore = boardStore;
+        this.mapper = mapper;
         this.hlsService = hlsService;
         this.shareEventService = shareEventService;
         this.catalog = catalog;
         this.streamHub = streamHub;
         this.deviceProbe = deviceProbe;
+        this.aiDetectService = aiDetectService;
     }
 
     /** 聚合返回全部设置（录像相关 + 实时 RTSP 端口）。 */
@@ -82,7 +97,24 @@ public class SettingsController {
         m.put("hls", hlsService.hlsSettingsInfo());
         m.put("share", shareEventService.shareSettingsInfo());
         m.put("quality", qualityInfo());
+        m.put("ai", aiDetectService.status());
         return m;
+    }
+
+    /** v2.1.0 本地 AI 检测设置：开关与置信度阈值（0.3～0.9）。 */
+    @org.springframework.web.bind.annotation.PutMapping("/settings/ai")
+    public Map<String, Object> updateAi(@RequestBody(required = false) AiRequest req) {
+        if (req == null) {
+            throw ApiException.badRequest("缺少参数");
+        }
+        if (req.minScore() != null && (req.minScore() < 0.3 || req.minScore() > 0.9)) {
+            throw ApiException.badRequest("置信度阈值需在 0.3～0.9 之间");
+        }
+        settingsStore.saveAi(req.enabled(), req.minScore());
+        return getSettings();
+    }
+
+    public record AiRequest(Boolean enabled, Double minScore) {
     }
 
     /** 按设备的取流清晰度 / 云台控制配置与实时状态。 */
@@ -559,5 +591,74 @@ public class SettingsController {
     }
 
     public record PtzModeRequest(String mode) {
+    }
+    /* ===================== v2.1.0 配置备份导出 / 导入 ===================== */
+
+    /**
+     * 导出全部应用配置为 JSON 下载：应用设置（含 RTSP 令牌 / 通知凭据等敏感字段）、
+     * 共享看板、访问密码凭据（PBKDF2 哈希，不可逆）。米家登录会话不导出（换机需重登）。
+     * 导出文件含敏感信息，提醒用户妥善保管。
+     */
+    @GetMapping("/settings/export")
+    public ResponseEntity<Map<String, Object>> exportConfig() {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("kind", "ainvr-config-backup");
+        out.put("backupVersion", 1);
+        out.put("exportedAt", java.time.OffsetDateTime.now().toString());
+        out.put("appSettings", settingsStore.all());
+        out.put("shareBoards", boardStore.all());
+        out.put("accessCredential", accessKeyStore.exportRecord());
+        String fname = "ainvr-config-" + java.time.LocalDate.now() + ".json";
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + fname + "\"")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(out);
+    }
+
+    /**
+     * 导入配置备份：应用设置整表替换（仅接受已知键）、共享看板整表替换、
+     * 访问密码凭据恢复（覆盖现有）。RTSP 端口有变化时立即重绑定（失败保留运行时端口）。
+     * 米家账号不受影响（会话与设备绑定关系在米家侧）。
+     */
+    @PostMapping("/settings/import")
+    public Map<String, Object> importConfig(@RequestBody Map<String, Object> body) {
+        if (!"ainvr-config-backup".equals(body.get("kind"))) {
+            throw ApiException.badRequest("不是有效的 aiNVR 配置备份文件");
+        }
+        Number ver = body.get("backupVersion") instanceof Number n ? n : null;
+        if (ver == null || ver.intValue() != 1) {
+            throw ApiException.badRequest("不支持的备份版本");
+        }
+        Map<String, Object> imported = new LinkedHashMap<>();
+        Object appSettings = body.get("appSettings");
+        if (appSettings instanceof Map) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> raw = (Map<String, Object>) appSettings;
+            java.util.Set<String> importedKeys = settingsStore.importAll(raw);
+            imported.put("appSettingsKeys", importedKeys.size());
+        }
+        Object boards = body.get("shareBoards");
+        if (boards instanceof List) {
+            List<ShareBoard> list = mapper.convertValue(boards,
+                    mapper.getTypeFactory().constructCollectionType(List.class, ShareBoard.class));
+            boardStore.replaceAll(list);
+            imported.put("shareBoards", list.size());
+        }
+        Object cred = body.get("accessCredential");
+        if (cred instanceof Map) {
+            accessKeyStore.importRecord(mapper.convertValue(cred, AccessKeyStore.Record.class));
+            imported.put("accessCredential", true);
+        }
+        // RTSP 端口随设置导入变化时立即重绑定；绑定失败保留当前端口（下次重启按设置值再试）
+        Integer port = settingsStore.rtspPort();
+        if (port != null && port > 0 && port != rtspServer.getPort()) {
+            try {
+                rtspServer.rebind(port);
+            } catch (IOException e) {
+                log.warn("导入配置后 RTSP 端口重绑定失败，保留当前端口 {}：{}", rtspServer.getPort(), e.toString());
+            }
+        }
+        log.info("配置导入完成：{}", imported.keySet());
+        return getSettings();
     }
 }

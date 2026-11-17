@@ -39,9 +39,12 @@ public class EventsController {
     private static final Map<String, String> TYPE_NAMES = Map.of(
             "motion", "运动侦测",
             "record", "自动录像",
-            "person", "人形检测",
-            "vehicle", "车辆检测",
+            "person", "AI 人形检测",
+            "vehicle", "AI 车辆检测",
+            "pet", "AI 宠物检测",
+            "other", "AI 其他目标",
             "offline", "设备离线",
+            "reconnect", "设备重连",
             "alarm", "设备告警");
 
     /**

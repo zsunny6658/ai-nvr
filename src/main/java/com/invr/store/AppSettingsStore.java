@@ -69,6 +69,8 @@ public class AppSettingsStore {
     private static final String KEY_MOTION_EXCLUDE_ZONES = "motionExcludeZones";
     /** 事件通知推送（子对象，只存与默认值不同的项）。v1.2.19 新增。 */
     private static final String KEY_NOTIFY = "notify";
+    /** v2.1.0 本地 AI 检测（子对象）：{enabled: bool, minScore: double}。 */
+    private static final String KEY_AI = "ai";
 
     private static final TypeReference<LinkedHashMap<String, Object>> MAP_TYPE = new TypeReference<>() {};
 
@@ -661,5 +663,74 @@ public class AppSettingsStore {
             // 设置保存失败必须让用户感知（区别于录像状态等尽力而为的持久化），向上抛出
             throw new RuntimeException("设置保存失败：" + e.getMessage(), e);
         }
+    }
+
+    /* ===================== v2.1.0 本地 AI 检测 ===================== */
+
+    /** 本地 AI 检测配置。 */
+    public record AiSettings(boolean enabled, double minScore) {
+    }
+
+    /** AI 检测设置；默认开启、置信度 0.5。模型不可用时服务侧自行跳过。 */
+    public AiSettings aiSettings() {
+        boolean enabled = true;
+        double minScore = 0.5;
+        Object v = all().get(KEY_AI);
+        if (v instanceof Map<?, ?> raw) {
+            Map<String, Object> m = (Map<String, Object>) raw;
+            enabled = bool(m, "enabled", true);
+            minScore = doubleNum(m, "minScore", 0.5);
+        }
+        return new AiSettings(enabled, minScore);
+    }
+
+    /** 保存 AI 检测设置；null 表示该项维持不变。 */
+    public synchronized void saveAi(Boolean enabled, Double minScore) {
+        Map<String, Object> m = all();
+        Object v = m.get(KEY_AI);
+        Map<String, Object> sub = v instanceof Map<?, ?> r
+                ? new LinkedHashMap<>((Map<String, Object>) r) : new LinkedHashMap<>();
+        if (enabled != null) {
+            sub.put("enabled", enabled);
+        }
+        if (minScore != null) {
+            sub.put("minScore", minScore);
+        }
+        if (sub.isEmpty()) {
+            m.remove(KEY_AI);
+        } else {
+            m.put(KEY_AI, sub);
+        }
+        persist(m);
+    }
+
+    private double doubleNum(Map<String, Object> m, String key, double def) {
+        return m.get(key) instanceof Number n ? n.doubleValue() : def;
+    }
+
+    /** v2.1.0 配置导出/导入允许写入的全部键（其余键一律丢弃，防止导入垃圾数据）。 */
+    private static final java.util.Set<String> IMPORTABLE_KEYS = java.util.Set.of(
+            KEY_RECORDING_DIR, KEY_SEGMENT_SEC, KEY_RTSP_PORT, KEY_RETENTION_DAYS,
+            KEY_RECORD_MAX_PERCENT, KEY_RTSP_TOKEN, KEY_HLS_TARGET_SEC, KEY_HLS_WINDOW,
+            KEY_HLS_IDLE_SEC, KEY_HLS_AUDIO, KEY_HLS_PREWARM, KEY_SHARE_EVENT_DURATION_SEC,
+            KEY_SHARE_SSE_HEARTBEAT_SEC, KEY_SHARE_PAGE_RELOAD_SEC, KEY_SHARE_CONFIG_POLL_SEC,
+            KEY_DEVICE_QUALITY, KEY_PTZ_MODE, KEY_MOTION, KEY_MOTION_EXCLUDE_ZONES, KEY_NOTIFY, KEY_AI);
+
+    /**
+     * v2.1.0 配置导入：只接受 {@link #IMPORTABLE_KEYS} 中的键，整体替换后原子落盘。
+     *
+     * @return 实际写入的键（供调用方提示与副作用处理，如 RTSP 端口重绑定）
+     */
+    public synchronized java.util.Set<String> importAll(Map<String, Object> data) {
+        Map<String, Object> cleaned = new LinkedHashMap<>();
+        if (data != null) {
+            for (String k : IMPORTABLE_KEYS) {
+                if (data.containsKey(k)) {
+                    cleaned.put(k, data.get(k));
+                }
+            }
+        }
+        persist(cleaned);
+        return cleaned.keySet();
     }
 }

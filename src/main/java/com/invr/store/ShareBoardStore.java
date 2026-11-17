@@ -111,6 +111,19 @@ public class ShareBoardStore {
         return removed;
     }
 
+    /** v2.1.0 配置导入：整表替换看板（清除现有后按导入顺序写入）。 */
+    public synchronized void replaceAll(java.util.List<ShareBoard> list) {
+        boards.clear();
+        if (list != null) {
+            for (ShareBoard b : list) {
+                if (b != null && b.id != null && !b.id.isBlank()) {
+                    boards.put(b.id, b);
+                }
+            }
+        }
+        persist();
+    }
+
     /* ===================== 凭据生成 ===================== */
 
     /** 生成看板内部 id（12 字节随机 base64url）。 */

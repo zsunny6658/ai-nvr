@@ -105,6 +105,9 @@ public class EventStore {
      * 监听方必须自行异步化并吞掉异常，且不得回调本类的写方法（当前持锁）。
      */
     private volatile Consumer<AlarmEvent> addListener;
+    /** v2.1.0 追加式监听列表（AI 精化等），与单槽 addListener 并存，仅在 add 路径触发。 */
+    private final java.util.concurrent.CopyOnWriteArrayList<Consumer<AlarmEvent>> extraListeners =
+            new java.util.concurrent.CopyOnWriteArrayList<>();
 
     public EventStore() {
         this(DataDir.get());
@@ -156,12 +159,26 @@ public class EventStore {
                 log.warn("事件监听回调失败 id={}: {}", id, e.toString());
             }
         }
+        for (Consumer<AlarmEvent> extra : extraListeners) {
+            try {
+                extra.accept(event);
+            } catch (RuntimeException e) {
+                log.warn("事件附加监听回调失败 id={}: {}", id, e.toString());
+            }
+        }
         return event;
     }
 
     /** 注册新增事件监听（重复调用覆盖前者）；传 null 取消。供通知推送等出向通道使用。 */
     public void setAddListener(Consumer<AlarmEvent> listener) {
         this.addListener = listener;
+    }
+
+    /** v2.1.0 追加一个新增事件监听（多播；与 setAddListener 并存）。仅在 add 路径（含合并未触发场景外的普通新增）触发。 */
+    public void addListener(Consumer<AlarmEvent> listener) {
+        if (listener != null) {
+            extraListeners.add(listener);
+        }
     }
 
     /**
@@ -238,6 +255,33 @@ public class EventStore {
         deleteSnapshot(e.snapshot());
         append(Map.of("op", "delete", "id", id));
         return true;
+    }
+
+    /**
+     * v2.1.0 AI 事件精化：本地 AI 检测完成后把事件类型从 motion 细化为
+     * person / vehicle / pet / other，并附带检测框列表。仅更新事件库，
+     * <strong>不触发 addListener</strong>（motion 阶段已通知过，精化不重复打扰）。
+     *
+     * @return 更新后的事件；id 不存在或事件已不是 motion 类型时返回空
+     */
+    public synchronized Optional<AlarmEvent> refine(long id, String type,
+                                                    List<Map<String, Object>> detections) {
+        AlarmEvent old = events.get(id);
+        if (old == null || !"motion".equals(old.type())) {
+            return Optional.empty();
+        }
+        AlarmEvent updated = new AlarmEvent(old.id(), old.did(), old.deviceName(),
+                nullToEmpty(type), old.level(), old.title(), old.score(), old.snapshot(),
+                old.createdAt(), old.handled(), old.handledAt(),
+                detections == null ? List.of() : List.copyOf(detections), old.repeat());
+        events.put(id, updated);
+        Map<String, Object> line = new LinkedHashMap<>();
+        line.put("op", "refine");
+        line.put("id", id);
+        line.put("type", nullToEmpty(type));
+        line.put("detections", detections == null ? List.of() : detections);
+        append(line);
+        return Optional.of(updated);
     }
 
     /**
@@ -575,6 +619,20 @@ public class EventStore {
                             }
                         }
                         case "delete" -> events.remove(id);
+                        case "refine" -> {
+                            // v2.1.0 AI 精化：仅 motion 事件可被细化为 person/vehicle/pet/other
+                            AlarmEvent old = events.get(id);
+                            if (old != null && "motion".equals(old.type())) {
+                                String t = String.valueOf(obj.getOrDefault("type", "other"));
+                                Object det = obj.getOrDefault("detections", List.of());
+                                List<Map<String, Object>> dl = mapper.convertValue(
+                                        det, new TypeReference<List<Map<String, Object>>>() {});
+                                events.put(id, new AlarmEvent(old.id(), old.did(), old.deviceName(),
+                                        t, old.level(), old.title(), old.score(), old.snapshot(),
+                                        old.createdAt(), old.handled(), old.handledAt(),
+                                        dl == null ? List.of() : List.copyOf(dl), old.repeat()));
+                            }
+                        }
                         default -> log.debug("忽略未知事件日志操作：{}", op);
                     }
                 } catch (Exception e) {

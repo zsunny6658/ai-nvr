@@ -10,7 +10,7 @@
     <base href="./">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230891b2'/%3E%3C/svg%3E">
     <title>aiNVR · AI 增强摄像头 NVR</title>
-    <link rel="stylesheet" href="style.css?v=41">
+    <link rel="stylesheet" href="style.css?v=42">
 </head>
 <body>
 <header class="topbar">
@@ -132,8 +132,10 @@
                     <option value="">全部类型</option>
                     <option value="motion">运动侦测</option>
                     <option value="record">自动录像</option>
-                    <option value="person">人形检测</option>
-                    <option value="vehicle">车辆检测</option>
+                    <option value="person">AI 人形检测</option>
+                    <option value="vehicle">AI 车辆检测</option>
+                    <option value="pet">AI 宠物检测</option>
+                    <option value="other">AI 其他目标</option>
                     <option value="offline">设备离线</option>
                     <option value="reconnect">设备重连</option>
                     <option value="alarm">设备告警</option>
@@ -203,6 +205,12 @@
                         <option value="4">4×</option>
                         <option value="8">8×</option>
                         <option value="16">16×</option>
+                    </select>
+                    <label class="muted" for="pbLoop">循环</label>
+                    <select id="pbLoop" class="select" title="循环播放">
+                        <option value="off" selected>关</option>
+                        <option value="seg">单段</option>
+                        <option value="day">当天</option>
                     </select>
                 </span>
             </div>
@@ -529,7 +537,29 @@
                     </div>
                     <p class="muted small" id="setShareHint"></p>
                 </div>
-                    <div class="set-card set-card-wide" id="tab-boards">
+                    <div class="set-card" id="aiCard">
+                    <h3>本地 AI 检测</h3>
+                    <p class="muted small">对运动侦测的事件快照做本地推理（SSD-MobileNetV1，完全离线），自动把事件细化为 AI 人形 / 车辆 / 宠物检测，事件页可按类型筛选。CPU 推理约数百毫秒/帧，不影响录像。</p>
+                    <div class="set-edit">
+                        <label class="ev-switch inline"><input type="checkbox" id="setAiEnabled"> 启用本地 AI 检测</label>
+                        <input type="number" id="setAiMinScore" min="0.3" max="0.9" step="0.05" title="置信度阈值">
+                        <button class="btn primary" id="btnSaveAi" type="button">保存</button>
+                    </div>
+                    <p class="muted small" id="setAiHint"></p>
+                </div>
+                <div class="set-card set-card-wide" id="backupCard">
+                    <h3>备份与恢复</h3>
+                    <p class="muted small">导出全部应用设置、共享看板与访问密码凭据（哈希，不可逆）为 JSON 文件；导入后立即生效。
+                        <strong>导出文件包含敏感信息（RTSP 令牌、通知凭据等），请妥善保管。</strong>米家登录会话不随备份迁移（换机需重新登录米家账号）。</p>
+                    <div class="set-edit">
+                        <button class="btn" id="btnBackupExport" type="button">导出配置备份</button>
+                        <label class="btn" for="backupImportFile" style="position:relative;overflow:hidden;">选择备份文件导入
+                            <input type="file" id="backupImportFile" accept="application/json,.json" style="position:absolute;inset:0;opacity:0;cursor:pointer;">
+                        </label>
+                    </div>
+                    <p class="muted small" id="backupStatus"></p>
+                </div>
+<div class="set-card set-card-wide" id="tab-boards">
             <div class="section-head">
                 <h3>共享看板</h3>
                 <div>
@@ -787,7 +817,7 @@
 <footer class="app-footer">i-NVR · <span id="appVersion">v?</span></footer>
 
 <script src="vendor/hls.min.js"></script>
-<script src="watchdog.js?v=41"></script>
-<script src="app.js?v=41"></script>
+<script src="watchdog.js?v=42"></script>
+<script src="app.js?v=42"></script>
 </body>
 </html>

@@ -30,8 +30,11 @@ class StaticAssetContractTest {
 
         assertTrue(html.contains("btnPreviewBack"), "预览弹层缺少应用内返回按钮");
         assertTrue(html.contains("btnPlayerBack"), "回放弹层缺少应用内返回按钮");
-        assertTrue(html.contains("v=41"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
+        assertTrue(html.contains("v=42"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
         assertTrue(html.contains("id=\"pbSpeed\""), "缺少回放倍速控件");
+        assertTrue(html.contains("id=\"pbLoop\""), "缺少回放循环控件");
+        assertTrue(html.contains("id=\"backupImportFile\""), "缺少配置备份导入控件");
+        assertTrue(html.contains("id=\"setAiEnabled\""), "缺少 AI 检测设置控件");
 
         assertTrue(js.contains("addEventListener('popstate'"), "未接管宿主返回键");
         assertTrue(js.contains("enterOverlayHistory('preview')"), "预览未建立历史条目");

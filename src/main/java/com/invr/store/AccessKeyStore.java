@@ -347,6 +347,23 @@ public class AccessKeyStore {
         }
     }
 
+    /** v2.1.0 配置导出：返回当前密码凭据（PBKDF2 哈希，不可逆）；未设置时返回 null。 */
+    public synchronized Record exportRecord() {
+        return record;
+    }
+
+    /** v2.1.0 配置导入：恢复导出的密码凭据（覆盖现有）。校验结构与算法标识后落盘。 */
+    public synchronized void importRecord(Record r) {
+        if (r == null || r.algo == null || !ALGO.equals(r.algo)
+                || r.salt == null || r.hash == null) {
+            throw new IllegalArgumentException("访问密码凭据格式无效");
+        }
+        persist(r);
+        record = r;
+        cachedSessionKey = null; // 旧密码派生的会话密钥全部作废
+        log.info("访问密码已从配置备份恢复");
+    }
+
     /** 尽量收紧文件权限（Windows 上仅尽力而为）。 */
     private void restrictOwnerOnly(Path path) {
         File file = path.toFile();

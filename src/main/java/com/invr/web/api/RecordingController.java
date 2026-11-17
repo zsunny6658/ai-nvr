@@ -114,7 +114,7 @@ public class RecordingController {
     public ResponseEntity<StreamingResponseBody> batchDownload(
             @RequestBody(required = false) BatchRequest req) {
         RecordingService.BatchPlan plan = recordingService.planZip(req == null ? null : req.names());
-        String filename = "invr-recordings-" + LocalDateTime.now().format(ZIP_TIME) + ".zip";
+        String filename = "ainvr-recordings-" + LocalDateTime.now().format(ZIP_TIME) + ".zip";
         StreamingResponseBody body = out -> {
             try {
                 int n = recordingService.writeZip(plan, out);

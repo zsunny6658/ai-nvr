@@ -115,7 +115,7 @@ public class NotifyService {
         if (!deliverable(cfg, e)) {
             return null;
         }
-        String subject = "[invr] " + e.deviceName() + "：" + e.title();
+        String subject = "[aiNVR] " + e.deviceName() + "：" + e.title();
         String body = renderBody(e);
         StringBuilder results = new StringBuilder();
 
