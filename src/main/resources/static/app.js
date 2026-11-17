@@ -1,4 +1,4 @@
-/* iNvr Web 单页逻辑：登录分步交互、设备、HLS 预览、录像管理 */
+/* aiNVR Web 单页逻辑：登录分步交互、设备、HLS 预览、录像管理 */
 (function () {
     'use strict';
 
@@ -192,7 +192,7 @@
 
     /* ---------- v1.2.17 弹层历史栈（iPhone 飞牛 App / WKWebView 返回键） ----------
        飞牛 App 左上角的返回键属于宿主 WebView：只有 canGoBack=true 时才会回退网页，
-       否则直接关闭整个应用容器（用户看到「退出 invr」）。预览/回放原本只是同页弹层，
+       否则直接关闭整个应用容器（用户看到「退出 aiNVR」）。预览/回放原本只是同页弹层，
        不产生历史条目，用户一点返回就退出了应用；再次进入时 WebView 重建、内存会话
        丢失，于是又要重新输入访问密码（v1.2.16 的记住解锁只是补了后半段）。
        这里在打开弹层时压入一条历史记录，接管 popstate / pageshow 把宿主返回动作
@@ -1409,8 +1409,8 @@
             a.click();
             a.remove();
             setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
-            var count = parseInt(res.headers.get('X-Invr-Zip-Files') || names.length, 10);
-            var skipped = parseInt(res.headers.get('X-Invr-Zip-Skipped') || '0', 10);
+            var count = parseInt(res.headers.get('X-aiNVR-Zip-Files') || res.headers.get('X-Invr-Zip-Files') || names.length, 10);
+            var skipped = parseInt(res.headers.get('X-aiNVR-Zip-Skipped') || res.headers.get('X-Invr-Zip-Skipped') || '0', 10);
             toast('已打包 ' + count + ' 个文件' + (skipped ? '，跳过 ' + skipped + ' 个（录制中/已不存在）' : ''), 'ok');
         } catch (e) {
             toast('打包下载失败：' + e.message, 'err');
@@ -4215,6 +4215,7 @@
             try {
                 await api('api/settings/ai-model/download', {
                     method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ url: $('setAiModelUrl').value.trim() })
                 });
                 toast('模型下载已开始', 'ok');
@@ -4247,7 +4248,11 @@
             try {
                 var text = await file.text();
                 var data = JSON.parse(text);
-                var res = await api('api/settings/import', { method: 'POST', body: JSON.stringify(data) });
+                var res = await api('api/settings/import', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
                 if (st) { st.textContent = '导入成功，设置已生效。'; }
                 toast('配置导入成功', 'ok');
                 await loadSettings();

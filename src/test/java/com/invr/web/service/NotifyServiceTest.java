@@ -40,6 +40,7 @@ class NotifyServiceTest {
     private HttpServer http;
     private final ConcurrentLinkedQueue<byte[]> hookBodies = new ConcurrentLinkedQueue<>();
     private final ConcurrentLinkedQueue<String> hookSigs = new ConcurrentLinkedQueue<>();
+    private final ConcurrentLinkedQueue<String> hookLegacySigs = new ConcurrentLinkedQueue<>();
     private final AtomicInteger hookStatus = new AtomicInteger(200);
     private final AtomicInteger hookHits = new AtomicInteger();
 
@@ -57,9 +58,14 @@ class NotifyServiceTest {
             byte[] body = ex.getRequestBody().readAllBytes();
             hookBodies.add(body);
             // 队列不允许 null：无签名头时跳过而不是抛 NPE（否则 handler 中断、连接无响应）
-            String sig = ex.getRequestHeaders().getFirst("X-invr-Signature");
+            // v2.1.2 新头 X-aiNVR-Signature 为主，旧头 X-invr-Signature 仍随附（兼容旧接收端）
+            String sig = ex.getRequestHeaders().getFirst("X-aiNVR-Signature");
             if (sig != null) {
                 hookSigs.add(sig);
+            }
+            String legacySig = ex.getRequestHeaders().getFirst("X-invr-Signature");
+            if (legacySig != null) {
+                hookLegacySigs.add(legacySig);
             }
             byte[] resp = "ok".getBytes(StandardCharsets.UTF_8);
             ex.sendResponseHeaders(hookStatus.get(), resp.length);
@@ -131,6 +137,9 @@ class NotifyServiceTest {
         assertTrue(json.contains("\"type\":\"motion\""));
         assertEquals("sha256=" + NotifyService.hmacSha256Hex(secret, body), hookSigs.peek(),
                 "签名头应为 HMAC-SHA256(body)");
+        // v2.1.2 兼容：旧头名 X-invr-Signature 与新头 X-aiNVR-Signature 值必须一致
+        assertEquals(hookSigs.peek(), hookLegacySigs.peek(),
+                "旧签名头应随附且与新头同值");
     }
 
     @Test

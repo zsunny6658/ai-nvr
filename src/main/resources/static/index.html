@@ -10,7 +10,7 @@
     <base href="./">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230891b2'/%3E%3C/svg%3E">
     <title>aiNVR · AI 增强摄像头 NVR</title>
-    <link rel="stylesheet" href="style.css?v=43">
+    <link rel="stylesheet" href="style.css?v=44">
 </head>
 <body>
 <header class="topbar">
@@ -377,7 +377,7 @@
                     <div class="set-edit">
                         <input type="url" id="setNotifyWebhook" placeholder="https://example.com/hook">
                     </div>
-                    <label>Webhook 验签密钥（可选，HMAC-SHA256 于 X-invr-Signature 头；留空保持原值，填 - 清除）</label>
+                    <label>Webhook 验签密钥（可选，HMAC-SHA256 于 X-aiNVR-Signature 头；留空保持原值，填 - 清除）</label>
                     <div class="set-edit">
                         <input type="password" id="setNotifySecret" placeholder="留空保持原值">
                     </div>
@@ -821,10 +821,10 @@
 
 <div id="toast" class="toast"></div>
 
-<footer class="app-footer">i-NVR · <span id="appVersion">v?</span></footer>
+<footer class="app-footer">aiNVR · <span id="appVersion">v?</span></footer>
 
 <script src="vendor/hls.min.js"></script>
-<script src="watchdog.js?v=43"></script>
-<script src="app.js?v=43"></script>
+<script src="watchdog.js?v=44"></script>
+<script src="app.js?v=44"></script>
 </body>
 </html>

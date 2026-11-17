@@ -130,8 +130,8 @@ public class RecordingController {
                 .header(HttpHeaders.CONTENT_DISPOSITION,
                         "attachment; filename*=UTF-8''" + URLEncoder.encode(filename, StandardCharsets.UTF_8))
                 .header(HttpHeaders.CACHE_CONTROL, "no-cache")
-                .header("X-Invr-Zip-Files", String.valueOf(plan.size()))
-                .header("X-Invr-Zip-Skipped",
+                .header("X-aiNVR-Zip-Files", String.valueOf(plan.size()))
+                .header("X-aiNVR-Zip-Skipped",
                         String.valueOf(plan.skippedWriting() + plan.skippedUnavailable()))
                 .body(body);
     }

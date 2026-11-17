@@ -1,4 +1,4 @@
-/* iNvr 共享大屏页：多宫格渲染、多实例 HLS 播放、事件 SSE 与无人值守重连 */
+/* aiNVR 共享大屏页：多宫格渲染、多实例 HLS 播放、事件 SSE 与无人值守重连 */
 (function () {
     'use strict';
 

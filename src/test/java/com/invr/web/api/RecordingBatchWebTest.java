@@ -109,8 +109,8 @@ class RecordingBatchWebTest {
         MvcResult result = mvc.perform(asyncDispatch(async))
                 .andExpect(status().isOk())
                 .andExpect(content().contentTypeCompatibleWith("application/zip"))
-                .andExpect(header().string("X-Invr-Zip-Files", "2"))
-                .andExpect(header().string("X-Invr-Zip-Skipped", "1"))
+                .andExpect(header().string("X-aiNVR-Zip-Files", "2"))
+                .andExpect(header().string("X-aiNVR-Zip-Skipped", "1"))
                 .andExpect(header().string("Cache-Control", "no-cache"))
                 .andReturn();
 

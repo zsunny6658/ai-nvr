@@ -179,10 +179,14 @@ public class NotifyService {
                     .uri(URI.create(cfg.webhookUrl()))
                     .timeout(java.time.Duration.ofSeconds(8))
                     .header("Content-Type", "application/json; charset=utf-8")
-                    .header("User-Agent", "invr-notify/1.2")
+                    .header("User-Agent", "aiNVR-notify/2.1")
                     .POST(HttpRequest.BodyPublishers.ofByteArray(body));
             if (!cfg.webhookSecret().isBlank()) {
-                rb.header("X-invr-Signature", "sha256=" + hmacSha256Hex(cfg.webhookSecret(), body));
+                // v2.1.2 品牌统一为 X-aiNVR-Signature；旧名 X-invr-Signature 继续随附一个版本周期，
+                // 已按旧头名配置验签的接收端不受影响，后续可移除旧头
+                String sig = "sha256=" + hmacSha256Hex(cfg.webhookSecret(), body);
+                rb.header("X-aiNVR-Signature", sig);
+                rb.header("X-invr-Signature", sig);
             }
             // 每次投递新建客户端：通知低频，开销可忽略；避免复用已被服务端关闭的
             // 连接池连接（偶发 "header parser received no bytes" 假失败）
