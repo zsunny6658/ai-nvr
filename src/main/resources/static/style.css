@@ -790,3 +790,8 @@ body {
 
 /* ============ v1.2.21 事件合并计数 ============ */
 .ev-repeat { color: #b45309; font-weight: 600; }
+
+/* v2.0.1 导航精简：看板卡横跨设置双列；回放页内「时间轴/录像文件」二级切换 */
+.set-card-wide { grid-column: 1 / -1; }
+.pb-pane-bar { display: flex; gap: 8px; margin-bottom: 12px; }
+.pb-pane-bar .pb-pane.active { background: var(--primary); border-color: var(--primary); color: #fff; }

@@ -10,7 +10,7 @@
     <base href="./">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230891b2'/%3E%3C/svg%3E">
     <title>aiNVR · AI 增强摄像头 NVR</title>
-    <link rel="stylesheet" href="style.css?v=38">
+    <link rel="stylesheet" href="style.css?v=39">
 </head>
 <body>
 <header class="topbar">
@@ -92,10 +92,8 @@
     <section id="appView" hidden>
         <nav class="tabs">
             <button class="tab active" data-tab="cameras">摄像头</button>
-            <button class="tab" data-tab="boards">共享看板</button>
-            <button class="tab" data-tab="recordings">录像文件</button>
             <button class="tab" data-tab="events">事件告警</button>
-            <button class="tab" data-tab="playback">录像回放</button>
+            <button class="tab" data-tab="playback">回放</button>
             <button class="tab" data-tab="settings">设置</button>
         </nav>
 
@@ -117,49 +115,7 @@
             <div class="grid" id="deviceGrid"></div>
         </div>
 
-        <div id="tab-boards" hidden>
-            <div class="section-head">
-                <h2>共享看板</h2>
-                <div>
-                    <button class="btn soft" id="btnBoardRefresh" type="button">&#8635; 刷新</button>
-                    <button class="btn primary" id="btnBoardNew" type="button">新建看板</button>
-                </div>
-            </div>
-            <p class="muted small">配置多宫格并生成免登录共享链接，可直接配置到 Android TV 或其他浏览器长时间展示；外部事件系统可通过 Webhook 驱动画面切换。</p>
-            <div class="grid" id="boardGrid"></div>
-        </div>
 
-        <div id="tab-recordings" hidden>
-            <div class="section-head">
-                <h2>录像文件</h2>
-                <div>
-                    <select id="recFilter" class="select"></select>
-                    <button class="btn soft" id="btnRecRefresh">刷新</button>
-                </div>
-            </div>
-            <!-- v1.2.13 按摄像头分组：快捷标签（与上方下拉联动） -->
-            <div class="cam-chips" id="recChips"></div>
-            <!-- v1.2.2 批量操作：勾选文件后统一打包下载 / 删除 -->
-            <div class="rec-toolbar">
-                <span class="rec-selinfo" id="recSelInfo">勾选文件后可批量打包下载或删除</span>
-                <div class="rec-toolbar-actions">
-                    <button class="btn tiny soft" id="btnRecBatchZip" disabled>打包下载</button>
-                    <button class="btn tiny soft-danger" id="btnRecBatchDel" disabled>批量删除</button>
-                    <button class="btn tiny" id="btnRecClearSel" hidden>取消选择</button>
-                </div>
-            </div>
-            <div class="table-wrap">
-                <table class="rec-table">
-                    <thead>
-                    <tr>
-                        <th class="rec-check"><input type="checkbox" id="recSelAll" title="全选本页" aria-label="全选本页"></th>
-                        <th>文件名</th><th>摄像头</th><th>大小</th><th>时间</th><th>操作</th>
-                    </tr>
-                    </thead>
-                    <tbody id="recList"></tbody>
-                </table>
-            </div>
-        </div>
 
         <!-- v1.2.8 事件告警：运动侦测 / 自动录像事件，支持筛选、批量处理与快照查看 -->
         <div id="tab-events" hidden>
@@ -210,6 +166,11 @@
         </div>
 
         <div id="tab-playback" hidden>
+            <div class="pb-pane-bar">
+                <button class="btn tiny pb-pane active" id="pbPaneTimeline" type="button">时间轴回放</button>
+                <button class="btn tiny pb-pane" id="pbPaneFiles" type="button">录像文件</button>
+            </div>
+            <div id="pbTimelinePane">
             <div class="section-head">
                 <h2>录像回放</h2>
                 <div class="pb-bar">
@@ -242,6 +203,38 @@
                     <div class="tl-cursor" id="tlCursor" hidden></div>
                 </div>
             </div>
+            </div>
+        <div id="tab-recordings" hidden>
+            <div class="section-head">
+                <h2>录像文件</h2>
+                <div>
+                    <select id="recFilter" class="select"></select>
+                    <button class="btn soft" id="btnRecRefresh">刷新</button>
+                </div>
+            </div>
+            <!-- v1.2.13 按摄像头分组：快捷标签（与上方下拉联动） -->
+            <div class="cam-chips" id="recChips"></div>
+            <!-- v1.2.2 批量操作：勾选文件后统一打包下载 / 删除 -->
+            <div class="rec-toolbar">
+                <span class="rec-selinfo" id="recSelInfo">勾选文件后可批量打包下载或删除</span>
+                <div class="rec-toolbar-actions">
+                    <button class="btn tiny soft" id="btnRecBatchZip" disabled>打包下载</button>
+                    <button class="btn tiny soft-danger" id="btnRecBatchDel" disabled>批量删除</button>
+                    <button class="btn tiny" id="btnRecClearSel" hidden>取消选择</button>
+                </div>
+            </div>
+            <div class="table-wrap">
+                <table class="rec-table">
+                    <thead>
+                    <tr>
+                        <th class="rec-check"><input type="checkbox" id="recSelAll" title="全选本页" aria-label="全选本页"></th>
+                        <th>文件名</th><th>摄像头</th><th>大小</th><th>时间</th><th>操作</th>
+                    </tr>
+                    </thead>
+                    <tbody id="recList"></tbody>
+                </table>
+            </div>
+        </div>
         </div>
 
         <!-- 设置 -->
@@ -525,7 +518,18 @@
                     </div>
                     <p class="muted small" id="setShareHint"></p>
                 </div>
+                    <div class="set-card set-card-wide" id="tab-boards">
+            <div class="section-head">
+                <h3>共享看板</h3>
+                <div>
+                    <button class="btn soft" id="btnBoardRefresh" type="button">&#8635; 刷新</button>
+                    <button class="btn primary" id="btnBoardNew" type="button">新建看板</button>
+                </div>
             </div>
+            <p class="muted small">配置多宫格并生成免登录共享链接，可直接配置到 Android TV 或其他浏览器长时间展示；外部事件系统可通过 Webhook 驱动画面切换。</p>
+            <div class="grid" id="boardGrid"></div>
+        </div>
+</div>
         </div>
     </section>
 </main>
@@ -772,7 +776,7 @@
 <footer class="app-footer">i-NVR · <span id="appVersion">v?</span></footer>
 
 <script src="vendor/hls.min.js"></script>
-<script src="watchdog.js?v=38"></script>
-<script src="app.js?v=38"></script>
+<script src="watchdog.js?v=39"></script>
+<script src="app.js?v=39"></script>
 </body>
 </html>

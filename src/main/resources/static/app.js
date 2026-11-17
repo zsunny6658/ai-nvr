@@ -1017,6 +1017,7 @@
             + '  </details>'
             + '  <div>' + expire + '</div>'
             + '  <div class="cam-actions">'
+            + '    <button class="btn primary" data-bact="preview" type="button">预览</button>'
             + '    <button class="btn" data-bact="edit" type="button">编辑</button>'
             + '    <button class="btn" data-bact="toggle" type="button">' + (b.enabled ? '停用' : '启用') + '</button>'
             + '    <button class="btn soft" data-bact="rotate-token" type="button">换链接</button>'
@@ -1110,6 +1111,8 @@
         var act = btn.getAttribute('data-bact');
         if (act === 'copy-link') { copyText(boardShareUrl(b.shareToken)); return; }
         if (act === 'copy-secret') { copyText(b.webhookSecret); return; }
+        // v2.0.1 看板预览：直接新开免登录展示页，所见即观众所见
+        if (act === 'preview') { window.open(boardShareUrl(b.shareToken), '_blank'); return; }
         if (act === 'edit') { openBoardModal(id); return; }
         try {
             if (act === 'toggle') {
@@ -4211,47 +4214,65 @@
             pv.addEventListener('ended', pbNextSeg);
         })();
 
-        document.querySelectorAll('.tab').forEach(function (t) {
-            t.addEventListener('click', function () {
-                document.querySelectorAll('.tab').forEach(function (x) { x.classList.remove('active'); });
-                t.classList.add('active');
-                var name = t.getAttribute('data-tab');
-                $('tab-cameras').hidden = name !== 'cameras';
-                $('tab-boards').hidden = name !== 'boards';
-                $('tab-recordings').hidden = name !== 'recordings';
-                $('tab-events').hidden = name !== 'events';
-                $('tab-playback').hidden = name !== 'playback';
-                $('tab-settings').hidden = name !== 'settings';
-                if (name === 'boards') loadBoards();
-                if (name === 'recordings') loadRecordings();
-                if (name === 'events') {
-                    loadEvFilters();
-                    // v1.2.14：首页卡片「查看全部」带过来的摄像头筛选，先于列表加载设置好
-                    if (state.evPendingDid) {
-                        var sel = $('evFilterDid');
-                        var has = Array.prototype.some.call(sel.options, function (o) {
-                            return o.value === state.evPendingDid;
-                        });
-                        if (!has) {
-                            var opt = document.createElement('option');
-                            opt.value = state.evPendingDid;
-                            opt.textContent = cameraName(state.evPendingDid);
-                            sel.appendChild(opt);
-                        }
-                        sel.value = state.evPendingDid;
-                        state.evPendingDid = '';
-                    }
-                    loadEvents(true);
+        /** v2.0.1 一级导航收敛为 4 个：摄像头 / 回放 / 事件告警 / 设置（看板并入设置、录像文件并入回放）。 */
+    function gotoTab(name) {
+        document.querySelectorAll('.tab').forEach(function (x) { x.classList.remove('active'); });
+        var btn = document.querySelector('.tab[data-tab="' + name + '"]');
+        if (btn) btn.classList.add('active');
+        $('tab-cameras').hidden = name !== 'cameras';
+        $('tab-events').hidden = name !== 'events';
+        $('tab-playback').hidden = name !== 'playback';
+        $('tab-settings').hidden = name !== 'settings';
+        if (name === 'events') {
+            loadEvFilters();
+            // v1.2.14：首页卡片「查看全部」带过来的摄像头筛选，先于列表加载设置好
+            if (state.evPendingDid) {
+                var sel = $('evFilterDid');
+                var has = Array.prototype.some.call(sel.options, function (o) {
+                    return o.value === state.evPendingDid;
+                });
+                if (!has) {
+                    var opt = document.createElement('option');
+                    opt.value = state.evPendingDid;
+                    opt.textContent = cameraName(state.evPendingDid);
+                    sel.appendChild(opt);
                 }
-                if (name === 'playback') {
-                    enterPlayback();
-                    // v1.2.19：事件页「看回放」带来的定位待办（摄像头 + 日期 + 时刻）
-                    applyPbPending();
-                }
-                else { pausePb(); stopPbLive(); }
-                if (name === 'settings') loadSettings();
-            });
+                sel.value = state.evPendingDid;
+                state.evPendingDid = '';
+            }
+            loadEvents(true);
+        }
+        if (name === 'playback') {
+            enterPlayback();
+            // v1.2.19：事件页「看回放」带来的定位待办（摄像头 + 日期 + 时刻）
+            applyPbPending();
+            setPbPane(state.pbPane || 'timeline');
+        } else {
+            pausePb(); stopPbLive();
+        }
+        if (name === 'settings') { loadSettings(); loadBoards(); }
+    }
+
+    /** 回放页二级窗格：timeline=时间轴回放（原录像回放内容），files=录像文件列表。 */
+    function setPbPane(pane) {
+        state.pbPane = pane;
+        $('pbTimelinePane').hidden = pane !== 'timeline';
+        $('tab-recordings').hidden = pane !== 'files';
+        $('pbPaneTimeline').classList.toggle('active', pane === 'timeline');
+        $('pbPaneFiles').classList.toggle('active', pane === 'files');
+        if (pane === 'files') {
+            pausePb(); stopPbLive();
+            loadRecordings();
+        }
+    }
+
+    document.querySelectorAll('.tab').forEach(function (t) {
+            t.addEventListener('click', function () { gotoTab(t.getAttribute('data-tab')); });
         });
+
+        // v2.0.1 回放页内二级切换：时间轴回放 / 录像文件
+        $('pbPaneTimeline').addEventListener('click', function () { setPbPane('timeline'); });
+        $('pbPaneFiles').addEventListener('click', function () { setPbPane('files'); });
 
         // 设备卡片按钮：一次性事件委托（轮询只改属性、不重建按钮，监听持续有效）
         $('deviceGrid').addEventListener('click', function (e) {
