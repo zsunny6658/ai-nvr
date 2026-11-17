@@ -232,6 +232,9 @@ body {
     text-align: center; padding: 24px; color: #cbd5e1; font-size: 14px; background: rgba(15, 23, 42, .55); line-height: 1.7; }
 
 .pb-meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 12px 2px 8px; font-size: 13px; }
+/* v2.0.3 回放倍速：跟随 pb-meta 行高，选中态与主色一致 */
+.pb-speed { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.pb-speed .select { width: auto; min-width: 64px; padding: 4px 8px; font-size: 13px; }
 
 .tl { background: var(--panel); border-radius: 12px; box-shadow: var(--shadow); padding: 12px 14px 14px; }
 .tl-ruler { position: relative; height: 22px; margin: 0 1px; }

@@ -4203,15 +4203,23 @@
         });
         (function () {
             var pv = $('pbVideo');
+            /** v2.0.3 回放倍速：>4 倍时自动静音（音频快放无意义且部分浏览器会丢帧）。 */
+            function applyPbRate() {
+                var r = parseFloat($('pbSpeed').value) || 1;
+                pv.playbackRate = r;
+                pv.muted = r > 4;
+            }
             pv.addEventListener('loadedmetadata', function () {
                 var pb = state.pb;
                 if (pb.pendingOffset != null) {
                     pv.currentTime = Math.min(pb.pendingOffset, Math.max(0, (pv.duration || 0) - 0.05));
                     pb.pendingOffset = null;
                 }
+                applyPbRate(); // 换段（含自动接续）会重置倍率，每次元数据就绪后重新应用
             });
             pv.addEventListener('timeupdate', function () { updateCursor(); updateMeta(); autoFollow(); });
             pv.addEventListener('ended', pbNextSeg);
+            $('pbSpeed').addEventListener('change', function () { applyPbRate(); });
         })();
 
         /** v2.0.1 一级导航收敛为 4 个：摄像头 / 回放 / 事件告警 / 设置（看板并入设置、录像文件并入回放）。 */

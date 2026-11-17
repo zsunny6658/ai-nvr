@@ -10,7 +10,7 @@
     <base href="./">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230891b2'/%3E%3C/svg%3E">
     <title>aiNVR · AI 增强摄像头 NVR</title>
-    <link rel="stylesheet" href="style.css?v=40">
+    <link rel="stylesheet" href="style.css?v=41">
 </head>
 <body>
 <header class="topbar">
@@ -194,6 +194,17 @@
             <div class="pb-meta">
                 <span id="pbNow" class="muted">--:--:--</span>
                 <span id="pbSeg" class="muted"></span>
+                <span class="pb-speed">
+                    <label class="muted" for="pbSpeed">倍速</label>
+                    <select id="pbSpeed" class="select" title="播放倍速；大于 4 倍自动静音">
+                        <option value="0.5">0.5×</option>
+                        <option value="1" selected>1×</option>
+                        <option value="2">2×</option>
+                        <option value="4">4×</option>
+                        <option value="8">8×</option>
+                        <option value="16">16×</option>
+                    </select>
+                </span>
             </div>
             <div class="tl" id="tl">
                 <div class="tl-ruler" id="tlRuler"></div>
@@ -776,7 +787,7 @@
 <footer class="app-footer">i-NVR · <span id="appVersion">v?</span></footer>
 
 <script src="vendor/hls.min.js"></script>
-<script src="watchdog.js?v=40"></script>
-<script src="app.js?v=40"></script>
+<script src="watchdog.js?v=41"></script>
+<script src="app.js?v=41"></script>
 </body>
 </html>
