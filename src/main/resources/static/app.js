@@ -1477,10 +1477,9 @@
             var ai = s.ai || {};
             $('setAiEnabled').checked = ai.enabled !== false;
             $('setAiMinScore').value = ai.minScore != null ? ai.minScore : 0.5;
-            $('setAiHint').textContent = '模型：' + (ai.modelAvailable === false ? '不可用（重启应用重试）' : '已内置（SSD-MobileNetV1，离线推理）')
-                + '；置信度阈值 0.3～0.9，低于阈值的目标不计类型。'
+            $('setAiHint').textContent = '置信度阈值 0.3～0.9，低于阈值的目标不计类型。'
                 + (ai.pending > 0 ? ' 待分类 ' + ai.pending + ' 条。' : '');
-
+            renderAiModel(ai);
             // RTSP 端口
             $('setRtspInput').value = s.rtspPort;
             $('setRtspHint').textContent = '当前为' + (s.rtspCustomized ? '自定义' : '默认') + '端口，默认 ' + s.defaultRtspPort
@@ -4155,6 +4154,77 @@
                 btn.disabled = false;
             }
         }
+
+        /* v2.1.1 AI 模型按需下载：状态渲染 + 触发 + 进度轮询 */
+        var aiModelPollTimer = null;
+        function fmtModelBytes(n) {
+            if (n == null || n < 0) return '';
+            if (n >= 1048576) return (n / 1048576).toFixed(1) + 'MB';
+            return Math.round(n / 1024) + 'KB';
+        }
+        function renderAiModel(ai) {
+            var st = $('aiModelState');
+            var hint = $('aiModelHint');
+            var btn = $('btnAiDownload');
+            var urlInput = $('setAiModelUrl');
+            if (!st || !btn) return;
+            if (urlInput && document.activeElement !== urlInput) {
+                urlInput.value = (ai.modelUrl && ai.modelUrl !== ai.defaultModelUrl) ? ai.modelUrl : '';
+                urlInput.placeholder = ai.defaultModelUrl
+                    ? '留空使用默认地址（GitHub，约 ' + fmtModelBytes(ai.modelBytes || 28900000) + '）'
+                    : '模型下载地址（可自定义，如 gitee 附件镜像）';
+            }
+            var stateText;
+            var downloading = ai.modelState === 'downloading';
+            if (downloading) {
+                var pct = ai.downloadProgress != null && ai.downloadProgress >= 0
+                    ? ai.downloadProgress + '%' : fmtModelBytes(ai.downloadReceived);
+                stateText = '模型下载中… ' + pct + '（'
+                    + fmtModelBytes(ai.downloadReceived) + (ai.downloadTotal > 0 ? ' / ' + fmtModelBytes(ai.downloadTotal) : '') + '）';
+            } else if (ai.modelState === 'ready') {
+                stateText = '模型已就绪（SSD-MobileNetV1，' + (ai.modelBundled ? '内置' : fmtModelBytes(ai.modelBytes))
+                    + '，存放于 ' + ai.modelPath + '）';
+            } else if (ai.modelState === 'missing') {
+                stateText = '模型未下载：启用 AI 检测后点击「下载模型」（约 28MB，下载后完全离线运行）。'
+                    + '也可手动把 ssd_mobilenet_v1_10.onnx 放到 ' + ai.modelPath + ' 所在目录。';
+            } else {
+                stateText = '模型状态异常（加载失败或文件损坏）：可重新下载，或检查 ' + ai.modelPath + '。';
+            }
+            if (ai.downloadError) {
+                stateText += ' 上次下载失败：' + ai.downloadError;
+            }
+            st.textContent = stateText;
+            btn.disabled = downloading;
+            btn.textContent = downloading ? '下载中…' : (ai.modelState === 'missing' || ai.modelState === 'error' ? '下载模型' : '重新下载');
+            // 下载中每 2 秒轮询刷新，结束后停表并恢复设置区
+            if (downloading && !aiModelPollTimer) {
+                aiModelPollTimer = setInterval(function () {
+                    loadSettings().catch(function () {});
+                }, 2000);
+            } else if (!downloading && aiModelPollTimer) {
+                clearInterval(aiModelPollTimer);
+                aiModelPollTimer = null;
+            }
+            if (hint) {
+                hint.textContent = '默认地址为 ONNX Model Zoo 官方 GitHub（MIT 许可）；国内网络不稳时可在上方填入镜像地址（如 gitee 仓库附件）后点下载，地址会被记住。';
+            }
+        }
+        $('btnAiDownload').addEventListener('click', async function () {
+            var btn = $('btnAiDownload');
+            btn.disabled = true;
+            try {
+                await api('api/settings/ai-model/download', {
+                    method: 'POST',
+                    body: JSON.stringify({ url: $('setAiModelUrl').value.trim() })
+                });
+                toast('模型下载已开始', 'ok');
+                await loadSettings();
+            } catch (e) {
+                if (e.status === 401) { scheduleGateRelock(); return; }
+                toast('触发下载失败：' + e.message, 'err');
+                btn.disabled = false;
+            }
+        });
 
         /* v2.1.0 备份与恢复 */
         $('btnBackupExport').addEventListener('click', function () {

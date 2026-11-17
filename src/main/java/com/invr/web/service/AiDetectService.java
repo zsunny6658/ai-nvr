@@ -60,6 +60,22 @@ public class AiDetectService {
     /** 待分类队列上限：超出后直接放弃（事件仍是 motion，不影响原有功能）。 */
     private static final int MAX_PENDING = 16;
 
+    /**
+     * v2.1.1 模型默认下载源：ONNX Model Zoo 官方 GitHub（MIT 许可）。
+     * v2.1.1 起模型不再内置进安装包（省 ~28MB），首次启用 AI 检测时按需下载到
+     * 数据目录 models/ 下；国内网络不稳时可在设置页换成自定义镜像地址（如 gitee 附件），
+     * 或手动把模型文件放到该目录后重启。
+     */
+    public static final String DEFAULT_MODEL_URL =
+            "https://github.com/onnx/models/raw/main/validated/vision/object_detection_segmentation/"
+                    + "ssd-mobilenetv1/model/ssd_mobilenet_v1_10.onnx";
+    /** 数据目录内的模型文件名（与 classpath 内置名一致，便于手动替换）。 */
+    private static final String MODEL_FILE = "ssd_mobilenet_v1_10.onnx";
+    /** 下载临时文件后缀，完成后原子改名。 */
+    private static final String PART_SUFFIX = ".part";
+    /** 完整性粗校验下限：真模型约 28MB，明显小于该值说明下载到的是错误页面。 */
+    private static final long MIN_MODEL_BYTES = 10_000_000L;
+
     /** COCO 类别（TF 1-based）→ aiNVR 事件类型。 */
     private static final Map<Integer, String> CLASS_TO_TYPE = Map.ofEntries(
             Map.entry(1, "person"),
@@ -87,6 +103,13 @@ public class AiDetectService {
     private final Semaphore inflight = new Semaphore(1);
     private final java.util.concurrent.ThreadPoolExecutor worker;
     private volatile boolean stopped;
+
+    /* v2.1.1 模型按需下载状态（volatile 字段而非锁对象，status() 高频读取不阻塞） */
+    private volatile boolean downloadInProgress;
+    private volatile String downloadState = "idle"; // idle | downloading | ok | error
+    private volatile long dlReceived;
+    private volatile long dlTotal;
+    private volatile String dlError;
 
     public AiDetectService(AppSettingsStore settingsStore, EventStore events) {
         this.settingsStore = settingsStore;
@@ -227,15 +250,163 @@ public class AiDetectService {
         return out;
     }
 
-    /** 服务状态（设置页展示）：enabled/minScore/模型是否可用/队列长度。 */
+    /** 服务状态（设置页展示）：enabled/minScore/模型状态/下载进度/队列长度。 */
     public Map<String, Object> status() {
         Map<String, Object> m = new LinkedHashMap<>();
         AppSettingsStore.AiSettings cfg = settingsStore.aiSettings();
         m.put("enabled", cfg.enabled());
         m.put("minScore", cfg.minScore());
-        m.put("modelAvailable", !modelUnavailable);
+        Path modelPath = dataDirModelPath();
+        boolean fileReady = Files.isRegularFile(modelPath);
+        boolean bundled = classpathModelAvailable();
+        String state;
+        if (downloadInProgress) {
+            state = "downloading";
+        } else if (fileReady || bundled) {
+            state = modelUnavailable ? "error" : "ready";
+        } else {
+            state = "missing";
+        }
+        m.put("modelState", state);
+        // 兼容 v2.1.0 前端字段语义：模型文件在（或可从内置读）即视为可用
+        m.put("modelAvailable", "ready".equals(state));
+        m.put("modelBundled", bundled);
+        m.put("modelPath", modelPath.toString());
+        if (fileReady) {
+            try {
+                m.put("modelBytes", Files.size(modelPath));
+            } catch (IOException ignore) {
+                // 读取大小失败不影响状态展示
+            }
+        }
+        m.put("modelUrl", effectiveModelUrl());
+        m.put("defaultModelUrl", DEFAULT_MODEL_URL);
+        if (downloadInProgress) {
+            m.put("downloadReceived", dlReceived);
+            m.put("downloadTotal", dlTotal);
+            m.put("downloadProgress", dlTotal > 0
+                    ? Math.min(100, Math.round(dlReceived * 100.0 / dlTotal)) : -1);
+        }
+        if (dlError != null) {
+            m.put("downloadError", dlError);
+        }
         m.put("pending", worker.getQueue().size());
         return m;
+    }
+
+    /* ===================== v2.1.1 模型按需下载 ===================== */
+
+    /** 数据目录内的模型文件路径：{@code <DataDir>/models/ssd_mobilenet_v1_10.onnx}。 */
+    private static Path dataDirModelPath() {
+        return com.invr.store.DataDir.get().resolve("models").resolve(MODEL_FILE);
+    }
+
+    private static boolean classpathModelAvailable() {
+        try (InputStream in = AiDetectService.class.getResourceAsStream("/models/" + MODEL_FILE)) {
+            return in != null;
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    /** 生效的下载地址：请求覆盖 > 设置保存值 > 内置默认。 */
+    private String effectiveModelUrl() {
+        if (settingsStore.aiModelUrl() != null && !settingsStore.aiModelUrl().isBlank()) {
+            return settingsStore.aiModelUrl().trim();
+        }
+        return DEFAULT_MODEL_URL;
+    }
+
+    /**
+     * 触发后台下载模型到数据目录（重复调用在下载中时直接拒绝，返回 false）。
+     * 下载成功后自动重置「模型不可用」标记并丢弃旧会话，下一次分类即用新模型。
+     *
+     * @param urlOverride 本次下载使用的地址；null/空白=按生效地址
+     * @return 是否成功启动下载（false=已在下载中）
+     */
+    public synchronized boolean startModelDownload(String urlOverride) {
+        if (downloadInProgress) {
+            return false;
+        }
+        String url = urlOverride != null && !urlOverride.isBlank()
+                ? urlOverride.trim() : effectiveModelUrl();
+        downloadInProgress = true;
+        downloadState = "downloading";
+        dlReceived = 0;
+        dlTotal = 0;
+        dlError = null;
+        Thread t = new Thread(() -> runDownload(url), "ai-model-download");
+        t.setDaemon(true);
+        t.start();
+        log.info("开始下载 AI 模型：{}", url);
+        return true;
+    }
+
+    /** 下载执行体：HTTP GET → .part 临时文件 → 原子改名 → 重置会话。任何失败都记录到状态。 */
+    private void runDownload(String url) {
+        Path dir = dataDirModelPath().getParent();
+        Path tmp = dir.resolve(MODEL_FILE + PART_SUFFIX);
+        Path dst = dataDirModelPath();
+        try {
+            Files.createDirectories(dir);
+            java.net.http.HttpClient client = java.net.http.HttpClient.newBuilder()
+                    .followRedirects(java.net.http.HttpClient.Redirect.NORMAL)
+                    .connectTimeout(java.time.Duration.ofSeconds(20))
+                    .build();
+            java.net.http.HttpRequest req = java.net.http.HttpRequest.newBuilder(
+                            java.net.URI.create(url))
+                    .timeout(java.time.Duration.ofMinutes(15))
+                    .header("User-Agent", "aiNVR/" + "2.1")
+                    .GET().build();
+            java.net.http.HttpResponse<InputStream> resp =
+                    client.send(req, java.net.http.HttpResponse.BodyHandlers.ofInputStream());
+            if (resp.statusCode() / 100 != 2) {
+                throw new IOException("HTTP " + resp.statusCode()
+                        + "（地址不可用或需镜像，可在设置页更换下载地址）");
+            }
+            dlTotal = resp.headers().firstValueAsLong("Content-Length").orElse(-1);
+            long received = 0;
+            try (InputStream in = resp.body();
+                 java.io.OutputStream out = Files.newOutputStream(tmp)) {
+                byte[] buf = new byte[64 * 1024];
+                int n;
+                while ((n = in.read(buf)) > 0) {
+                    out.write(buf, 0, n);
+                    received += n;
+                    dlReceived = received;
+                }
+            }
+            if (received < MIN_MODEL_BYTES) {
+                throw new IOException("下载内容仅 " + received + " 字节，不是有效的模型文件"
+                        + "（可能返回了错误页面，请检查下载地址）");
+            }
+            Files.move(tmp, dst, java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                    java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+            modelUnavailable = false;
+            synchronized (sessionLock) {
+                if (session != null) {
+                    try {
+                        session.close();
+                    } catch (ai.onnxruntime.OrtException e) {
+                        log.debug("旧 AI 会话关闭失败（将随 GC 回收）：{}", e.toString());
+                    }
+                    session = null;
+                }
+            }
+            downloadState = "ok";
+            log.info("AI 模型下载完成：{}（{} KB）", dst, received / 1024);
+        } catch (Exception e) {
+            downloadState = "error";
+            dlError = e.toString();
+            log.warn("AI 模型下载失败：{}", e.toString());
+            try {
+                Files.deleteIfExists(tmp);
+            } catch (IOException ignore) {
+                // 临时文件清理失败不影响错误上报
+            }
+        } finally {
+            downloadInProgress = false;
+        }
     }
 
     /* ===================== 内部 ===================== */
@@ -270,13 +441,13 @@ public class AiDetectService {
     }
 
     private byte[] loadModelBytes() throws IOException {
-        Path custom = com.invr.store.DataDir.get().resolve("models").resolve("ssd_mobilenet_v1_10.onnx");
+        Path custom = dataDirModelPath();
         if (Files.isRegularFile(custom)) {
             return Files.readAllBytes(custom);
         }
-        try (InputStream in = AiDetectService.class.getResourceAsStream("/models/ssd_mobilenet_v1_10.onnx")) {
+        try (InputStream in = AiDetectService.class.getResourceAsStream("/models/" + MODEL_FILE)) {
             if (in == null) {
-                throw new IOException("内置模型缺失");
+                throw new IOException("内置模型缺失（v2.1.1 起模型改为按需下载，请在设置页下载）");
             }
             return in.readAllBytes();
         }

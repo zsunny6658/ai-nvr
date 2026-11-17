@@ -71,7 +71,6 @@ public class AppSettingsStore {
     private static final String KEY_NOTIFY = "notify";
     /** v2.1.0 本地 AI 检测（子对象）：{enabled: bool, minScore: double}。 */
     private static final String KEY_AI = "ai";
-
     private static final TypeReference<LinkedHashMap<String, Object>> MAP_TYPE = new TypeReference<>() {};
 
     private final Path dir;
@@ -706,6 +705,42 @@ public class AppSettingsStore {
 
     private double doubleNum(Map<String, Object> m, String key, double def) {
         return m.get(key) instanceof Number n ? n.doubleValue() : def;
+    }
+
+    /**
+     * v2.1.1 模型下载源 URL；未设置返回 null（使用 AiDetectService 内置默认地址）。
+     * 国内 NAS 访问 GitHub 不稳时可换成 gitee 仓库附件等镜像地址。
+     */
+    public String aiModelUrl() {
+        Object v = all().get(KEY_AI);
+        if (!(v instanceof Map<?, ?> raw)) {
+            return null;
+        }
+        Object u = ((Map<?, ?>) raw).get("modelUrl");
+        if (u == null) {
+            return null;
+        }
+        String s = String.valueOf(u).trim();
+        return s.isEmpty() ? null : s;
+    }
+
+    /** 保存模型下载源；null / 空白表示清除（恢复内置默认地址）。 */
+    public synchronized void saveAiModelUrl(String url) {
+        Map<String, Object> m = all();
+        Object v = m.get(KEY_AI);
+        Map<String, Object> sub = v instanceof Map<?, ?> r
+                ? new LinkedHashMap<>((Map<String, Object>) r) : new LinkedHashMap<>();
+        if (url == null || url.trim().isEmpty()) {
+            sub.remove("modelUrl");
+        } else {
+            sub.put("modelUrl", url.trim());
+        }
+        if (sub.isEmpty()) {
+            m.remove(KEY_AI);
+        } else {
+            m.put(KEY_AI, sub);
+        }
+        persist(m);
     }
 
     /** v2.1.0 配置导出/导入允许写入的全部键（其余键一律丢弃，防止导入垃圾数据）。 */

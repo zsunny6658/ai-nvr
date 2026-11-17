@@ -117,6 +117,33 @@ public class SettingsController {
     public record AiRequest(Boolean enabled, Double minScore) {
     }
 
+    /**
+     * v2.1.1 触发 AI 模型后台下载（模型自该版本起不内置，按需拉取）。
+     * 请求体可为空或 {"url": "..."}：携带 url 时先持久化为自定义下载源再开始下载。
+     * 下载在后台执行，进度通过 GET /api/settings 的 ai.modelState / downloadProgress 轮询。
+     */
+    @org.springframework.web.bind.annotation.PostMapping("/settings/ai-model/download")
+    public Map<String, Object> downloadAiModel(@org.springframework.web.bind.annotation.RequestBody(
+            required = false) AiModelDownloadRequest req) {
+        String url = req == null ? null : req.url();
+        if (url != null && !url.isBlank()) {
+            String u = url.trim();
+            if (!u.startsWith("http://") && !u.startsWith("https://")) {
+                throw ApiException.badRequest("下载地址需以 http:// 或 https:// 开头");
+            }
+            settingsStore.saveAiModelUrl(u);
+        }
+        boolean started = aiDetectService.startModelDownload(
+                url != null && !url.isBlank() ? url : null);
+        if (!started) {
+            throw ApiException.conflict("模型正在下载中，请稍候");
+        }
+        return getSettings();
+    }
+
+    public record AiModelDownloadRequest(String url) {
+    }
+
     /** 按设备的取流清晰度 / 云台控制配置与实时状态。 */
     private Map<String, Object> qualityInfo() {
         Map<String, Object> q = new LinkedHashMap<>();
