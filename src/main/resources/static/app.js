@@ -613,7 +613,7 @@
         var el = $('appVersion');
         if (!el) return;
         // v1.2.16：以前用前导 / 的绝对路径，fetch 会打到网关域名根、绕开 fnOS 的
-        // context-path（/app/indsvr-invr），网关 401 后静默失败，锁屏页永远停在 “v?”。
+        // context-path（/app/ainvr），网关 401 后静默失败，锁屏页永远停在 “v?”。
         // 改为与其它 api() 一致的相对路径，并在 init() 全局调用（原来只在解锁后的 showApp 里调）。
         api('api/version', { noRelock: true }).then(function (d) {
             var v = d.version || '?';

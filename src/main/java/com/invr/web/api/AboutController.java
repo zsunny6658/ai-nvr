@@ -27,9 +27,9 @@ import java.util.Map;
 public class AboutController {
 
     /** 非 fnOS 环境（本地调试）读不到 manifest 时的回落版本。需随每次发版同步手工维护。 */
-    private static final String FALLBACK_VERSION = "2.0.1";
+    private static final String FALLBACK_VERSION = "2.0.2";
 
-    private static final String APP_ID = "indsvr-invr";
+    private static final String APP_ID = "ainvr";
 
     @GetMapping("/api/about")
     public Map<String, Object> about() {
@@ -83,7 +83,7 @@ public class AboutController {
 
     /**
      * manifest 候选位置。Spring Boot fat jar 运行时 codeSource 形如
-     * {@code jar:file:/vol3/@appcenter/indsvr-invr/app.jar!/BOOT-INF/classes!/}，
+     * {@code jar:file:/vol3/@appcenter/ainvr/app.jar!/BOOT-INF/classes!/}，
      * 直接 {@code new File(URI)} 会抛异常而一直回落到内置常量（表现为版本号不随发版更新）；
      * 这里解析出真实 jar 路径取其同级目录，并补上工作目录与 fnOS 常见安装位置做兜底。
      */

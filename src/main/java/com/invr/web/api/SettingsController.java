@@ -407,7 +407,7 @@ public class SettingsController {
             }
         }
         // fnOS 卷/授权目录的中间层级对应用用户只有「穿越」权限、没有「列举」权限：实测
-        // /vol2、/vol2/1000、/vol2/1000/影视 对 indsvr-invr 均 Permission denied，只有授权的末级
+        // /vol2、/vol2/1000、/vol2/1000/影视 对 ainvr 均 Permission denied，只有授权的末级
         // /vol2/1000/影视/cam 可写。此时 listFiles 返回 null，用户从 /vol2 点进去只看到空列表，
         // 无法逐级下钻到 1000 → 影视 → cam。这里用 fnOS 注入的授权路径反推「当前目录的下一级」，
         // 把这些中间层级作为虚拟条目补进列表，使逐级下钻真正可达授权目录。
@@ -459,7 +459,7 @@ public class SettingsController {
         return out;
     }
 
-    /** 从 Servlet 上下文路径（如 /app/indsvr-invr）推导出本应用 id；失败回落常量。 */
+    /** 从 Servlet 上下文路径（如 /app/ainvr）推导出本应用 id；失败回落常量。 */
     private static String appId() {
         try {
             var attrs = org.springframework.web.context.request.RequestContextHolder
@@ -473,7 +473,7 @@ public class SettingsController {
         } catch (Exception ignore) {
             // 非请求上下文（如测试）时回落默认 id
         }
-        return "indsvr-invr";
+        return "ainvr";
     }
 
     /** 探测 fnOS 盘位：根目录下名为 vol<数字> 的子目录（/vol1 /vol2 /vol3 …）。 */

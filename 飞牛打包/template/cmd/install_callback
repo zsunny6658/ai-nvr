@@ -15,18 +15,18 @@ JVM_XMS="${wizard_jvm_xms:-128}"
 # 生成 Spring Boot 配置：
 # - port 从 manifest 读取（TCP 双监听保留，checkport 健康检查用）
 # - context-path 必须与 ui/config 的 gatewayPrefix 一致：统一网关转发请求时不剥离前缀，
-#   应用收到的就是 /app/indsvr-invr/... 原始路径
+#   应用收到的就是 /app/ainvr/... 原始路径
 # - use-relative-redirects: true 必须开启。UDS 转发会丢失外部 Host，Spring Boot 默认
-#   对无尾斜杠路径生成绝对重定向 Location: http://localhost/app/indsvr-invr/，
+#   对无尾斜杠路径生成绝对重定向 Location: http://localhost/app/ainvr/，
 #   浏览器会跳到自身 localhost 而报 "Not Found"。开启后 Location 变为相对路径
-#   /app/indsvr-invr/，浏览器在当前域名下正确补斜杠。
+#   /app/ainvr/，浏览器在当前域名下正确补斜杠。
 # - invr.uds-socket 把 socket 路径在安装时固化写入配置，服务进程不再依赖
 #   运行时环境变量 TRIM_APPDEST（fnOS 不保证把它注入给 cmd/main 的子进程）
 cat > "${ETC_DIR}/application-fnos.yml" <<EOFCONF
 server:
   port: ${SERVER_PORT}
   servlet:
-    context-path: /app/indsvr-invr
+    context-path: /app/ainvr
   tomcat:
     use-relative-redirects: true
 invr:
