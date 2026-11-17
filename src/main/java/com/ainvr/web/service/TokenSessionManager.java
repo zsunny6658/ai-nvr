@@ -21,7 +21,7 @@ import java.util.concurrent.TimeUnit;
  * Cookie 必须带 {@code SameSite=None}，而该属性又强制 {@code Secure}，Secure Cookie 在 HTTP
  * 连接上会被浏览器直接丢弃；Safari 等浏览器则直接封禁第三方 Cookie。为彻底摆脱对 Cookie 的
  * 依赖，门禁会话改为不透明令牌：前端在 {@code Authorization: Bearer <token>} 头中携带；
- * 无法加自定义请求头的媒体请求（{@code <video>}、下载链接）用 {@code ?__invr_t=<token>}
+ * 无法加自定义请求头的媒体请求（{@code <video>}、下载链接）用 {@code ?__ainvr_t=<token>}
  * 查询参数携带。</p>
  *
  * <p>令牌保存在浏览器 localStorage（iframe 中为按顶级站点分区的存储，仍可读写），服务端只在

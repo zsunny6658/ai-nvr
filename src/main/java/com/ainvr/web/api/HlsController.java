@@ -32,7 +32,7 @@ import java.nio.file.Files;
  * 原样输出纯 MIME，不追加字符集。</p>
  *
  * <p><b>令牌注入</b>：Edge/Safari 原生 HLS 由播放器自行请求 m3u8 中的 init.mp4 / seg-N.m4s，
- * 无法附加 Authorization 头；播放列表返回前把当前令牌以 {@code ?__invr_t=} 注入每个子资源
+ * 无法附加 Authorization 头；播放列表返回前把当前令牌以 {@code ?__ainvr_t=} 注入每个子资源
  * URI，保证原生播放器的分片请求也能通过门禁。hls.js 则额外通过 xhrSetup 带头。</p>
  */
 @RestController

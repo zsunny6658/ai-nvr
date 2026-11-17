@@ -27,7 +27,7 @@ import java.util.Map;
 public class AboutController {
 
     /** 非 fnOS 环境（本地调试）读不到 manifest 时的回落版本。需随每次发版同步手工维护。 */
-    private static final String FALLBACK_VERSION = "2.2.0";
+    private static final String FALLBACK_VERSION = "2.2.1";
 
     private static final String APP_ID = "ainvr";
 

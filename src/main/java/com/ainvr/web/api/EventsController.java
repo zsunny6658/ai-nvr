@@ -27,7 +27,7 @@ import java.util.Set;
 
 /**
  * 告警事件查询与处理接口。位于 {@code /api/**}，自动受访问密码门禁保护；事件快照供
- * {@code <img>} 使用时可走 {@code ?__invr_t=<token>}（与 HLS 一致的令牌通道）。
+ * {@code <img>} 使用时可走 {@code ?__ainvr_t=<token>}（与 HLS 一致的令牌通道）。
  *
  * <p>本阶段只提供 API 与服务端存储，不含界面；运动侦测默认关闭，需通过
  * {@code PUT /api/motion/config} 打开。</p>

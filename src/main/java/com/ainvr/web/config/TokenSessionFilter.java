@@ -17,7 +17,7 @@ import java.io.IOException;
  * <p>令牌来源（按优先级）：
  * <ol>
  *   <li>{@code Authorization: Bearer <token>} 头——前端 fetch 统一注入；</li>
- *   <li>{@code __invr_t=<token>} 查询参数——无法加自定义请求头的场景：原生 HLS 的
+ *   <li>{@code __ainvr_t=<token>} 查询参数——无法加自定义请求头的场景：原生 HLS 的
  *       {@code <video>} 子资源、录像 {@code <video>} 播放与 {@code <a download>} 下载。</li>
  * </ol>
  * 解析不到有效令牌时不设置请求属性，{@link AccessInterceptor} 据此返回 401。</p>
@@ -30,8 +30,10 @@ public class TokenSessionFilter extends OncePerRequestFilter {
 
     /** 请求属性名：当前请求解析出的 {@link TokenSession}。 */
     public static final String SESSION_ATTRIBUTE = TokenSessionFilter.class.getName() + ".session";
-    /** 媒体 / 下载等无法加头的请求通过该查询参数携带令牌。 */
-    public static final String QUERY_PARAM = "__invr_t";
+    /** 媒体 / 下载等无法加头的请求通过该查询参数携带令牌（v2.2.0 品牌化，旧名 {@link #LEGACY_QUERY_PARAM} 回落）。 */
+    public static final String QUERY_PARAM = "__ainvr_t";
+    /** v2.1.x 及之前的旧参数名：浏览器里尚未强刷的旧缓存页面仍会以此携带令牌，保留一个版本回落。 */
+    public static final String LEGACY_QUERY_PARAM = "__invr_t";
     private static final String BEARER_PREFIX = "Bearer ";
 
     private final TokenSessionManager manager;
@@ -63,7 +65,11 @@ public class TokenSessionFilter extends OncePerRequestFilter {
         }
         // 仅查询 URL：媒体标签 / 下载链接无法携带自定义头时使用。对 application/json 的 POST，
         // getParameter 只解析 URL query、不读取请求体，不会影响后续 JSON 反序列化。
-        return request.getParameter(QUERY_PARAM);
+        String t = request.getParameter(QUERY_PARAM);
+        if (t == null || t.isEmpty()) {
+            t = request.getParameter(LEGACY_QUERY_PARAM);
+        }
+        return t;
     }
 
     /** 取当前请求的令牌会话；未携带令牌或令牌已过期/无效时返回 null。 */

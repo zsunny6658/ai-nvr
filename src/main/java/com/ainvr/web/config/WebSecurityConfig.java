@@ -12,7 +12,7 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
  * 放行门禁自身、米家登录分步接口、会话探测与登出；静态页面/脚本不在拦截路径内，
  * 保证门禁页本身始终可加载。鉴权不依赖 Cookie：前端 fetch 以 {@code Authorization: Bearer}
  * 头携带令牌（由 {@link TokenSessionFilter} 解析），HLS 与录像等媒体请求以
- * {@code ?__invr_t=} 查询参数携带，故页面被跨站 iframe 嵌入时解锁态同样有效。</p>
+ * {@code ?__ainvr_t=} 查询参数携带，故页面被跨站 iframe 嵌入时解锁态同样有效。</p>
  *
  * <p>另有面向外部系统的 {@code X-API-Key} 请求头通道：仅对
  * {@link AccessInterceptor} 内显式白名单的 GET 开放接口（截帧）生效，不覆盖任何管理接口。</p>

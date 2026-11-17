@@ -25,7 +25,7 @@ import java.util.Map;
  *   <li>解锁态保存在服务端 {@link TokenSession}（不依赖 Cookie），由
  *       {@code AccessInterceptor} 对所有受保护 API 与 HLS 资源强制校验；</li>
  *   <li>无令牌的 {@code /status} 请求会自动签发一条新令牌并随响应返回，前端据此保存，
- *       之后所有请求以 {@code Authorization: Bearer <token>} 或 {@code ?__invr_t=} 携带。</li>
+ *       之后所有请求以 {@code Authorization: Bearer <token>} 或 {@code ?__ainvr_t=} 携带。</li>
  * </ul>
  */
 @RestController
