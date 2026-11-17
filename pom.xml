@@ -11,11 +11,11 @@
         <relativePath/>
     </parent>
 
-    <groupId>com.invr</groupId>
-    <artifactId>invr</artifactId>
+    <groupId>com.ainvr</groupId>
+    <artifactId>ainvr</artifactId>
     <version>0.1.0-SNAPSHOT</version>
     <packaging>jar</packaging>
-    <name>iNvr</name>
+    <name>aiNVR</name>
     <description>自研 NVR：小米摄像头 miss/mess + CS2 协议接入，Spring Boot Web 服务</description>
 
     <properties>
@@ -124,7 +124,7 @@
     </dependencies>
 
     <build>
-        <finalName>invr</finalName>
+        <finalName>ainvr</finalName>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -143,16 +143,16 @@
                 <artifactId>exec-maven-plugin</artifactId>
                 <version>3.3.0</version>
                 <configuration>
-                    <mainClass>com.invr.InvrApplication</mainClass>
+                    <mainClass>com.ainvr.AinvrApplication</mainClass>
                 </configuration>
             </plugin>
 
-            <!-- 可执行 fat jar：java -jar target/invr.jar（默认启动 Web 服务） -->
+            <!-- 可执行 fat jar：java -jar target/ainvr.jar（默认启动 Web 服务） -->
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <configuration>
-                    <mainClass>com.invr.web.NvrWebApplication</mainClass>
+                    <mainClass>com.ainvr.web.NvrWebApplication</mainClass>
                     <!-- JavaCPP/FFmpeg 需从嵌套 jar 解压出 native 库后才能加载 -->
                     <requiresUnpack>
                         <dependency>
@@ -179,7 +179,7 @@
     <!-- ===== 平台原生库分发 =====
          desktop（默认）：Windows + Linux x86_64 双平台，保持历史 fat jar 能力，
                           本地 Windows / macOS 可直接 java -jar 调试。
-         fnos（mvn package -Pfnos）：只含 Linux x86_64，产物 target/invr-fnos.jar。
+         fnos（mvn package -Pfnos）：只含 Linux x86_64，产物 target/ainvr-fnos.jar。
          fnOS 运行在 Linux x86_64，Windows 的 .dll 永远不会被 JavaCPP 加载；
          去掉后 fat jar 小 23 MiB，且 requiresUnpack 启动时少解压一个 23 MiB 的
          native 包（冷启动 / 升级后首次启动明显变快），功能完全不变。 -->
@@ -215,7 +215,7 @@
                 </dependency>
             </dependencies>
             <build>
-                <finalName>invr-fnos</finalName>
+                <finalName>ainvr-fnos</finalName>
             </build>
         </profile>
     </profiles>

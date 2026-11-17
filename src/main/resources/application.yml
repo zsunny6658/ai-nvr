@@ -1,7 +1,7 @@
 server:
   port: 9080
   servlet:
-    # 门禁会话不依赖 Cookie（改用 Authorization 头 / __invr_t 查询参数的令牌会话），
+    # 门禁会话不依赖 Cookie（改用 Authorization 头 / __ainvr_t 查询参数的令牌会话），
     # 因此此处不再配置 session cookie（SameSite/Secure 对跨站 iframe + HTTP 均无法生效）。
     encoding:
       charset: UTF-8
@@ -13,11 +13,11 @@ server:
 
 spring:
   application:
-    name: invr
+    name: ainvr
   mvc:
     static-path-pattern: /**
 
-invr:
+ainvr:
   # 内嵌 RTSP 下行端口
   rtsp-port: 9554
   # 可选：内嵌 RTSP 下行访问令牌。非空时所有 RTSP 请求须带 ?t=<token> 且值匹配才放行；

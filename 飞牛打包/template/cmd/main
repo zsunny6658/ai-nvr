@@ -34,6 +34,16 @@ mkdir -p "${LOG_DIR}"
 # v2.0.2 包名由 indsvr-invr 更名为 ainvr：老应用数据目录一次性迁移。
 # fnOS 数据目录约定为 <数据卷>/@appdata/<包名>，与 VAR_DIR 同卷，用 mv 改名搬运（秒级、零拷贝）。
 # 仅搬 VAR_DIR 中不存在的条目（绝不覆盖新目录已有文件）；完成后写标记，只在首次启动执行一次。
+# v2.2.0 品牌化：应用数据子目录 .invr/ 更名 .ainvr/（VAR_DIR 内，同卷 mv 秒级零拷贝，
+# 绝不覆盖已有文件；只执行一次）。此前的 indsvr-invr -> ainvr 包级迁移逻辑保持不变。
+legacy_dotdir="${VAR_DIR}/.invr"
+dotdir_marker="${VAR_DIR}/.migrated-from-invr-dotdir"
+if [ -d "${legacy_dotdir}" ] && [ ! -e "${dotdir_marker}" ] && [ ! -d "${VAR_DIR}/.ainvr" ]; then
+  echo "[migrate] moving app data dotdir ${legacy_dotdir} -> ${VAR_DIR}/.ainvr"
+  mv "${legacy_dotdir}" "${VAR_DIR}/.ainvr" || echo "[migrate] WARN: dotdir move failed"
+  touch "${dotdir_marker}"
+fi
+
 legacy_dir="$(dirname "${VAR_DIR}")/indsvr-invr"
 migration_marker="${VAR_DIR}/.migrated-from-indsvr-invr"
 if [ -d "${legacy_dir}" ] && [ ! -e "${migration_marker}" ]; then
@@ -86,7 +96,7 @@ case $1 in
     chmod +x "${TRIM_APPDEST}/jre/bin/"* 2>/dev/null
     # 顺序预读 fat jar 到页缓存，降低冷启动时组件扫描的随机 IO 延迟
     cat "$APP_JAR" > /dev/null 2>/dev/null
-    # 切换工作目录到持久化数据目录，这样应用写的 .invr/ 会落在 var 下
+    # 切换工作目录到持久化数据目录，这样应用写的 .ainvr/ 会落在 var 下
     cd "${TRIM_PKGVAR}"
     # setsid 让 java 脱离启动脚本的会话：即使上层启用流程超时，也不会连带终止服务
     if command -v setsid >/dev/null 2>&1; then

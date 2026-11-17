@@ -10,20 +10,20 @@ echo ==========================================
 echo.
 
 REM fpk 使用 -Pfnos 产出的 Linux-only jar（不含 Windows FFmpeg native）
-REM 默认 ..\target\invr.jar 仍是双平台开发包，本地调试能力不变
-if not exist "..\target\invr-fnos.jar" (
-    echo [ERROR] ..\target\invr-fnos.jar not found
+REM 默认 ..\target\ainvr.jar 仍是双平台开发包，本地调试能力不变
+if not exist "..\target\ainvr-fnos.jar" (
+    echo [ERROR] ..\target\ainvr-fnos.jar not found
     echo Please run: mvn clean package -Pfnos
     pause
     exit /b 1
 )
-powershell -NoProfile -Command "Add-Type -AssemblyName System.IO.Compression.FileSystem; $z = [IO.Compression.ZipFile]::OpenRead((Resolve-Path '..\target\invr-fnos.jar').Path); $bad = @($z.Entries | Where-Object { $_.FullName -match 'windows-x86_64' }).Count; $z.Dispose(); if ($bad -gt 0) { exit 1 }"
+powershell -NoProfile -Command "Add-Type -AssemblyName System.IO.Compression.FileSystem; $z = [IO.Compression.ZipFile]::OpenRead((Resolve-Path '..\target\ainvr-fnos.jar').Path); $bad = @($z.Entries | Where-Object { $_.FullName -match 'windows-x86_64' }).Count; $z.Dispose(); if ($bad -gt 0) { exit 1 }"
 if errorlevel 1 (
     echo [ERROR] fnos jar still contains Windows FFmpeg native, rebuild with mvn -Pfnos
     pause
     exit /b 1
 )
-echo [OK] invr-fnos.jar found (Linux-only)
+echo [OK] ainvr-fnos.jar found (Linux-only)
 
 if not exist "input\jre\bin\java" (
     echo [ERROR] input\jre\bin\java not found
@@ -50,7 +50,7 @@ copy "..\LICENSE" "build\LICENSE" >nul
 
 echo [..] Copying JRE and jar...
 xcopy "input\jre\*" "build\app\jre\" /E /I /Y /Q >nul
-copy "..\target\invr-fnos.jar" "build\app\app.jar" >nul
+copy "..\target\ainvr-fnos.jar" "build\app\app.jar" >nul
 copy "template\manifest" "build\app\manifest" >nul
 
 REM 只删 fnOS 永不命中的 CDS 变体（堆 > 32GB 才用）；classes.jsa / classes_coh.jsa 保留以加速启动

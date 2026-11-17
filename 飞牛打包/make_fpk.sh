@@ -9,14 +9,14 @@ cd "$(dirname "$0")"
 
 REPO_ROOT="$(cd .. && pwd)"
 # fpk 用 -Pfnos 产出的 Linux-only jar：不含 Windows FFmpeg native（省 23 MiB，启动少解压一个包）。
-# 默认 target/invr.jar 仍是双平台，供本地 Windows / macOS 直接 java -jar 调试，能力不变。
-APP_JAR="${REPO_ROOT}/target/invr-fnos.jar"
+# 默认 target/ainvr.jar 仍是双平台，供本地 Windows / macOS 直接 java -jar 调试，能力不变。
+APP_JAR="${REPO_ROOT}/target/ainvr-fnos.jar"
 
 echo "==> 检查前置文件"
 [ -f "$APP_JAR" ] || {
   echo "[ERROR] 未找到 $APP_JAR"
   echo "        请先执行: mvn clean package -Pfnos"
-  echo "        （target/invr.jar 是双平台开发包，不用于 fpk）"
+  echo "        （target/ainvr.jar 是双平台开发包，不用于 fpk）"
   exit 1
 }
 [ -f input/jre/bin/java ] || { echo "[ERROR] 未找到 input/jre/bin/java（需 Linux x64 JRE）"; exit 1; }
