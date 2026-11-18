@@ -72,6 +72,30 @@ class MotionWebTest {
         assertEquals(30, captor.getValue().cooldownSec());
     }
 
+    /**
+     * v2.2.4 回归：时段字段省略 / null 必须沿用当前值（旧前端曾把空值转成 -1 发上来，
+     * 导致「activeEndMin 需在 0.0 ~ 1440.0 之间」报错且保存失败）；边界值 1440（24:00）合法。
+     */
+    @Test
+    void scheduleFieldsNullKeepCurrentAndBoundary1440Accepted() throws Exception {
+        mvc.perform(put("/api/motion/config").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"scheduleEnabled\":true,\"activeStartMin\":null,\"activeEndMin\":null}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.activeStartMin").value(0))
+                .andExpect(jsonPath("$.activeEndMin").value(1440));
+
+        ArgumentCaptor<MotionSettings> captor = ArgumentCaptor.forClass(MotionSettings.class);
+        Mockito.verify(settings).saveMotion(captor.capture());
+        assertTrue(captor.getValue().scheduleEnabled());
+        assertEquals(0, captor.getValue().activeStartMin());
+        assertEquals(1440, captor.getValue().activeEndMin());
+
+        mvc.perform(put("/api/motion/config").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"activeEndMin\":1440}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.activeEndMin").value(1440));
+    }
+
     @Test
     void invalidRangeReturns400WithoutPersisting() throws Exception {
         mvc.perform(put("/api/motion/config").contentType(MediaType.APPLICATION_JSON)

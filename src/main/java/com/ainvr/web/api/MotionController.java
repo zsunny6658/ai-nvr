@@ -141,7 +141,12 @@ public class MotionController {
 
     private static void requireRange(double v, double lo, double hi, String name) {
         if (Double.isNaN(v) || v < lo || v > hi) {
-            throw ApiException.badRequest(name + " 需在 " + lo + " ~ " + hi + " 之间");
+            throw ApiException.badRequest(name + " 需在 " + fmt(lo) + " ~ " + fmt(hi) + " 之间");
         }
+    }
+
+    /** 整数区间显示为 0 ~ 1440，避免出现 "0.0 ~ 1440.0" 这类误导性文案。 */
+    private static String fmt(double v) {
+        return v == Math.floor(v) ? String.valueOf((long) v) : String.valueOf(v);
     }
 }

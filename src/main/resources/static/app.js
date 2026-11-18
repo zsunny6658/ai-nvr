@@ -3289,14 +3289,25 @@
                 .call(document.querySelectorAll('#setMotionDids input:checked'))
                 .map(function (i) { return i.value; });
         }
+        // 时段计划开启时要求两个时间点有效；关闭时不提交时段值（null → 后端沿用当前配置）
+        var actStart = hhmmToMinute($('setMotionActiveStart').value);
+        var actEnd = hhmmToMinute($('setMotionActiveEnd').value);
+        if ($('setMotionSchedule').checked && (actStart == null || actEnd == null)) {
+            toast('请选择有效的侦测时段（开始与结束时间都要填）', 'err');
+            return;
+        }
+        if (!$('setMotionSchedule').checked) {
+            actStart = null;
+            actEnd = null;
+        }
         var body = {
             enabled: $('setMotionEnabled').checked,
             autoRecord: $('setAutoRecord').checked,
             threshold: Number($('setMotionThreshold').value),
             recordTailSec: Number($('setRecordTail').value),
             scheduleEnabled: $('setMotionSchedule').checked,
-            activeStartMin: hhmmToMinute($('setMotionActiveStart').value),
-            activeEndMin: hhmmToMinute($('setMotionActiveEnd').value),
+            activeStartMin: actStart,
+            activeEndMin: actEnd,
             retentionDays: Number($('setEventRetention').value),
             maxEvents: Number($('setEventMax').value),
             dids: dids
@@ -3313,17 +3324,20 @@
     }
 
     /* ---------- v1.2.19 事件通知推送 ---------- */
+    /** 分钟 → "HH:MM"；1440（24:00 全天结束）在 &lt;input type=time&gt; 中不合法，回落 23:59 显示。 */
     function minuteToHHMM(min) {
         if (min == null || min < 0) return '';
-        var h = Math.floor(min / 60), m = min % 60;
+        var n = Math.min(min, 1439);
+        var h = Math.floor(n / 60), m = n % 60;
         return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m;
     }
 
+    /** "HH:MM" → 分钟；空或非法返回 null（JSON null → 后端沿用当前值，不报错覆盖）。 */
     function hhmmToMinute(v) {
-        if (!v) return -1;
+        if (!v) return null;
         var p = v.split(':');
         var n = (Number(p[0]) || 0) * 60 + (Number(p[1]) || 0);
-        return (n >= 0 && n <= 1439) ? n : -1;
+        return (n >= 0 && n <= 1439) ? n : null;
     }
 
     async function loadNotifySettings() {
