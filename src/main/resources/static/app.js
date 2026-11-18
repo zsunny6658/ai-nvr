@@ -160,6 +160,12 @@
     async function api(path, opts) {
         opts = opts || {};
         opts.headers = Object.assign({}, opts.headers);
+        // v2.2.7 兜底：字符串 body 未显式指定 Content-Type 时自动补 application/json。
+        // 背景：saveAi（api/settings/ai）漏带头触发 415；同类遗漏从此在出口处统一兜住。
+        // 注意：FormData 等 blob 类 body 不能设（multipart 边界由浏览器生成），仅处理字符串。
+        if (typeof opts.body === 'string' && !opts.headers['Content-Type']) {
+            opts.headers['Content-Type'] = 'application/json';
+        }
         var tk = getToken();
         if (tk && !opts.headers['Authorization']) {
             opts.headers['Authorization'] = 'Bearer ' + tk;
