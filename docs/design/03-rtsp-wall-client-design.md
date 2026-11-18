@@ -1,4 +1,4 @@
-# iNvr RTSP 大屏客户端（共享看板配套 · 低延迟电视墙）方案设计
+# aiNVR RTSP 大屏客户端（共享看板配套 · 低延迟电视墙）方案设计
 
 > 状态：方案评审稿（未写实现代码）
 > 定位：共享看板（`02-shared-board-design.md`）的**原生配套展示端**，用 RTSP 直连替代浏览器 HLS，解决 Web 大屏 2–4 秒延迟与 TV 浏览器兼容性问题；看板配置、事件联动完全复用服务端既有能力，不另建管理体系。
@@ -61,7 +61,7 @@
 
 ```mermaid
 flowchart LR
-    subgraph NVR["iNvr 服务端（现有，零媒体改造）"]
+    subgraph NVR["aiNVR 服务端（现有，零媒体改造）"]
         HUB["StreamHub 单通道"]
         HLS["HlsService / HlsSink"]
         RTSPD["RtspServer :9554<br/>RTP-over-TCP · H265/H264"]
@@ -72,7 +72,7 @@ flowchart LR
 
     CAM["小米摄像头<br/>CS2 单连接"] --> HUB
 
-    subgraph WALL["invr-wall 大屏客户端（新增，Windows 原生进程）"]
+    subgraph WALL["ainvr-wall 大屏客户端（新增，Windows 原生进程）"]
         UI["JavaFX 全屏窗口<br/>GridPane 4/6/9 宫格"]
         POOL["播放池 RtspPlayer×N<br/>FFmpeg 抓取/解码/缩放"]
         SYNC["看板同步器<br/>HTTP 轮询 reconcile"]
@@ -91,8 +91,8 @@ flowchart LR
 
 ### 3.2 与现有工程的关系
 
-- **独立交付，不并入 `invr.jar`**：新建独立 Maven 项目 `invr-wall`（或同仓库子模块），有独立启动入口与打包产物，运行在大屏机而非 NVR 主机；
-- 仅依赖服务端公开的 HTTP/SSE/RTSP 契约，不依赖服务端内部类、不读 `.invr/boards.json`；
+- **独立交付，不并入 `ainvr.jar`**：新建独立 Maven 项目 `ainvr-wall`（或同仓库子模块），有独立启动入口与打包产物，运行在大屏机而非 NVR 主机；
+- 仅依赖服务端公开的 HTTP/SSE/RTSP 契约，不依赖服务端内部类、不读 `.ainvr/boards.json`；
 - 技术栈与主项目对齐：**Java 17 + JavaFX + JavaCV/JavaCPP 1.5.10（FFmpeg 6.1.1，与服务端同版本）+ OkHttp + Jackson + slf4j**，团队无新语言成本，FFmpeg native 双平台打包经验可直接复用。
 
 ---
@@ -149,7 +149,7 @@ flowchart LR
 ## 5. 客户端模块设计
 
 ```
-com.invr.wall
+com.ainvr.wall
 ├── WallApplication.java        # JavaFX 入口：全屏、单实例、异常兜底
 ├── config/
 │   ├── WallConfig.java         # baseUrl、shareToken、rtspPort(可选覆盖)、静音等

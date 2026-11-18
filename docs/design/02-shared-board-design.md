@@ -1,4 +1,4 @@
-# iNvr 共享看板（多宫格免鉴权展示 + 事件联动）详细设计
+# aiNVR 共享看板（多宫格免鉴权展示 + 事件联动）详细设计
 
 
 
@@ -80,7 +80,7 @@ flowchart LR
 
 * 同一 did 被管理员预览、多个电视、RTSP、录像同时使用时，仍命中同一个 `HlsSink`，上游仍只有 1 条 CS2；
 
-* 共享 m3u8 内子资源为相对路径（`init.mp4`、`seg-N.m4s`），基于共享 m3u8 的 URL `/share/{token}/hls/{did}/index.m3u8` 自动解析到同目录，**无需像&#x20;**`HlsController`**&#x20;那样注入&#x20;**`?__invr_t=`**&#x20;会话令牌**；
+* 共享 m3u8 内子资源为相对路径（`init.mp4`、`seg-N.m4s`），基于共享 m3u8 的 URL `/share/{token}/hls/{did}/index.m3u8` 自动解析到同目录，**无需像&#x20;**`HlsController`**&#x20;那样注入&#x20;**`?__ainvr_t=`**&#x20;会话令牌**；
 
 * 共享路径的授权（token 有效性、did 归属）在 `ShareHlsController` 内完成。
 
@@ -112,7 +112,7 @@ flowchart LR
 
 
 
-* 落盘位置：数据目录（`DataDir.get()`，默认 `.invr/`）下 `boards.json`，与 `access.json`、`session.json` 同目录。
+* 落盘位置：数据目录（`DataDir.get()`，默认 `.ainvr/`）下 `boards.json`，与 `access.json`、`session.json` 同目录。
 
 * 写法对齐现有 store：Jackson `ObjectMapper`（`NON_NULL`）+ pretty JSON，文件权限沿用 `setReadable/setWritable` 收紧；写操作 `synchronized`，先写临时文件再原子替换，避免半写损坏。
 
@@ -518,14 +518,14 @@ players = Map<slotKey, { did, video, hls }>
 
 | 类                      | 包                      | 职责                                                |
 | ---------------------- | ---------------------- | ------------------------------------------------- |
-| `ShareBoard`           | `com.invr.model`       | 看板 POJO（含 layout 枚举常量）                            |
-| `ShareBoardStore`      | `com.invr.store`       | boards.json 持久化、内存索引、令牌生成与恒定时间比较                  |
-| `ShareBoardService`    | `com.invr.web.service` | 看板 CRUD、校验、启停、令牌 / 密钥轮换、过期判定                      |
-| `ShareEventService`    | `com.invr.web.service` | 事件状态机、到期调度、SSE 连接管理与广播、快照                         |
-| `ShareBoardController` | `com.invr.web.api`     | 管理接口 `/api/boards/**` + 只读 `/share/{token}/board` |
-| `SharePageController`  | `com.invr.web.api`     | `GET /share/{token}` 转发 share.html                |
-| `ShareHlsController`   | `com.invr.web.api`     | 共享取流，授权后委托 `HlsService`                           |
-| `ShareEventController` | `com.invr.web.api`     | Webhook 与 SSE 端点                                  |
+| `ShareBoard`           | `com.ainvr.model`       | 看板 POJO（含 layout 枚举常量）                            |
+| `ShareBoardStore`      | `com.ainvr.store`       | boards.json 持久化、内存索引、令牌生成与恒定时间比较                  |
+| `ShareBoardService`    | `com.ainvr.web.service` | 看板 CRUD、校验、启停、令牌 / 密钥轮换、过期判定                      |
+| `ShareEventService`    | `com.ainvr.web.service` | 事件状态机、到期调度、SSE 连接管理与广播、快照                         |
+| `ShareBoardController` | `com.ainvr.web.api`     | 管理接口 `/api/boards/**` + 只读 `/share/{token}/board` |
+| `SharePageController`  | `com.ainvr.web.api`     | `GET /share/{token}` 转发 share.html                |
+| `ShareHlsController`   | `com.ainvr.web.api`     | 共享取流，授权后委托 `HlsService`                           |
+| `ShareEventController` | `com.ainvr.web.api`     | Webhook 与 SSE 端点                                  |
 
 ### 8.2 新增静态资源
 
@@ -546,7 +546,7 @@ players = Map<slotKey, { did, video, hls }>
 
 `WebSecurityConfig` 无需修改：管理接口自动受 `/api/**` 保护，`/share/**` 与 `/share-event` 不在拦截模式内且各自授权。
 
-### 8.4 新增配置项（application.yml `invr.share.*`）
+### 8.4 新增配置项（application.yml `ainvr.share.*`）
 
 
 

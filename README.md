@@ -175,7 +175,7 @@ rtsp://<主机IP>:9554/<摄像头DID>
 在控制台「设置 → 安全与系统 → 开放接口 · API 密钥」生成随机密钥（也可保存 16～80 位自定义密钥），完整明文仅在生成 / 保存当次展示。外部系统调用时在请求头携带 `X-API-Key`，返回 `image/jpeg` 二进制：
 
 ```bash
-curl -H "X-API-Key: invr_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" \
+curl -H "X-API-Key: ainvr_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" \
   "http://<主机IP>:9080/api/snapshot/<摄像头DID>" \
   --output snapshot.jpg
 ```
@@ -230,7 +230,7 @@ java -jar target/ainvr-fnos.jar --server.port=8080 --ainvr.rtsp-port=8554
 ### 数据与存储
 
 - **数据目录**默认在程序运行目录下的 `.ainvr/`（会话密钥、访问密码、API 密钥摘要、录像状态等），录像默认在运行目录下的 `recordings/`，随程序目录一起迁移；
-- 可用 `-Dainvr.data.dir=<目录>` 或环境变量 `AINVR_DATA_DIR` 指定数据目录（旧 `INVR_DATA_DIR` / `.invr` 自动兼容回落）；
+- 可用 `-Dainvr.data.dir=<目录>` 或环境变量 `AINVR_DATA_DIR` 指定数据目录；
 - 海外区域设置环境变量 `AINVR_REGION`（de / i2 / ru / sg / us），默认中国区 `cn`。
 
 ### CLI 调试（可选）

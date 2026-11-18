@@ -1,4 +1,4 @@
-# iNvr 小米摄像头接入详细设计
+# aiNVR 小米摄像头接入详细设计
 ---
 
 ## 1. 协议总览
@@ -210,7 +210,7 @@ sequenceDiagram
 ### 4.7 Java 类设计（M1）
 
 ```
-com.invr.cloud
+com.ainvr.cloud
 ├── MiCloudClient          // 登录总入口：login / loginWithCaptcha / loginWithVerify / loginWithToken
 ├── LoginSession           // userId, passToken, ssecurity, serviceToken, cookie 串
 ├── LoginChallenge         // 验证码/2FA 中间态（ick、identity_session、flag、maskedPhone/Email、captchaImage）
@@ -218,12 +218,12 @@ com.invr.cloud
 ├── MiCloudApi             // 业务 API 封装：deviceListPage / missGetVendor / wakeup
 ├── DeviceDiscovery        // 拉取并过滤摄像头，产出 CameraDevice 列表
 └── VendorNegotiator       // 生成密钥对 + miss_get_vendor，产出 P2pConnectParams
-com.invr.crypto
+com.ainvr.crypto
 ├── X25519Keys             // 密钥对生成、sharedSecret（裸 X25519）、calcSharedKey（X25519+HSalsa20）
 ├── HSalsa20               // box.Precompute 的 HSalsa20 派生（会话密钥第二步）
 ├── ChaCha20Cipher         // encode/decode（8B nonce 前缀，nonce12=[4零][8随机]，counter=0）
 └── Rc4Cipher              // 云端 RC4（含 1024 丢弃）
-com.invr.model
+com.ainvr.model
 ├── CameraDevice           // did/name/model/mac/localip/deviceType
 ├── P2pConnectParams       // did/model/host/vendor/keys/sign
 └── CodecProfile           // 视频/音频编码（M2 probe 后回填）
@@ -251,7 +251,7 @@ public interface VendorNegotiator {
 
 ### 4.8 配置与凭据存储
 
-- **不使用数据库**：账号会话、访问密码、持续录像状态等均以本地文件保存，集中放在**数据目录**下。数据目录由 `store/DataDir` 统一解析，优先级为 `-Dinvr.data.dir=<目录>` 系统属性 → `INVR_DATA_DIR` 环境变量 → 默认**运行目录（`user.dir`，启动 java 的工作目录）下的 `.invr/`**；与录像目录 `recordings/` 一样跟随程序目录，便于整目录迁移 / 容器挂载，不污染用户家目录。
+- **不使用数据库**：账号会话、访问密码、持续录像状态等均以本地文件保存，集中放在**数据目录**下。数据目录由 `store/DataDir` 统一解析，优先级为 `-Dainvr.data.dir=<目录>` 系统属性 → `AINVR_DATA_DIR` 环境变量 → 默认**运行目录（`user.dir`，启动 java 的工作目录）下的 `.ainvr/`**；与录像目录 `recordings/` 一样跟随程序目录，便于整目录迁移 / 容器挂载，不污染用户家目录。
 - 数据目录文件：
   - `master.key`：首次运行生成的 32 字节随机主密钥（文件权限尽量收紧为 owner-only，不落库、不进日志）；
   - `session.json`：米家 `LoginSession`（passToken / ssecurity 等）经主密钥 **AES-GCM** 加密（base64，含随机 IV），重启免密恢复；
@@ -426,7 +426,7 @@ CS2 连接建立后：
 ### 5.10 Java / Netty 类设计（M2）
 
 ```
-com.invr.p2p.cs2
+com.ainvr.p2p.cs2
 ├── Cs2Connector          // 总入口：connect(host, transport) → Cs2Connection（驱动握手状态机）
 ├── Cs2Handshaker         // UDP 32108 打洞（LAN_SEARCH/PUNCH/RDY），5s 超时；TCP 地址解析
 ├── Cs2UdpOuterDecoder    // F1 外层帧解析（Netty Datagram 入站）
@@ -435,7 +435,7 @@ com.invr.p2p.cs2
 ├── Cs2AckHandler         // DRW ACK 回复、命令重传（5 次 ×1s）、PING 1s（TCP）
 ├── DataChannel           // BE32 流内长度前缀重组 + seq 乱序缓存（ch0/ch2 参数不同）
 └── Cs2Connection         // readCommand/writeCommand/readPacket，通道 0/2 对外 API
-com.invr.miss
+com.ainvr.miss
 ├── MissSession           // AuthReq/AuthRes、sharedKey 持有
 ├── MissCommandCodec      // 命令加密包装（BE32 cmd + body → ChaCha20 → 0x1001）
 ├── MissPacketDecoder     // 32B 头解析 + payload 解密
@@ -465,10 +465,10 @@ Netty 落地要点：
 ## 6. Java 工程结构与依赖
 
 ```
-iNvr/
+aiNVR/
 ├── pom.xml
-└── src/main/java/com/invr/
-    ├── InvrApplication.java
+└── src/main/java/com/ainvr/
+    ├── AinvrApplication.java
     ├── cloud/          # 4.7
     ├── crypto/         # X25519 / HSalsa20 / ChaCha20 / RC4
     ├── p2p/cs2/        # 5.9
@@ -618,15 +618,15 @@ iNvr/
 ### 10.6 M3 类设计
 
 ```
-com.invr.hub
+com.ainvr.hub
 ├── StreamHub          // 按 did 管理唯一 CameraStream；compute 原子订阅/退订；activeUpstreamCount()
 ├── CameraStream      // 引用计数拉起/释放唯一上游、自动重连退避、GOP 缓存、串行广播
 ├── MissOpener        // 函数式：开一条新上游 MissClient（每次重连重新协商）
 ├── StreamSink        // onPacket(pkt,gen)/onReset(gen)
 └── AnnexBFileSink    // 调试/第二消费者：Annex-B 裸流落盘
-com.invr.cloud
+com.ainvr.cloud
 └── CloudMissOpener   // miss_get_vendor + CS2 + MISS + VideoStart，401 续期、cateye 唤醒
-com.invr.record
+com.ainvr.record
 ├── RecordingSink     // StreamSink：首视频包懒建录像器，视频/音频分发，onReset 计数
 └── Mp4SegmentRecorder// 逐 AU 自转 AVCC、手工 hvcC/avcC、SPS 解析分辨率、Opus 音轨、IDR 分段
 ```
@@ -637,9 +637,9 @@ com.invr.record
 
 ### 11.1 形态与边界
 
-- **纯 Java 内嵌**：Netty 仅作 TCP/线程框架，RTSP 信令与 RTP 打包全部手写、随 `invr.jar` 同进程运行，**不外挂 go2rtc/MediaMTX 等独立进程**。
+- **纯 Java 内嵌**：Netty 仅作 TCP/线程框架，RTSP 信令与 RTP 打包全部手写、随 `ainvr.jar` 同进程运行，**不外挂 go2rtc/MediaMTX 等独立进程**。
 - 仅支持 **RTP-over-TCP interleaved**（`$`+channel+BE16 len+RTP），先单播；视频 interleaved=0-1、音频=2-3。
-- URL：`rtsp://<主机>:8554/<did>`；常驻命令 `invr serve [端口=8554]`。
+- URL：`rtsp://<主机>:8554/<did>`；常驻命令 `ainvr serve [端口=8554]`。
 - 数据源**只能**是 `StreamHub.subscribe`：每个播放器连接一个 `RtspStreamSink`，因此 N 个播放器（以及未来同进程录像）对同一 DID 仍只占一条小米 CS2 上游。
 
 ### 11.2 信令流程（服务端）
@@ -670,7 +670,7 @@ com.invr.record
 ### 11.5 M4 类设计
 
 ```
-com.invr.rtsp
+com.ainvr.rtsp
 ├── RtspServer          // Netty bootstrap：IO worker + 独立业务线程池；端口监听
 ├── RtspRequestDecoder  // 文本信令 / 0x24 interleaved 二进制复用解帧（上行 RTCP 丢弃）
 ├── RtspServerHandler   // 每连接信令状态机：OPTIONS/DESCRIBE/SETUP/PLAY/TEARDOWN、SDP、订阅生命周期
@@ -694,7 +694,7 @@ com.invr.rtsp
 
 ### 12.1 形态与边界
 
-把 M1–M4 的纯 Java/CLI 能力封装为**单进程 Spring Boot 服务**（`com.invr.web.NvrWebApplication`），随 `invr.jar` 一起启动，不外挂任何独立流媒体进程：
+把 M1–M4 的纯 Java/CLI 能力封装为**单进程 Spring Boot 服务**（`com.ainvr.web.NvrWebApplication`），随 `ainvr.jar` 一起启动，不外挂任何独立流媒体进程：
 
 - 上行：仍仅小米私有 miss/mess + CS2（拒绝 RTSP/ONVIF 上行、拒绝 legacy/TUTK）。
 - 下行三路：**网页 HLS 预览**、**RTSP**（M4，Netty 内嵌，`rtsp://host:8554/<did>`）、**MP4 录像**（M3，JavaCV 进程内 remux）。
@@ -719,7 +719,7 @@ VLC/ffmpeg ─RTSP/TCP─▶ RtspServer(Netty,8554) ── RTP sink ────
 - `config/NvrConfig` 以 `@Bean` 暴露 `SessionStore`、`StreamHub`（`destroyMethod=shutdown`）、`RtspServer`；`RtspLifecycle` 用 `@PostConstruct/@PreDestroy` 管理 RTSP 生命周期。
 - RTSP 侧在 M5 重构为依赖中立接口 `hub.CameraConnector`（`findDevice(did)` / `openerFor(device)`），Web 下由 `DefaultCameraConnector` 实现（用 `MissCommands.defaultQuality(model)` 建 `CloudMissOpener`），与 CLI 解耦。
 - `SessionHolder` 启动时自动加载本地 AES-GCM 会话实现免密；`DeviceCatalog` 缓存设备列表，401 时自动 renew。
-- 配置 `application.yml`：`server.port=8080`、`invr.rtsp-port=8554`、`recording-dir=recordings`、`record-segment-sec=120`、`invr.hls.*`（`target-sec=2 / window=6 / idle-sec=25 / audio=true`）。
+- 配置 `application.yml`：`server.port=8080`、`ainvr.rtsp-port=8554`、`recording-dir=recordings`、`record-segment-sec=120`、`ainvr.hls.*`（`target-sec=2 / window=6 / idle-sec=25 / audio=true`）。
 
 ### 12.3 网页预览为何选 HLS（不选 WebRTC）
 
@@ -755,7 +755,7 @@ VLC/ffmpeg ─RTSP/TCP─▶ RtspServer(Netty,8554) ── RTP sink ────
 | GET | `/unlock?key=<令牌>` | 顶层页面（不在 /api 拦截范围）：校验通过置当前会话解锁并 302 到 `/?unlocked=1`，失败 302 到 `/?unlock_error=1`（锁页提示无效） |
 | GET | `/api/devices?refresh=` | 设备列表（含 `online/recording/previewing/rtspUrl/hlsUrl`）；`online` 取自米家云 `isOnline`，后台每 60s 自动刷新一次，手动刷新立即更新 |
 | GET | `/hls/{did}/index.m3u8`、`/init.mp4`、`/seg-N.m4s` | fMP4(CMAF) HLS 直播（MIME 分别为 `application/vnd.apple.mpegurl`/`video/mp4`/`video/iso.segment`，均无 charset；首次轮询等首片，会话过期 410） |
-| POST | `/api/record/{did}/start`、`/stop` | 录像启停（body 可选 `{segmentSec}`，默认 120 即 2 分钟/段，IDR 边界对齐）。**start 即把该 did 写入持续录像期望状态（数据目录 `recordings.json`，默认运行目录 `.invr/`），只有显式 stop 才移除**；服务正常关闭 / 崩溃 / 断电都保留，重启后自动续录（见 12.10） |
+| POST | `/api/record/{did}/start`、`/stop` | 录像启停（body 可选 `{segmentSec}`，默认 120 即 2 分钟/段，IDR 边界对齐）。**start 即把该 did 写入持续录像期望状态（数据目录 `recordings.json`，默认运行目录 `.ainvr/`），只有显式 stop 才移除**；服务正常关闭 / 崩溃 / 断电都保留，重启后自动续录（见 12.10） |
 | GET | `/api/recordings?did=` | 录像列表；每项含 `recording` 布尔，**仅当前正在写入、尚未封段的那一个文件为 true**，已切完的历史分段与停止录像后的所有段均为 false（由 `Mp4SegmentRecorder.currentSegmentName()` 精确比对文件名，而非按设备是否在录粗判） |
 | GET | `/api/recordings/{name}` | inline 回放（`video/mp4`，支持 Range 206 拖动；`?dl=1` 附件下载） |
 | GET | `/api/timeline/{did}?date=yyyy-MM-dd` | 时间轴回放：该摄像头当天全部分段按开始时间**升序**，每段含 `name/startMs/durMs/size/recording`；连续会话内段时长取与下一段起点间隔（间隔 ≤300s 视为连续），末段/孤立段按“文件最后修改−起点”估算，正在写入段随时间增长，`recording` 仍仅当前段为 true |
@@ -786,13 +786,13 @@ VLC/ffmpeg ─RTSP/TCP─▶ RtspServer(Netty,8554) ── RTP sink ────
 ### 12.8 访问密码门禁（本地 Web 门禁，独立于米家登录）
 
 - **定位与流程**：访问密码是进入 Web 控制台的本地门禁，与米家账号登录相互独立。米家账号登录成功后，若本机尚未设置访问密码，前端强制进入“设置访问密码”页，设置成功才进入系统；此后每次打开系统（新浏览器会话、服务重启、HttpSession 过期）都需输入访问密码解锁。顶栏提供“锁定”，登出米家不清除访问密码。
-- **密码存储（`store/AccessKeyStore`）**：不存明文、不可逆。落盘数据目录下的 `access.json`（默认运行目录 `.invr/`，见 4.8），内容为 `{algo,iterations,salt,hash}`：每密码独立 16 字节随机盐，`PBKDF2WithHmacSHA256` 迭代 120000 次派生 256bit，校验用 `MessageDigest.isEqual` 恒定时间比较；密码长度 6–64。文件权限尽量收紧为 owner-only。删除该文件后重启即可重新设置。
-- **后端接口（`web/api/AccessController`，`/api/access`）**：`GET status` 返回 `{configured,unlocked,loggedIn,userId,region}`；`POST setup`（要求米家已登录且未设置过，成功后当前会话直接解锁）、`POST unlock`（校验密码，错误 401）、`POST lock`（清除解锁态）。解锁态保存在服务端 `HttpSession` 属性 `invr.unlocked`。
+- **密码存储（`store/AccessKeyStore`）**：不存明文、不可逆。落盘数据目录下的 `access.json`（默认运行目录 `.ainvr/`，见 4.8），内容为 `{algo,iterations,salt,hash}`：每密码独立 16 字节随机盐，`PBKDF2WithHmacSHA256` 迭代 120000 次派生 256bit，校验用 `MessageDigest.isEqual` 恒定时间比较；密码长度 6–64。文件权限尽量收紧为 owner-only。删除该文件后重启即可重新设置。
+- **后端接口（`web/api/AccessController`，`/api/access`）**：`GET status` 返回 `{configured,unlocked,loggedIn,userId,region}`；`POST setup`（要求米家已登录且未设置过，成功后当前会话直接解锁）、`POST unlock`（校验密码，错误 401）、`POST lock`（清除解锁态）。解锁态保存在服务端 `HttpSession` 属性 `ainvr.unlocked`。
 - **强制拦截（`web/config/WebSecurityConfig` + `AccessInterceptor`）**：拦截 `/api/**` 与 `/hls/**`，白名单仅 `/api/access/**`、`/api/login/**`、`/api/session`、`/api/logout`；静态页面/脚本不在拦截路径，保证门禁页本身可加载。未解锁（含“尚未设置密码”阶段）一律返回 `401 {"error":...,"code":"ACCESS_LOCKED"}`。HLS 与录像回放/下载由同源 `<video>`/`<a>` 发起、自动携带 JSESSIONID，解锁后正常、未解锁 401。
 - **前端路由（app.js）**：启动 `refreshGate()` 并行拉取 `/api/session` 与 `/api/access/status`，`route()` 按 `configured / unlocked / loggedIn` 三态决策——未配置：米家未登录显登录页、已登录显“设置访问密码”页；已配置未解锁显“输入访问密码”页；已解锁且米家在线进系统。任何受保护接口收到 `401 ACCESS_LOCKED` 自动（去抖）回到门禁页；设置页校验两次一致与最小长度。JSESSIONID 为会话级 Cookie，关闭浏览器或服务重启后需重新解锁。
 - **边界**：访问密码只保护 HTTP（API/HLS/录像回放下载）。**RTSP（Netty 8554）是独立协议、不走 HTTP 会话，当前不受此门禁保护**（VLC 直连仍可用），如需可后续为 RTSP 增加 URL token 或用户名密码。
 - **URL 一键解锁（`GET /unlock?key=<令牌>`）**：用于把链接存成书签/快捷方式，打开即免输密码进入。
-  - 令牌派生（确定性、无随机盐、无需服务端再保管可逆密钥）：`key = Base64URL(SHA-256("invr:url-unlock/v1:" + 访问密码))`，约 43 字符、URL 安全（无 `+/=`）。access.json 中**只存令牌的二次 SHA-256（`urlHash`，标准 base64）**，不落可直接使用的令牌，更不含原密码；校验用 `MessageDigest.isEqual` 恒定时间比较。
+  - 令牌派生（确定性、无随机盐、无需服务端再保管可逆密钥）：`key = Base64URL(SHA-256("ainvr:url-unlock/v1:" + 访问密码))`，约 43 字符、URL 安全（无 `+/=`）。access.json 中**只存令牌的二次 SHA-256（`urlHash`，标准 base64）**，不落可直接使用的令牌，更不含原密码；校验用 `MessageDigest.isEqual` 恒定时间比较。
   - 入口：锁页输入访问密码后点“生成一键解锁链接”（`POST /api/access/unlock-link`，错误密码 401），前端展示完整 URL 供复制；`UnlockController` 的 `GET /unlock` 校验通过即在当前 HttpSession 置解锁并 302 回首页，失败回 `/?unlock_error=1` 由锁页提示。旧版 access.json（无 `urlHash`）在首次调用 unlock-link 时凭正确密码自动补存（迁移）。
   - **安全边界**：URL query 会进入浏览器历史、书签、代理/访问日志与 Referer，任何持有该链接者在改密码前都可直接解锁，等效长效静态密钥；仅适合受信内网/个人设备书签，**不要外发或暴露公网**。修改访问密码或删除 access.json 后旧链接失效；该链接同样不保护 RTSP。
 - **真机验收**：接口层 13 项全过（未配置 status、未锁 devices/HLS 均 401、弱密码 400、setup 200、新会话错密 401/正密 200、lock 后再 401、access.json 无明文）；URL 解锁另验：unlock-link 正密返回令牌/错密 401、新会话 `GET /unlock?key=正确` 302 到 `/?unlocked=1` 且同会话 devices 200、错误 key 302 到 `/?unlock_error=1` 且 devices 仍 401；浏览器实测首次设置页、两次不一致拦截、设置进入、重启后要求解锁、解锁后 HLS 实时预览仍出画、锁定回门禁页、无效链接提示、一键链接直接进系统、锁页生成链接；`AccessKeyStoreTest` 11 项（含令牌确定性/URL 安全、setup 后校验、旧记录迁移与错密拒绝），全量 38 项单测全绿。
@@ -801,14 +801,14 @@ VLC/ffmpeg ─RTSP/TCP─▶ RtspServer(Netty,8554) ── RTP sink ────
 
 - H.265 网页播放依赖客户端 HEVC 支持；不支持时用 RTSP/VLC 兜底。HLS 预览延迟约一个 GOP（秒级），不适合超低延迟场景（用 RTSP）。
 - 第二台 H.264 机型（`1182990995` @192.168.59.97，需切网段）的 H264 录像 avcC、RTP 打包、HlsSink H264 路径与分辨率解析尚未真机验证。
-- 访问密码为 PBKDF2 加盐哈希，防随手查看与离线直读，但不抵抗攻击者拿到整个数据目录（`.invr/`）后对弱口令的高速离线穷举（已强制最小长度 6）；米家会话主密钥目前仍为本地随机主密钥，可后续升级为由访问密码派生（PBKDF2）。
+- 访问密码为 PBKDF2 加盐哈希，防随手查看与离线直读，但不抵抗攻击者拿到整个数据目录（`.ainvr/`）后对弱口令的高速离线穷举（已强制最小长度 6）；米家会话主密钥目前仍为本地随机主密钥，可后续升级为由访问密码派生（PBKDF2）。
 - RTSP 下行暂未纳入访问密码门禁（见 12.8 边界）；面向公网暴露时需自行加网络层访问控制。
 
 ### 12.10 持续录像与重启自动恢复
 
 需求：用户一旦对某摄像头点了“开始录像”，此后无论服务正常重启、进程崩溃还是断电，恢复运行后都应**自动继续录像**，无需人工再点一次；只有用户显式“停止录像”才真正取消。采用“**期望状态落盘 + 周期对账自愈**”，而非依赖关机钩子（崩溃时钩子不执行）。
 
-- **期望状态存储（`store/RecordingStateStore`）**：落盘数据目录下的 `recordings.json`（默认运行目录 `.invr/`，见 4.8），内容仅 `{ "<did>": 分段秒数, ... }`（非敏感、不加密）。`RecordingService.start` 在订阅建立后同步 `enable(did, seg)`，`stop` 在确认关闭后 `disable(did)`；写入走“临时文件 + 原子 rename（ATOMIC_MOVE，不支持则 REPLACE_EXISTING）”，崩溃瞬间不会写坏整份状态；文件缺失 / JSON 损坏按“无持续录像”处理而不阻断启动。
+- **期望状态存储（`store/RecordingStateStore`）**：落盘数据目录下的 `recordings.json`（默认运行目录 `.ainvr/`，见 4.8），内容仅 `{ "<did>": 分段秒数, ... }`（非敏感、不加密）。`RecordingService.start` 在订阅建立后同步 `enable(did, seg)`，`stop` 在确认关闭后 `disable(did)`；写入走“临时文件 + 原子 rename（ATOMIC_MOVE，不支持则 REPLACE_EXISTING）”，崩溃瞬间不会写坏整份状态；文件缺失 / JSON 损坏按“无持续录像”处理而不阻断启动。
 - **关机不清除标记**：`RecordingService.stopAll()`（`@PreDestroy`，优雅关闭时关订阅、封段）**不调用 disable**，因此正常关闭与崩溃在状态层面等价——期望标记都保留，重启后一律恢复。
 - **对账组件（`web/service/RecordingRecovery`）**：单例守护线程，`ApplicationReadyEvent` 后延迟 3s 首次执行、此后每 20s 一轮。每轮先判断米家会话是否就绪（未登录直接跳过，故“开机自启但尚未登录 / 稍后才登录”两种情形都能在登录后的下一轮恢复），再调 `RecordingService.reconcile()`：遍历期望状态，对“标记要录、当前却没在录”的 did 调 `start(did, seg)` 拉起订阅；设备暂不可达 / 离线 / 未登录等失败只记 debug、不抛错，留待下一轮重试（`StreamHub` 对已建立订阅本身也持续自动重连）；已在录的跳过，天然幂等。单轮整体 `catch Throwable`，避免定时任务因一次异常被 ScheduledExecutor 取消。
 - **分段序号跨重启接续（`Mp4SegmentRecorder`）**：构造时按正则 `rec-<did>-NNN-yyyyMMdd-HHmmss.mp4` 扫描录像目录中本摄像头已有段的最大序号，计数器从该最大值起继续，使重启后续录段编号（如 003、004…）与崩溃前连续、不会每轮都从 001 重新开始而与旧段编号重复（文件名另有时间戳兜底防冲突）。
