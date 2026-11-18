@@ -227,7 +227,10 @@ body {
 
 .pb-stage { position: relative; background: #000; border-radius: 12px; overflow: hidden; aspect-ratio: 16/9;
     display: flex; align-items: center; justify-content: center; box-shadow: var(--shadow); }
-.pb-stage video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+/* v2.2.5 双 video 无缝接续：A/B 叠放，播完切到已预载的另一个，无重新加载卡顿 */
+.pb-stage video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000;
+    transition: opacity .18s ease; }
+.pb-stage video.pb-off { opacity: 0; pointer-events: none; }
 .pb-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
     text-align: center; padding: 24px; color: #cbd5e1; font-size: 14px; background: rgba(15, 23, 42, .55); line-height: 1.7; }
 
@@ -256,6 +259,14 @@ body {
     box-shadow: 0 0 4px rgba(220, 38, 38, .6); }
 .tl-cursor::before { content: ''; position: absolute; top: 0; left: -5px; border-left: 6px solid transparent;
     border-right: 6px solid transparent; border-top: 7px solid var(--red); }
+/* v2.2.5 时间轴增强：录像段块内直接显示开始时间（块足够宽时）+ 拖动/悬停时间气泡（米家式） */
+.tl-blklab { position: absolute; top: 50%; left: 4px; transform: translateY(-50%); font-size: 10px;
+    line-height: 1; color: #0e3a46; white-space: nowrap; pointer-events: none; }
+.tl-bubble { position: absolute; bottom: 46px; transform: translateX(-50%); padding: 3px 8px;
+    background: #0f172a; color: #fff; font-size: 12px; border-radius: 6px; white-space: nowrap;
+    pointer-events: none; z-index: 5; }
+.tl-bubble::after { content: ''; position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
+    border: 5px solid transparent; border-top-color: #0f172a; }
 @media (max-width: 720px) {
     .pb-bar { gap: 6px; }
     .tl-lab { font-size: 10px; }

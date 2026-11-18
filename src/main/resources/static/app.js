@@ -50,7 +50,9 @@
             segs: [], idx: -1, curStart: 0, pendingOffset: null,
             motionMs: [],
             liveTimer: null, liveBusy: false,
-            loop: 'off' // v2.1.0 循环播放：off | seg（单段）| day（当天）
+            loop: 'off', // v2.1.0 循环播放：off | seg（单段）| day（当天）
+            // v2.2.5 双 video 无缝接续：A(pbVideo)/B(pbVideoB) 叠放交替，activeB 标记当前活动元素
+            activeB: false
         }
     };
 
@@ -3702,6 +3704,29 @@
     /** 回放页时间轴静默刷新周期：让新封段的分段与“录制中”块的增长及时反映出来。 */
     var PB_LIVE_MS = 15000;
 
+    /** v2.2.5 双 video 无缝接续：活动（正在播放/展示）与待命（预载下一段）元素。 */
+    function pbV() {
+        return document.getElementById(state.pb.activeB ? 'pbVideoB' : 'pbVideo');
+    }
+    function pbIdle() {
+        return document.getElementById(state.pb.activeB ? 'pbVideo' : 'pbVideoB');
+    }
+    /** 清空待命元素的旧预载（换段/换摄像头后缓冲已失效），并清掉来源标记。 */
+    function pbResetIdle() {
+        var idle = pbIdle();
+        try { idle.removeAttribute('src'); idle.load(); } catch (e) { /* 忽略 */ }
+        idle.dataset.srcName = '';
+    }
+
+    /** v2.0.3 回放倍速（>4 倍自动静音）：作用于当前活动元素（v2.2.5 双 video 后取 pbV()）。 */
+    function applyPbRate() {
+        var v = pbV();
+        if (!v) return;
+        var r = parseFloat($('pbSpeed').value) || 1;
+        v.playbackRate = r;
+        v.muted = r > 4;
+    }
+
     function startPbLive() {
         var pb = state.pb;
         if (pb.liveTimer) return;
@@ -3737,7 +3762,7 @@
     }
 
     function pausePb() {
-        var el = (typeof $ === 'function') ? $('pbVideo') : null;
+        var el = pbV();
         if (el && !el.paused) { el.pause(); }
     }
 
@@ -3796,8 +3821,9 @@
                 } else {
                     // 当前段已不在（如刚被保留策略清理），停止播放并复位选中
                     pb.idx = -1;
-                    var pv0 = $('pbVideo');
+                    var pv0 = pbV();
                     pv0.pause(); pv0.removeAttribute('src'); pv0.load();
+                    pbResetIdle();
                     $('pbEmpty').hidden = false;
                 }
             }
@@ -3854,13 +3880,17 @@
         if (!pb.segs.length) {
             blocks.innerHTML = '<div class="tl-no">该摄像头当天无录像</div>';
         } else {
+            // v2.2.5 段块内直接显示开始时间（块足够宽时才放得下），不再只靠悬停 title
+            var tw = $('tlTrack').clientWidth || 0;
             blocks.innerHTML = pb.segs.map(function (s, i) {
                 var l = Math.max(0, pct(s.startMs));
                 var r = Math.min(100, pct(s.startMs + s.durMs));
                 var w = Math.max(0.4, r - l);
                 var cls = 'tl-block' + (s.recording ? ' rec' : '') + (i === pb.idx ? ' cur' : '');
                 var title = hms(s.startMs) + ' ~ ' + hms(s.startMs + s.durMs) + (s.recording ? '（录制中）' : '');
-                return '<div class="' + cls + '" data-i="' + i + '" style="left:' + l.toFixed(3) + '%;width:' + w.toFixed(3) + '%" title="' + esc(title) + '"></div>';
+                var lab = (w / 100 * tw >= 34)
+                    ? '<span class="tl-blklab">' + hms(s.startMs).slice(0, 5) + '</span>' : '';
+                return '<div class="' + cls + '" data-i="' + i + '" style="left:' + l.toFixed(3) + '%;width:' + w.toFixed(3) + '%" title="' + esc(title) + '">' + lab + '</div>';
             }).join('');
         }
         updateCursor();
@@ -3891,7 +3921,7 @@
     function updateCursor() {
         var pb = state.pb;
         var cur = $('tlCursor');
-        var v = $('pbVideo');
+        var v = pbV();
         if (pb.idx < 0 || !v.src) { cur.hidden = true; return; }
         var x = pct(pb.curStart + (v.currentTime || 0) * 1000);
         if (x < 0 || x > 100) { cur.hidden = true; return; }
@@ -3901,11 +3931,13 @@
 
     function updateMeta() {
         var pb = state.pb;
-        var v = $('pbVideo');
+        var v = pbV();
         if (pb.idx >= 0 && v.src) {
             $('pbNow').textContent = hms(pb.curStart + (v.currentTime || 0) * 1000) + ' 播放中';
             var s = pb.segs[pb.idx];
-            $('pbSeg').textContent = '分段 ' + (pb.idx + 1) + '/' + pb.segs.length + ' · ' + hms(s.startMs)
+            // v2.2.5 元信息显示真实起止时间点
+            $('pbSeg').textContent = '分段 ' + (pb.idx + 1) + '/' + pb.segs.length + ' · '
+                + hms(s.startMs) + ' ~ ' + hms(s.startMs + s.durMs)
                 + (s.recording ? ' · 录制中' : '');
         } else {
             $('pbNow').textContent = pb.segs.length ? ('当天共 ' + pb.segs.length + ' 段录像，点击时间轴回放') : '当天无录像';
@@ -3943,13 +3975,60 @@
         var s = pb.segs[i];
         pb.curStart = s.startMs;
         pb.pendingOffset = offsetSec || 0;
-        var v = $('pbVideo');
+        pbResetIdle(); // 手动换段后待命元素里的旧预载缓冲已失效，清掉防误用
+        var v = pbV();
         $('pbEmpty').hidden = true;
         v.src = withToken('api/recordings/' + encodeURIComponent(s.name));
         v.play().catch(function () {});
         if (s.recording) {
             toast('该段正在录制，播放已写入的部分（到当前进度为止）；看实时画面请用“实时预览”', '');
         }
+        renderTimeline();
+    }
+
+    /**
+     * v2.2.5 预载下一段：当前段剩余 < 8 秒时把下一段装进待命 video 预缓冲，
+     * 播到边界直接交换显示，消除“一段播完再加载”的可见卡顿（米家式连续回放）。
+     * 待命元素就绪标记存在 dataset.srcName（来源段文件名），readyState>=2 即可无缝切换。
+     */
+    function maybePreloadNext() {
+        var pb = state.pb;
+        if (pb.idx < 0 || pb.loop === 'seg') return;
+        var v = pbV();
+        if (!v.duration || !isFinite(v.duration)) return;
+        if ((v.duration - (v.currentTime || 0)) * 1000 > 8000) return;
+        var ni = pb.idx + 1;
+        if (ni >= pb.segs.length) ni = pb.loop === 'day' ? 0 : -1;
+        if (ni < 0) return;
+        var idle = pbIdle();
+        var s = pb.segs[ni];
+        if (idle.dataset.srcName === s.name && idle.readyState >= 2) return;
+        idle.dataset.srcName = s.name;
+        idle.playbackRate = v.playbackRate || 1; // 预载时同步倍速/静音，切换后即刻生效
+        idle.muted = v.muted;
+        idle.src = withToken('api/recordings/' + encodeURIComponent(s.name));
+    }
+
+    /** 无缝切换：两个 video 交换角色（待命元素已缓冲，起播零加载）。 */
+    function swapTo(ni) {
+        var pb = state.pb;
+        var cur = pbV(), idle = pbIdle();
+        cur.pause();
+        idle.classList.remove('pb-off');
+        idle.setAttribute('controls', '');
+        cur.classList.add('pb-off');
+        cur.removeAttribute('controls');
+        pb.activeB = !pb.activeB;
+        // 淡出完成后释放旧元素缓冲（双 video 不会同时占两份完整缓冲）
+        setTimeout(function () {
+            try { cur.removeAttribute('src'); cur.load(); } catch (e) { /* 忽略 */ }
+            cur.dataset.srcName = '';
+        }, 500);
+        pb.idx = ni;
+        pb.curStart = pb.segs[ni].startMs;
+        applyPbRate();
+        idle.play().catch(function () {});
+        if (pb.zoom !== 24) { computeWin(true); }
         renderTimeline();
     }
 
@@ -3960,22 +4039,30 @@
             loadSeg(pb.idx, 0);
             return;
         }
-        if (pb.idx + 1 < pb.segs.length) {
-            loadSeg(pb.idx + 1, 0);
-            if (pb.zoom !== 24) { computeWin(true); renderTimeline(); }
-        } else if (pb.loop === 'day' && pb.segs.length > 0) {
-            loadSeg(0, 0);
-            if (pb.zoom !== 24) { computeWin(true); renderTimeline(); }
-        } else {
-            toast('已到当天最后一段', 'ok');
-            updateMeta();
+        var ni = pb.idx + 1;
+        if (ni >= pb.segs.length) {
+            if (pb.loop === 'day' && pb.segs.length > 0) {
+                ni = 0;
+            } else {
+                toast('已到当天最后一段', 'ok');
+                updateMeta();
+                return;
+            }
         }
+        // v2.2.5 下一段已在待命元素缓冲就绪 → 直接交换显示（无加载）；否则走原加载路径兜底
+        var idle = pbIdle();
+        if (idle.dataset.srcName === pb.segs[ni].name && idle.readyState >= 2) {
+            swapTo(ni);
+            return;
+        }
+        loadSeg(ni, 0);
+        if (pb.zoom !== 24) { computeWin(true); renderTimeline(); }
     }
 
     function autoFollow() {
         var pb = state.pb;
         if (pb.zoom === 24 || pb.idx < 0) return;
-        var ms = pb.curStart + ($('pbVideo').currentTime || 0) * 1000;
+        var ms = pb.curStart + (pbV().currentTime || 0) * 1000;
         if (ms < pb.winStart || ms > pb.winStart + pb.winDur) {
             computeWin(true);
             renderTimeline();
@@ -4396,24 +4483,55 @@
             }
             seekTo(tMs);
         });
+        /* v2.2.5 拖动/悬停时间气泡（米家式）：鼠标或手指在时间轴上移动时提示对应时刻与有无录像 */
         (function () {
-            var pv = $('pbVideo');
-            /** v2.0.3 回放倍速：>4 倍时自动静音（音频快放无意义且部分浏览器会丢帧）。 */
-            function applyPbRate() {
-                var r = parseFloat($('pbSpeed').value) || 1;
-                pv.playbackRate = r;
-                pv.muted = r > 4;
-            }
-            pv.addEventListener('loadedmetadata', function () {
+            var bub = $('tlBubble');
+            var hideTimer = null;
+            function showTlBubble(e) {
                 var pb = state.pb;
-                if (pb.pendingOffset != null) {
-                    pv.currentTime = Math.min(pb.pendingOffset, Math.max(0, (pv.duration || 0) - 0.05));
-                    pb.pendingOffset = null;
+                if (!pb.segs.length) return;
+                var rect = $('tlTrack').getBoundingClientRect();
+                var cx = (e.touches && e.touches.length) ? e.touches[0].clientX : e.clientX;
+                var x = Math.max(0, Math.min(rect.width, cx - rect.left));
+                var t = pb.winStart + (x / rect.width) * pb.winDur;
+                var inSeg = false;
+                for (var k = 0; k < pb.segs.length; k++) {
+                    if (pb.segs[k].startMs <= t && t <= pb.segs[k].startMs + pb.segs[k].durMs) { inSeg = true; break; }
                 }
-                applyPbRate(); // 换段（含自动接续）会重置倍率，每次元数据就绪后重新应用
+                bub.textContent = hms(t) + (inSeg ? '' : '（无录像）');
+                bub.style.left = Math.max(26, Math.min(rect.width - 26, x)) + 'px';
+                bub.hidden = false;
+                if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+            }
+            $('tlTrack').addEventListener('mousemove', showTlBubble);
+            $('tlTrack').addEventListener('mouseleave', function () { bub.hidden = true; });
+            $('tlTrack').addEventListener('touchstart', showTlBubble, { passive: true });
+            $('tlTrack').addEventListener('touchmove', showTlBubble, { passive: true });
+            $('tlTrack').addEventListener('touchend', function () {
+                hideTimer = setTimeout(function () { bub.hidden = true; }, 800);
             });
-            pv.addEventListener('timeupdate', function () { updateCursor(); updateMeta(); autoFollow(); });
-            pv.addEventListener('ended', pbNextSeg);
+        })();
+        (function () {
+            /** v2.2.5 两个 video 都挂同一组监听：A/B 交替后事件继续生效。 */
+            function bindPbVideo(el) {
+                el.addEventListener('loadedmetadata', function () {
+                    var pb = state.pb;
+                    if (el === pbV()) {
+                        if (pb.pendingOffset != null) {
+                            el.currentTime = Math.min(pb.pendingOffset, Math.max(0, (el.duration || 0) - 0.05));
+                            pb.pendingOffset = null;
+                        }
+                        applyPbRate(); // 换段（含自动接续）会重置倍率，每次元数据就绪后重新应用
+                    }
+                });
+                el.addEventListener('timeupdate', function () {
+                    maybePreloadNext(); // v2.2.5 剩余 <8 秒时把下一段预载进待命元素
+                    updateCursor(); updateMeta(); autoFollow();
+                });
+                el.addEventListener('ended', pbNextSeg);
+            }
+            bindPbVideo($('pbVideo'));
+            bindPbVideo($('pbVideoB'));
             $('pbSpeed').addEventListener('change', function () { applyPbRate(); });
             $('pbLoop').addEventListener('change', function () {
                 state.pb.loop = this.value;
@@ -4429,7 +4547,7 @@
             }
             document.addEventListener('keydown', function (e) {
                 if (!pbKeysActive()) return;
-                var v2 = $('pbVideo');
+                var v2 = pbV();
                 var pb = state.pb;
                 function seekDelta(delta) {
                     if (pb.idx < 0 || !v2.src) return;

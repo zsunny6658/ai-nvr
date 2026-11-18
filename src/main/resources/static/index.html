@@ -10,7 +10,7 @@
     <base href="./">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230891b2'/%3E%3C/svg%3E">
     <title>aiNVR · AI 增强摄像头 NVR</title>
-    <link rel="stylesheet" href="style.css?v=48">
+    <link rel="stylesheet" href="style.css?v=49">
 </head>
 <body>
 <header class="topbar">
@@ -191,7 +191,8 @@
 
             <div class="pb-stage">
                 <video id="pbVideo" controls playsinline webkit-playsinline x5-playsinline x5-video-player-type="h5" x5-video-player-fullscreen="true"></video>
-                <div id="pbEmpty" class="pb-empty">选择摄像头与日期，点击下方时间轴上的蓝色录像区段即可回放；分段会自动连续播放。</div>
+                <video id="pbVideoB" class="pb-off" preload="auto" playsinline webkit-playsinline x5-playsinline x5-video-player-type="h5" x5-video-player-fullscreen="true"></video>
+                <div id="pbEmpty" class="pb-empty">选择摄像头与日期，点击下方时间轴上的蓝色录像区段即可回放；分段会自动无缝连续播放。</div>
             </div>
             <div class="pb-meta">
                 <span id="pbNow" class="muted">--:--:--</span>
@@ -220,6 +221,7 @@
                     <div class="tl-blocks" id="tlBlocks"></div>
                     <div class="tl-motion" id="tlMotion"></div>
                     <div class="tl-cursor" id="tlCursor" hidden></div>
+                    <div class="tl-bubble" id="tlBubble" hidden>00:00</div>
                 </div>
             </div>
             </div>
@@ -837,7 +839,7 @@
 <footer class="app-footer">aiNVR · <span id="appVersion">v?</span></footer>
 
 <script src="vendor/hls.min.js"></script>
-<script src="watchdog.js?v=48"></script>
-<script src="app.js?v=48"></script>
+<script src="watchdog.js?v=49"></script>
+<script src="app.js?v=49"></script>
 </body>
 </html>
