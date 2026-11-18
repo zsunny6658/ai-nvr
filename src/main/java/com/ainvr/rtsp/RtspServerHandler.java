@@ -275,7 +275,7 @@ public final class RtspServerHandler extends SimpleChannelInboundHandler<RtspReq
         long now = System.currentTimeMillis() / 1000;
         s.append("v=0\r\n");
         s.append("o=- ").append(now).append(' ').append(now).append(" IN IP4 0.0.0.0\r\n");
-        s.append("s=invr\r\n");
+        s.append("s=ainvr\r\n");
         s.append("c=IN IP4 0.0.0.0\r\n");
         s.append("t=0 0\r\n");
         s.append("a=control:*\r\n");

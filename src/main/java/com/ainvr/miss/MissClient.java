@@ -302,8 +302,8 @@ public final class MissClient implements AutoCloseable {
         return new MissPacket(codecId, sequence, flags, timestampMs, payload);
     }
 
-    /** 诊断开关：-Dinvr.dumppkt=true 时打印前若干媒体包头。 */
-    private static final boolean DUMP_PKT = Boolean.getBoolean("invr.dumppkt");
+    /** 诊断开关：-Dainvr.dumppkt=true 时打印前若干媒体包头。 */
+    private static final boolean DUMP_PKT = Boolean.getBoolean("ainvr.dumppkt");
     private int dumpVideo;
     private int dumpAudio;
 

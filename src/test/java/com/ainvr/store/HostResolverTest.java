@@ -25,7 +25,7 @@ class HostResolverTest {
 
     @AfterEach
     void clearOverride() {
-        System.clearProperty("invr.host." + DID);
+        System.clearProperty("ainvr.host." + DID);
     }
 
     private CameraDevice cam(String ip) {
@@ -62,7 +62,7 @@ class HostResolverTest {
     @Test
     void systemPropertyOverride_winsOverEverything() {
         // 即使云端有效，手动指定也优先
-        System.setProperty("invr.host." + DID, "192.168.1.99");
+        System.setProperty("ainvr.host." + DID, "192.168.1.99");
         assertEquals("192.168.1.99", new HostResolver(dir).resolve(cam("10.10.10.14")));
         // 云端 0.0.0.0 且无缓存时同样生效
         Path empty = dir.resolve("empty");

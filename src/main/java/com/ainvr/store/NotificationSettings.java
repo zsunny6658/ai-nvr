@@ -9,7 +9,7 @@ import java.util.Locale;
  * <p>画面变动 / 设备离线 / 重连等事件产生时，可同时走两个出向通道：</p>
  * <ul>
  *   <li><strong>Webhook</strong>：向 {@code webhookUrl} POST JSON 事件载荷；配置了
- *       {@code webhookSecret} 时附带 {@code X-aiNVR-Signature} 头（旧版为 {@code X-invr-Signature}，仍随附以兼容旧接收端）
+ *       {@code webhookSecret} 时附带 {@code X-aiNVR-Signature} 头
  *       （HMAC-SHA256 十六进制，密钥对原始请求体计算），便于接收端验签；</li>
  *   <li><strong>SMTP 邮件</strong>：内置轻量 SMTP 客户端（JDK 原生 Socket/SSLSocket，
  *       不引入第三方依赖），465 端口默认隐式 TLS，587 默认 STARTTLS，支持 AUTH LOGIN。</li>

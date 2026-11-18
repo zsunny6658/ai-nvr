@@ -11,8 +11,8 @@ import java.nio.file.Paths;
  *
  * <p>解析优先级：</p>
  * <ol>
- *   <li>JVM 系统属性 {@code -Dainvr.data.dir=<目录>}（旧名 {@code invr.data.dir} 仍兼容）；</li>
- *   <li>环境变量 {@code AINVR_DATA_DIR}（旧名 {@code INVR_DATA_DIR} 仍兼容）；</li>
+ *   <li>JVM 系统属性 {@code -Dainvr.data.dir=<目录>}；</li>
+ *   <li>环境变量 {@code AINVR_DATA_DIR}；</li>
  *   <li>默认：<b>运行目录</b>（{@code user.dir}，即启动 {@code java} 时所在工作目录）下的
  *       {@code .ainvr/} —— 与录像目录 {@code recordings/} 一样让数据跟随程序目录，
  *       便于整目录拷贝 / 迁移、容器化挂载，且不污染用户家目录。</li>
@@ -54,13 +54,6 @@ public final class DataDir {
         String override = System.getProperty("ainvr.data.dir");
         if (isBlank(override)) {
             override = System.getenv("AINVR_DATA_DIR");
-        }
-        // v2.2.0 兼容旧属性名 / 旧环境变量名（品牌化前的部署脚本仍可用）
-        if (isBlank(override)) {
-            override = System.getProperty("invr.data.dir");
-        }
-        if (isBlank(override)) {
-            override = System.getenv("INVR_DATA_DIR");
         }
         if (!isBlank(override)) {
             return Paths.get(override.trim());

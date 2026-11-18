@@ -23,13 +23,13 @@ import java.util.Map;
  *
  * <p>解析优先级：</p>
  * <ol>
- *   <li>系统属性手动覆盖：{@code -Dinvr.host.<did>=<IP>}（最高优先级，用于 IP 变更/排障）；</li>
+ *   <li>系统属性手动覆盖：{@code -Dainvr.host.<did>=<IP>}（最高优先级，用于 IP 变更/排障）；</li>
  *   <li>云端返回的 {@code localip} 有效：采用，并写入 {@code hosts.json} 记忆；</li>
  *   <li>云端无效（0.0.0.0/空）：回退到 {@code hosts.json} 中该设备最后一次的可用 IP；</li>
  *   <li>都没有：返回 {@code null}，由上层报错并提示手动指定。</li>
  * </ol>
  *
- * 缓存文件 {@code hosts.json} 位于数据目录（默认运行目录 {@code .invr/}，见 {@link DataDir}）。
+ * 缓存文件 {@code hosts.json} 位于数据目录（默认运行目录 {@code .ainvr/}，见 {@link DataDir}）。
  */
 public class HostResolver {
 
@@ -54,7 +54,7 @@ public class HostResolver {
         String did = device.did();
 
         // 1. 系统属性手动覆盖
-        String manual = System.getProperty("invr.host." + did);
+        String manual = System.getProperty("ainvr.host." + did);
         if (isValid(manual)) {
             log.info("设备 {} 使用手动指定的局域网 IP {}", did, manual.trim());
             return manual.trim();

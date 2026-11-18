@@ -30,7 +30,7 @@ import java.util.function.Consumer;
 /**
  * 告警事件存储：append-only JSONL + 内存索引 + 独立 JPEG 快照文件。
  *
- * <p>刻意不引入数据库：i-nvr 其它状态均为 {@code .invr/} 下的轻量文件，事件量级（默认上限
+ * <p>刻意不引入数据库：本系统其它状态均为数据目录（默认 {@code .ainvr/}）下的轻量文件，事件量级（默认上限
  * 2000 条）用 JSONL 重放完全够用，也不会让 fpk 变大或拖慢启动。每次写操作追加一行
  * {@code {"op": ...}}，启动按顺序重放恢复 {@code add / handled / delete} 三种意图；行数超过
  * 上限两倍时压缩重写一次（临时文件 + 原子 rename），避免日志无限膨胀。</p>

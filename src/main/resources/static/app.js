@@ -70,24 +70,12 @@
         return p.indexOf('api/access') === 0 || p.indexOf('api/login') === 0;
     }
 
-    /* ---------- 门禁令牌（不依赖 Cookie，兼容跨站 iframe） ----------
-       v2.2.0 品牌化：键名 invr_access_token → ainvr_access_token；首次读取时自动从旧键迁移，
-       已登录用户升级后不掉解锁态。 */
+    /* ---------- 门禁令牌（不依赖 Cookie，兼容跨站 iframe） ---------- */
     var TOKEN_KEY = 'ainvr_access_token';
-    var LEGACY_TOKEN_KEY = 'invr_access_token';
     function getToken() {
         try {
             var v = localStorage.getItem(TOKEN_KEY);
             if (v) { return v; }
-            // 旧键迁移：读到即写入新键并清除旧键（迁移失败不影响返回旧值）
-            var legacy = localStorage.getItem(LEGACY_TOKEN_KEY);
-            if (legacy) {
-                try {
-                    localStorage.setItem(TOKEN_KEY, legacy);
-                    localStorage.removeItem(LEGACY_TOKEN_KEY);
-                } catch (e2) { /* 迁移失败忽略 */ }
-                return legacy;
-            }
         } catch (e) { /* 落到内存兜底 */ }
         return state.memToken || '';
     }
@@ -95,20 +83,15 @@
         state.memToken = t || '';
         try {
             if (t) { localStorage.setItem(TOKEN_KEY, t); }
-            else {
-                localStorage.removeItem(TOKEN_KEY);
-                try { localStorage.removeItem(LEGACY_TOKEN_KEY); } catch (e2) {}
-            }
+            else { localStorage.removeItem(TOKEN_KEY); }
         } catch (e) { /* 存储被禁用时仅用内存兜底 */ }
     }
 
     /* v1.2.16「记住解锁」：服务端令牌会话只在内存，进程重启 / 会话过期 / WebView 重新加载
        都会掉解锁态。解锁成功时保存由访问密码派生的长期凭证，页面重新探测到未解锁时静默恢复，
        避免预览页按返回后又要重新输入访问密码。主动「锁定」即清除，等价于用户主动退出。
-       v2.2.0 品牌化：键名 invr_access_remember → ainvr_access_remember（localStorage 与
-       Cookie 双通道同步迁移，读到旧键即写新键清旧键）。 */
+       （localStorage 与 Cookie 双通道互为兜底。） */
     var REMEMBER_KEY = 'ainvr_access_remember';
-    var LEGACY_REMEMBER_KEY = 'invr_access_remember';
     function getRemember() {
         try { var v = localStorage.getItem(REMEMBER_KEY); if (v) return v; }
         catch (e) { /* 分区存储不可读时继续试 Cookie */ }
@@ -116,12 +99,6 @@
         try {
             var m = document.cookie.match(/(?:^|;\s*)ainvr_access_remember=([^;]*)/);
             if (m) return decodeURIComponent(m[1]);
-            var lm = document.cookie.match(/(?:^|;\s*)invr_access_remember=([^;]*)/);
-            if (lm) {
-                var lv = decodeURIComponent(lm[1]);
-                try { setRemember(lv); } catch (e2) { /* 迁移失败不影响返回旧值 */ }
-                return lv;
-            }
         } catch (e) { return ''; }
         return '';
     }
@@ -131,11 +108,8 @@
             else { localStorage.removeItem(REMEMBER_KEY); }
         } catch (e) { /* 存储被禁用时退化为每次输入密码 */ }
         try {
-            // 新键写入 + 旧键清除（max-age=0），避免残留两份
             document.cookie = REMEMBER_KEY + '=' + (t ? encodeURIComponent(t) : '')
                 + '; path=/; max-age=' + (t ? 2592000 : 0) + '; SameSite=Lax';
-            document.cookie = LEGACY_REMEMBER_KEY + '='
-                + '; path=/; max-age=0; SameSite=Lax';
         } catch (e) { /* Cookie 不可用不影响主路径 */ }
     }
     function clearRemember() { setRemember(''); }

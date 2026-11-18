@@ -182,8 +182,7 @@ public class NotifyService {
                     .header("User-Agent", "aiNVR-notify/2.1")
                     .POST(HttpRequest.BodyPublishers.ofByteArray(body));
             if (!cfg.webhookSecret().isBlank()) {
-                // v2.2.0 彻底品牌化：仅发送 X-aiNVR-Signature（旧名 X-invr-Signature 不再随发，
-                // 按旧头名配置验签的接收端需同步改为新头名）
+                // Webhook 验签：HMAC-SHA256 摘要随 X-aiNVR-Signature 头发送
                 rb.header("X-aiNVR-Signature", "sha256=" + hmacSha256Hex(cfg.webhookSecret(), body));
             }
             // 每次投递新建客户端：通知低频，开销可忽略；避免复用已被服务端关闭的
@@ -264,9 +263,9 @@ public class NotifyService {
                 .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")))
                 .append("\n");
         if (!e.snapshot().isBlank()) {
-            sb.append("快照：/appdata/invr 事件页可查看\n");
+            sb.append("快照：/appdata/ainvr 事件页可查看\n");
         }
-        sb.append("\n—— invr 网络录像服务");
+        sb.append("\n—— aiNVR 网络录像服务");
         return sb.toString();
     }
 }

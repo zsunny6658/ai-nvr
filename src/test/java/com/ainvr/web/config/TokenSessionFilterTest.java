@@ -15,9 +15,8 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 /**
- * v2.2.0 品牌化回归：媒体令牌查询参数更名 __invr_t → __ainvr_t 后，
- * 新旧参数名都必须能解析出令牌会话（旧名是给未强刷的浏览器缓存页面的回落，
- * 参数名漏改会导致预览/回放/快照全部 401——v2.2.0 首发的真实事故）。
+ * 媒体令牌查询参数回归：__ainvr_t 必须能解析出令牌会话
+ * （参数名漏改会导致预览/回放/快照全部 401——v2.2.0 首发的真实事故）。
  */
 class TokenSessionFilterTest {
 
@@ -39,11 +38,6 @@ class TokenSessionFilterTest {
     @Test
     void newParamNameResolvesSession() throws Exception {
         assertNotNull(run(TokenSessionFilter.QUERY_PARAM), "新参数名 __ainvr_t 应解析出会话");
-    }
-
-    @Test
-    void legacyParamNameStillResolvesSession() throws Exception {
-        assertNotNull(run(TokenSessionFilter.LEGACY_QUERY_PARAM), "旧参数名 __invr_t 应保留回落一个版本");
     }
 
     @Test

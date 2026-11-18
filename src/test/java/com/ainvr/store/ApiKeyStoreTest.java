@@ -30,7 +30,7 @@ class ApiKeyStoreTest {
     void generateThenVerifyAndReload(@TempDir Path tempDir) {
         ApiKeyStore store = new ApiKeyStore(tempDir);
         String key = store.generate();
-        assertTrue(key.startsWith(ApiKeyStore.KEY_PREFIX), "随机密钥应带 invr_ 前缀");
+        assertTrue(key.startsWith(ApiKeyStore.KEY_PREFIX), "随机密钥应带 ainvr_ 前缀");
         assertTrue(key.length() >= ApiKeyStore.MIN_CUSTOM_LEN);
         assertTrue(store.isConfigured());
         assertTrue(store.verify(key));

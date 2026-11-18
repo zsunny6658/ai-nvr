@@ -22,7 +22,7 @@ import java.util.Optional;
  *
  * <p>访问密码用于进入本系统的本地门禁，<b>不保存明文、也不可逆</b>：采用
  * {@code PBKDF2WithHmacSHA256} + 每密码独立随机盐 + 高迭代次数派生密钥，落盘
- * 数据目录下的 {@code access.json}（默认运行目录 {@code .invr/}，见 {@link DataDir}；
+ * 数据目录下的 {@code access.json}（默认运行目录 {@code .ainvr/}，见 {@link DataDir}；
  * base64 的 salt / hash + 迭代次数）。校验时用相同参数
  * 重新派生并做恒定时间比较。</p>
  *
@@ -43,7 +43,7 @@ public class AccessKeyStore {
     public static final int MIN_LEN = 10;
     public static final int MAX_LEN = 64;
     /** 解锁/会话密钥派生的域隔离标签，确保其与密码校验哈希（hash）使用不同盐、互不相关。 */
-    private static final byte[] UNLOCK_LABEL = "invr:unlock-token:v1".getBytes(StandardCharsets.UTF_8);
+    private static final byte[] UNLOCK_LABEL = "ainvr:unlock-token:v1".getBytes(StandardCharsets.UTF_8);
 
     private final Path dir;
     private final ObjectMapper mapper = new ObjectMapper()

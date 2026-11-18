@@ -20,11 +20,11 @@ import java.util.Base64;
  * <p>用于外部系统调用受 API 密钥保护的开放接口（当前为 {@code GET /api/snapshot/{did}}，
  * 请求头 {@code X-API-Key}）。<b>不落明文</b>：文件中只保存密钥的 SHA-256 摘要与用于页面
  * 展示的脱敏掩码，校验时对请求密钥做同样摘要并恒定时间比较。随机密钥为
- * {@code invr_} + 32 位 base64url 字符（24 字节随机量，约 128 位熵），仅在生成/保存的
+ * {@code ainvr_} + 32 位 base64url 字符（24 字节随机量，约 128 位熵），仅在生成/保存的
  * 响应中返回一次明文。</p>
  *
  * <p>数据文件 {@code api-key.json} 与 {@link AccessKeyStore} 的 access.json 同目录（默认
- * 运行目录 {@code .invr/}，见 {@link DataDir}），并尽量收紧为仅 owner 可读写。SHA-256 对
+ * 运行目录 {@code .ainvr/}，见 {@link DataDir}），并尽量收紧为仅 owner 可读写。SHA-256 对
  * 高熵随机密钥足够；自定义密钥因此强制不少于 {@value #MIN_CUSTOM_LEN} 位且不得含空白。</p>
  */
 @Component
@@ -34,14 +34,14 @@ public class ApiKeyStore {
 
     private static final String API_KEY_FILE = "api-key.json";
     /** 随机密钥前缀，便于在日志/配置中辨识。 */
-    public static final String KEY_PREFIX = "invr_";
+    public static final String KEY_PREFIX = "ainvr_";
     /** 随机字节数（24 → base64url 32 字符）。 */
     private static final int RANDOM_BYTES = 24;
     /** 自定义密钥长度边界。 */
     public static final int MIN_CUSTOM_LEN = 16;
     public static final int MAX_LEN = 80;
-    /** 掩码保留的前缀（含 invr_）与尾段字符数。 */
-    private static final int MASK_HEAD = 9;
+    /** 掩码保留的前缀（含 ainvr_）与尾段字符数。 */
+    private static final int MASK_HEAD = 10;
     private static final int MASK_TAIL = 4;
 
     private final Path dir;
@@ -168,7 +168,7 @@ public class ApiKeyStore {
         }
     }
 
-    /** 脱敏掩码：{@code invr_xxxx…yyyy}，仅保留首段与末 4 位。 */
+    /** 脱敏掩码：{@code ainvr_xxxx…yyyy}，仅保留首段与末 4 位。 */
     static String maskOf(String key) {
         if (key.length() <= MASK_HEAD + MASK_TAIL) {
             return KEY_PREFIX + "****";

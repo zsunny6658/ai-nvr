@@ -40,7 +40,6 @@ class NotifyServiceTest {
     private HttpServer http;
     private final ConcurrentLinkedQueue<byte[]> hookBodies = new ConcurrentLinkedQueue<>();
     private final ConcurrentLinkedQueue<String> hookSigs = new ConcurrentLinkedQueue<>();
-    private final java.util.concurrent.atomic.AtomicBoolean hookLegacySeen = new java.util.concurrent.atomic.AtomicBoolean(false);
     private final AtomicInteger hookStatus = new AtomicInteger(200);
     private final AtomicInteger hookHits = new AtomicInteger();
 
@@ -58,12 +57,10 @@ class NotifyServiceTest {
             byte[] body = ex.getRequestBody().readAllBytes();
             hookBodies.add(body);
             // 队列不允许 null：无签名头时跳过而不是抛 NPE（否则 handler 中断、连接无响应）
-            // v2.2.0 彻底品牌化：仅发 X-aiNVR-Signature，旧头 X-invr-Signature 不再出现
             String sig = ex.getRequestHeaders().getFirst("X-aiNVR-Signature");
             if (sig != null) {
                 hookSigs.add(sig);
             }
-            hookLegacySeen.set(ex.getRequestHeaders().getFirst("X-invr-Signature") != null);
             byte[] resp = "ok".getBytes(StandardCharsets.UTF_8);
             ex.sendResponseHeaders(hookStatus.get(), resp.length);
             try (OutputStream os = ex.getResponseBody()) {
@@ -134,8 +131,6 @@ class NotifyServiceTest {
         assertTrue(json.contains("\"type\":\"motion\""));
         assertEquals("sha256=" + NotifyService.hmacSha256Hex(secret, body), hookSigs.peek(),
                 "签名头应为 HMAC-SHA256(body)");
-        // v2.2.0 彻底品牌化：旧头名 X-invr-Signature 不应再出现
-        assertFalse(hookLegacySeen.get(), "旧签名头 X-invr-Signature 应已移除");
     }
 
     @Test

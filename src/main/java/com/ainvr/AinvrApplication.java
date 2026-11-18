@@ -49,7 +49,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * iNvr 命令行入口（M1）。
+ * aiNVR 命令行入口（M1）。
  *
  * <pre>
  *   invr login &lt;账号&gt; [密码]      登录米家账号（验证码/2FA 按提示交互；密码省略则安全输入）
@@ -116,7 +116,7 @@ public class AinvrApplication {
 
     private static void usage() {
         System.out.println("""
-                iNvr - 小米摄像头 NVR（M1：云端认证与设备发现；M2：CS2/MISS 取流）
+                aiNVR - 小米摄像头 NVR（M1：云端认证与设备发现；M2：CS2/MISS 取流）
 
                 用法:
                   invr login <账号> [密码]      登录米家账号（验证码/2FA 按提示交互）
@@ -679,7 +679,7 @@ public class AinvrApplication {
         } catch (Exception e) {
             lanIp = "127.0.0.1";
         }
-        System.out.println("================ iNvr RTSP 下行服务 ================");
+        System.out.println("================ aiNVR RTSP 下行服务 ================");
         System.out.println("监听端口：" + port + "（仅 RTP-over-TCP interleaved）");
         System.out.println("可拉流地址：");
         for (CameraDevice c : cameras) {
