@@ -216,6 +216,7 @@ body {
 /* 页脚版本信息 */
 .app-footer { margin-top: 18px; padding: 10px 4px calc(10px + env(safe-area-inset-bottom, 0px)); text-align: center; font-size: 11px; color: var(--muted); letter-spacing: .3px; }
 .app-footer #appVersion { font-variant-numeric: tabular-nums; }
+.app-footer-sub { margin-top: 2px; font-size: 10px; opacity: .85; }
 @keyframes pop { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 
 /* ========== 时间轴回放 ========== */

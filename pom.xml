@@ -16,7 +16,7 @@
     <version>0.1.0-SNAPSHOT</version>
     <packaging>jar</packaging>
     <name>aiNVR</name>
-    <description>自研 NVR：小米摄像头 miss/mess + CS2 协议接入，Spring Boot Web 服务</description>
+    <description>aiNVR：AI 增强小米摄像头 NVR（miss/mess + CS2 私有协议直连、画面变动侦测与本地 AI 事件、Web 控制台），基于 i-nvr by IndSvr 以 GPL-2.0 二次开发</description>
 
     <properties>
         <maven.compiler.release>17</maven.compiler.release>
