@@ -20,7 +20,7 @@ JVM_XMS="${wizard_jvm_xms:-128}"
 #   对无尾斜杠路径生成绝对重定向 Location: http://localhost/app/ainvr/，
 #   浏览器会跳到自身 localhost 而报 "Not Found"。开启后 Location 变为相对路径
 #   /app/ainvr/，浏览器在当前域名下正确补斜杠。
-# - ainvr.uds-socket 把 socket 路径在安装时固化写入配置（v2.2.0 前为 invr.uds-socket，安装时会被本文件整体重写），服务进程不再依赖
+# - ainvr.uds-socket 把 socket 路径在安装时固化写入配置，服务进程不再依赖
 #   运行时环境变量 TRIM_APPDEST（fnOS 不保证把它注入给 cmd/main 的子进程）
 cat > "${ETC_DIR}/application-fnos.yml" <<EOFCONF
 server:

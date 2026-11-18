@@ -31,37 +31,6 @@ export LC_ALL=C.UTF-8
 SPRING_ARGS="--spring.config.additional-location=file:${TRIM_PKGETC}/ --spring.profiles.active=fnos"
 mkdir -p "${LOG_DIR}"
 
-# v2.0.2 包名由 indsvr-invr 更名为 ainvr：老应用数据目录一次性迁移。
-# fnOS 数据目录约定为 <数据卷>/@appdata/<包名>，与 VAR_DIR 同卷，用 mv 改名搬运（秒级、零拷贝）。
-# 仅搬 VAR_DIR 中不存在的条目（绝不覆盖新目录已有文件）；完成后写标记，只在首次启动执行一次。
-# v2.2.0 品牌化：应用数据子目录 .invr/ 更名 .ainvr/（VAR_DIR 内，同卷 mv 秒级零拷贝，
-# 绝不覆盖已有文件；只执行一次）。此前的 indsvr-invr -> ainvr 包级迁移逻辑保持不变。
-legacy_dotdir="${VAR_DIR}/.invr"
-dotdir_marker="${VAR_DIR}/.migrated-from-invr-dotdir"
-if [ -d "${legacy_dotdir}" ] && [ ! -e "${dotdir_marker}" ] && [ ! -d "${VAR_DIR}/.ainvr" ]; then
-  echo "[migrate] moving app data dotdir ${legacy_dotdir} -> ${VAR_DIR}/.ainvr"
-  mv "${legacy_dotdir}" "${VAR_DIR}/.ainvr" || echo "[migrate] WARN: dotdir move failed"
-  touch "${dotdir_marker}"
-fi
-
-legacy_dir="$(dirname "${VAR_DIR}")/indsvr-invr"
-migration_marker="${VAR_DIR}/.migrated-from-indsvr-invr"
-if [ -d "${legacy_dir}" ] && [ ! -e "${migration_marker}" ]; then
-  echo "[migrate] moving data from ${legacy_dir} -> ${VAR_DIR}"
-  shopt -s nullglob dotglob
-  for item in "${legacy_dir}"/*; do
-    base="$(basename "${item}")"
-    if [ -e "${VAR_DIR}/${base}" ]; then
-      echo "[migrate] skip existing ${base}"
-      continue
-    fi
-    mv "${item}" "${VAR_DIR}/${base}" || echo "[migrate] WARN: failed to move ${base}"
-  done
-  shopt -u nullglob dotglob
-  touch "${migration_marker}"
-  echo "[migrate] done"
-fi
-
 # 按「java 进程 + 完整 jar 路径」列出本应用的进程。
 # 不能只依赖 app.pid：覆盖安装 / 升级会重建应用目录，pid 文件可能丢失，
 # 旧进程随即变成孤儿继续占用 service_port，导致 fnOS checkport 报「端口被占用」。
