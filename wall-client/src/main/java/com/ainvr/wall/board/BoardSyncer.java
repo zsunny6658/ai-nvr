@@ -1,4 +1,4 @@
-package com.invr.wall.board;
+package com.ainvr.wall.board;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

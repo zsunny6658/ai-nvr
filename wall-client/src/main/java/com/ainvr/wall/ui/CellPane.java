@@ -1,7 +1,7 @@
-package com.invr.wall.ui;
+package com.ainvr.wall.ui;
 
-import com.invr.wall.media.PlayerState;
-import com.invr.wall.media.RtspPlayer;
+import com.ainvr.wall.media.PlayerState;
+import com.ainvr.wall.media.RtspPlayer;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;

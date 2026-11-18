@@ -1,6 +1,6 @@
-package com.invr.wall.support;
+package com.ainvr.wall.support;
 
-import com.invr.wall.config.WallConfigStore;
+import com.ainvr.wall.config.WallConfigStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

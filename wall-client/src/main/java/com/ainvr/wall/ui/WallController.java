@@ -1,14 +1,14 @@
-package com.invr.wall.ui;
+package com.ainvr.wall.ui;
 
-import com.invr.wall.board.BoardClient;
-import com.invr.wall.board.BoardDto;
-import com.invr.wall.board.BoardSyncer;
-import com.invr.wall.board.ShareLayout;
-import com.invr.wall.config.WallConfig;
-import com.invr.wall.event.SseClient;
-import com.invr.wall.media.RtspPlayer;
-import com.invr.wall.media.PlayerPool;
-import com.invr.wall.support.Clock;
+import com.ainvr.wall.board.BoardClient;
+import com.ainvr.wall.board.BoardDto;
+import com.ainvr.wall.board.BoardSyncer;
+import com.ainvr.wall.board.ShareLayout;
+import com.ainvr.wall.config.WallConfig;
+import com.ainvr.wall.event.SseClient;
+import com.ainvr.wall.media.RtspPlayer;
+import com.ainvr.wall.media.PlayerPool;
+import com.ainvr.wall.support.Clock;
 import javafx.application.Platform;
 import javafx.scene.control.Label;
 import javafx.scene.layout.GridPane;

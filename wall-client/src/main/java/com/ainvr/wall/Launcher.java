@@ -1,7 +1,7 @@
-package com.invr.wall;
+package com.ainvr.wall;
 
-import com.invr.wall.support.SingleInstance;
-import com.invr.wall.ui.WallApplication;
+import com.ainvr.wall.support.SingleInstance;
+import com.ainvr.wall.ui.WallApplication;
 import javafx.application.Application;
 
 /**
@@ -17,7 +17,7 @@ public final class Launcher {
 
     public static void main(String[] args) {
         if (!SingleInstance.tryLock()) {
-            System.err.println("iNvr 大屏客户端已在运行，重复启动被拒绝。");
+            System.err.println("aiNVR 大屏客户端已在运行，重复启动被拒绝。");
             System.exit(2);
         }
         Application.launch(WallApplication.class, args);

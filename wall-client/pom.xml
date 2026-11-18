@@ -4,12 +4,12 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>com.invr</groupId>
-    <artifactId>invr-wall</artifactId>
+    <groupId>com.ainvr</groupId>
+    <artifactId>ainvr-wall</artifactId>
     <version>0.1.0-SNAPSHOT</version>
     <packaging>jar</packaging>
-    <name>invr-wall</name>
-    <description>iNvr 共享看板配套 RTSP 大屏客户端（JavaFX + JavaCV/FFmpeg）</description>
+    <name>ainvr-wall</name>
+    <description>aiNVR 共享看板配套 RTSP 大屏客户端（JavaFX + JavaCV/FFmpeg）</description>
 
     <properties>
         <maven.compiler.release>17</maven.compiler.release>
@@ -57,7 +57,7 @@
                 <exclusion><groupId>org.bytedeco</groupId><artifactId>tesseract</artifactId></exclusion>
             </exclusions>
         </dependency>
-        <!-- FFmpeg（与 iNvr 服务端同版本；RTSP/TCP、H.265 解码、swscale 缩放） -->
+        <!-- FFmpeg（与 aiNVR 服务端同版本；RTSP/TCP、H.265 解码、swscale 缩放） -->
         <dependency>
             <groupId>org.bytedeco</groupId>
             <artifactId>javacpp</artifactId>
@@ -96,7 +96,7 @@
     </dependencies>
 
     <build>
-        <finalName>invr-wall</finalName>
+        <finalName>ainvr-wall</finalName>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -110,11 +110,11 @@
                 <artifactId>javafx-maven-plugin</artifactId>
                 <version>0.0.8</version>
                 <configuration>
-                    <mainClass>com.invr.wall.WallApplication</mainClass>
+                    <mainClass>com.ainvr.wall.WallApplication</mainClass>
                 </configuration>
             </plugin>
 
-            <!-- fat jar：含全部依赖与 native，java -jar target/invr-wall.jar 直接启动；
+            <!-- fat jar：含全部依赖与 native，java -jar target/ainvr-wall.jar 直接启动；
                  Launcher 为不继承 Application 的启动类，规避 classpath 下 JavaFX 启动检测 -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -141,7 +141,7 @@
                                     implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
                                 <transformer
                                     implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                                    <mainClass>com.invr.wall.Launcher</mainClass>
+                                    <mainClass>com.ainvr.wall.Launcher</mainClass>
                                 </transformer>
                             </transformers>
                         </configuration>

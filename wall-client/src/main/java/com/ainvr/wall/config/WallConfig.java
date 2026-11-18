@@ -1,4 +1,4 @@
-package com.invr.wall.config;
+package com.ainvr.wall.config;
 
 import java.net.URI;
 import java.net.URISyntaxException;

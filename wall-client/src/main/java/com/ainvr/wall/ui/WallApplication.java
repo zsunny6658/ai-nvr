@@ -1,7 +1,7 @@
-package com.invr.wall.ui;
+package com.ainvr.wall.ui;
 
-import com.invr.wall.config.WallConfig;
-import com.invr.wall.config.WallConfigStore;
+import com.ainvr.wall.config.WallConfig;
+import com.ainvr.wall.config.WallConfigStore;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.geometry.Pos;
@@ -56,7 +56,7 @@ public class WallApplication extends Application {
         Scene scene = new Scene(root);
         scene.getStylesheets().add(getClass().getResource(CSS_PATH).toExternalForm());
 
-        primaryStage.setTitle("iNvr 大屏客户端");
+        primaryStage.setTitle("aiNVR 大屏客户端");
         primaryStage.setScene(scene);
         // 窗口化最小尺寸 480x270（16:9 下限）；网格始终按百分比分割，窗口任意大小都等比铺满
         primaryStage.setMinWidth(480);

@@ -1,4 +1,4 @@
-package com.invr.wall.media;
+package com.ainvr.wall.media;
 
 /**
  * 单路 RTSP 播放器状态。

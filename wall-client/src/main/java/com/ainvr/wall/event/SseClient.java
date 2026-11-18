@@ -1,7 +1,7 @@
-package com.invr.wall.event;
+package com.ainvr.wall.event;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.invr.wall.support.Json;
+import com.ainvr.wall.support.Json;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;

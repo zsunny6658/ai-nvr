@@ -1,4 +1,4 @@
-package com.invr.wall.media;
+package com.ainvr.wall.media;
 
 import javafx.application.Platform;
 import javafx.scene.image.PixelBuffer;

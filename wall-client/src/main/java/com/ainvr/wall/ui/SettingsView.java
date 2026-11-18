@@ -1,10 +1,10 @@
-package com.invr.wall.ui;
+package com.ainvr.wall.ui;
 
-import com.invr.wall.board.BoardClient;
-import com.invr.wall.board.BoardDto;
-import com.invr.wall.board.BoardGoneException;
-import com.invr.wall.config.WallConfig;
-import com.invr.wall.config.WallConfigStore;
+import com.ainvr.wall.board.BoardClient;
+import com.ainvr.wall.board.BoardDto;
+import com.ainvr.wall.board.BoardGoneException;
+import com.ainvr.wall.config.WallConfig;
+import com.ainvr.wall.config.WallConfigStore;
 import javafx.application.Platform;
 import javafx.geometry.Pos;
 import javafx.scene.control.Button;
@@ -44,7 +44,7 @@ public final class SettingsView extends VBox {
         VBox card = new VBox(10);
         card.getStyleClass().add("settings-card");
 
-        Label title = new Label("iNvr 大屏客户端 · 共享看板连接");
+        Label title = new Label("aiNVR 大屏客户端 · 共享看板连接");
         title.getStyleClass().add("settings-title");
 
         Label linkLabel = new Label("共享链接");

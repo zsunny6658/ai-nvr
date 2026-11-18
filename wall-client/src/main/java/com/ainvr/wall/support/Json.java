@@ -1,4 +1,4 @@
-package com.invr.wall.support;
+package com.ainvr.wall.support;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 

@@ -1,6 +1,6 @@
-package com.invr.wall.config;
+package com.ainvr.wall.config;
 
-import com.invr.wall.support.Json;
+import com.ainvr.wall.support.Json;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -13,13 +13,13 @@ import java.nio.file.StandardCopyOption;
 
 /**
  * wall-config.json 持久化，风格对齐服务端 DataDir/Store：
- * 解析优先级 -Dinvr.wall.data.dir &gt; 环境变量 INVR_WALL_DATA_DIR &gt; 运行目录/.invr-wall。
+ * 解析优先级 -Dainvr.wall.data.dir &gt; 环境变量 AINVR_WALL_DATA_DIR &gt; 运行目录/.ainvr-wall。
  * 写操作先落临时文件再原子替换；文件权限收紧为仅 owner 可读写（令牌敏感）。
  */
 public final class WallConfigStore {
 
     private static final Logger log = LoggerFactory.getLogger(WallConfigStore.class);
-    private static final String DIR_NAME = ".invr-wall";
+    private static final String DIR_NAME = ".ainvr-wall";
     private static final String FILE_NAME = "wall-config.json";
 
     private final Path file;
@@ -29,9 +29,9 @@ public final class WallConfigStore {
     }
 
     public static Path dataDir() {
-        String override = System.getProperty("invr.wall.data.dir");
+        String override = System.getProperty("ainvr.wall.data.dir");
         if (override == null || override.isBlank()) {
-            override = System.getenv("INVR_WALL_DATA_DIR");
+            override = System.getenv("AINVR_WALL_DATA_DIR");
         }
         if (override != null && !override.isBlank()) {
             return Paths.get(override.trim());

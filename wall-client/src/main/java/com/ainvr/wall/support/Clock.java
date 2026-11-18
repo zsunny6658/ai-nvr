@@ -1,4 +1,4 @@
-package com.invr.wall.support;
+package com.ainvr.wall.support;
 
 /**
  * 服务端时钟校准：用 board 响应的 serverTime 计算本地与服务端的偏移，

@@ -1,4 +1,4 @@
-package com.invr.wall.board;
+package com.ainvr.wall.board;
 
 /**
  * 共享看板布局常量，与服务端 ShareBoard 的 LAYOUT_* 取值严格一致。

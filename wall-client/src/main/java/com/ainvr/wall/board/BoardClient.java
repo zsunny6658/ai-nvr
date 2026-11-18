@@ -1,7 +1,7 @@
-package com.invr.wall.board;
+package com.ainvr.wall.board;
 
-import com.invr.wall.config.WallConfig;
-import com.invr.wall.support.Json;
+import com.ainvr.wall.config.WallConfig;
+import com.ainvr.wall.support.Json;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;

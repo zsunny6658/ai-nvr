@@ -1,4 +1,4 @@
-package com.invr.wall.media;
+package com.ainvr.wall.media;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

@@ -6,7 +6,6 @@ PixelBuffer 直送上屏**，目标把延迟压到 0.5–1.5s，并复用服务�
 在线状态与事件推送，不新增任何服务端配置入口。
 
 - 技术栈：Java 17 / JavaFX 21 / JavaCV(FFmpeg) 1.5.10 / OkHttp 4 / Jackson 2 / slf4j-simple
-- 命名说明：子工程内部代码标识（包名 `com.invr.wall`、产物 `invr-wall.jar`、数据目录 `.invr-wall/`）保持沿用，不影响与 aiNVR 主服务配合使用
 - 支持布局：grid4（2×2）、grid6（1 大 5 小）、grid9（3×3）
 - 事件联动：grid4/9 全屏覆盖、grid6 主位交换，规则与 Web 端 `share.js` 同构
 - 独立 Maven 工程，不并入主服务 `ainvr-fnos.jar`，可单独打包部署到 Windows 大屏机
@@ -20,7 +19,7 @@ wall-client/
 ├─ pom.xml                     # shade fat jar + javafx-maven-plugin
 ├─ maven-settings.xml          # 与主工程一致的阿里云镜像配置
 └─ src/main/
-   ├─ java/com/invr/wall/
+   ├─ java/com/ainvr/wall/
    │  ├─ Launcher.java         # fat jar Main-Class（单实例锁 + 启动 JavaFX）
    │  ├─ support/              # Json、Clock（时钟校准）、SingleInstance
    │  ├─ config/               # WallConfig（共享链接解析）、原子落盘 Store
@@ -70,11 +69,11 @@ mvn -s maven-settings.xml javafx:run
 mvn -s maven-settings.xml clean package
 ```
 
-产物：`target/invr-wall.jar`，Main-Class 为 `com.invr.wall.Launcher`，运行：
+产物：`target/ainvr-wall.jar`，Main-Class 为 `com.ainvr.wall.Launcher`，运行：
 
 ```bash
-java -jar target/invr-wall.jar          # 带控制台，便于首装排查
-javaw -jar target/invr-wall.jar         # 无控制台，适合常驻
+java -jar target/ainvr-wall.jar          # 带控制台，便于首装排查
+javaw -jar target/ainvr-wall.jar         # 无控制台，适合常驻
 ```
 
 ### 2. jpackage 原生 app-image（推荐大屏机部署）
@@ -84,14 +83,14 @@ javaw -jar target/invr-wall.jar         # 无控制台，适合常驻
 ```powershell
 mvn -s maven-settings.xml clean package
 mkdir build\lib -Force | Out-Null
-Copy-Item target\invr-wall.jar build\lib\
+Copy-Item target\ainvr-wall.jar build\lib\
 
-jpackage --type app-image --name iNvrWall `
-  --input build\lib --main-jar invr-wall.jar `
-  --main-class com.invr.wall.Launcher --win-console --vendor iNvr
+jpackage --type app-image --name aiNVRWall `
+  --input build\lib --main-jar ainvr-wall.jar `
+  --main-class com.ainvr.wall.Launcher --win-console --vendor aiNVR
 ```
 
-输出 `build/iNvrWall/iNvrWall.exe`，目录整体拷贝即可运行，目标机无需另装 Java。
+输出 `build/aiNVRWall/aiNVRWall.exe`，目录整体拷贝即可运行，目标机无需另装 Java。
 需要 MSI 安装包时把 `--type app-image` 改为 `--type msi`。
 
 ## 部署为开机自启（无人值守）
@@ -99,13 +98,13 @@ jpackage --type app-image --name iNvrWall `
 方式一：启动目录（最简单）
 
 1. `Win+R` 输入 `shell:startup` 打开当前用户启动目录；
-2. 新建快捷方式，目标填 `javaw.exe -jar "C:\path\invr-wall.jar"`（app-image 则直接指向 `iNvrWall.exe`）。
+2. 新建快捷方式，目标填 `javaw.exe -jar "C:\path\ainvr-wall.jar"`（app-image 则直接指向 `aiNVRWall.exe`）。
 
 方式二：任务计划程序（可设失败重启、后台运行）
 
 ```powershell
-schtasks /Create /TN "iNvrWall" /SC ONLOGON /RL HIGHEST `
-  /TR '"C:\Program Files\Java\jdk-17\bin\javaw.exe" -jar "C:\path\invr-wall.jar"'
+schtasks /Create /TN "aiNVRWall" /SC ONLOGON /RL HIGHEST `
+  /TR '"C:\Program Files\Java\jdk-17\bin\javaw.exe" -jar "C:\path\ainvr-wall.jar"'
 ```
 
 进程内置数据目录文件锁（`wall.lock`），重复启动/重复自启只会保留一个实例。
@@ -122,9 +121,9 @@ schtasks /Create /TN "iNvrWall" /SC ONLOGON /RL HIGHEST `
 
 数据与配置目录优先级：
 
-1. JVM 参数 `-Dinvr.wall.data.dir=D:\wall`
-2. 环境变量 `INVR_WALL_DATA_DIR`
-3. 默认 `用户工作目录/.invr-wall/`
+1. JVM 参数 `-Dainvr.wall.data.dir=D:\wall`
+2. 环境变量 `AINVR_WALL_DATA_DIR`
+3. 默认 `用户工作目录/.ainvr-wall/`
 
 目录内含：`wall-config.json`（原子 tmp+move 写入）、`wall.lock`（单实例锁）。
 
