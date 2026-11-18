@@ -4500,9 +4500,29 @@
         }
     }
 
+    /** v2.2.3 设置页分组切换：只显示 data-sgroup 匹配的卡片，导航高亮同步并记忆选择。 */
+    function showSettingsGroup(name) {
+        if (!$('settingsNav')) { return; }
+        document.querySelectorAll('#tab-settings .set-card[data-sgroup]').forEach(function (c) {
+            c.hidden = c.getAttribute('data-sgroup') !== name;
+        });
+        document.querySelectorAll('#settingsNav .settings-nav-item').forEach(function (b) {
+            b.classList.toggle('active', b.getAttribute('data-sgroup') === name);
+        });
+        try { localStorage.setItem('ainvr_set_group', name); } catch (e2) { /* 存储不可用忽略 */ }
+    }
+
     document.querySelectorAll('.tab').forEach(function (t) {
             t.addEventListener('click', function () { gotoTab(t.getAttribute('data-tab')); });
         });
+
+        // v2.2.3 设置页分组导航（DSM 控制面板式）：点击左分类只显示对应卡片组，记忆上次选择
+        document.querySelectorAll('#settingsNav .settings-nav-item').forEach(function (b) {
+            b.addEventListener('click', function () { showSettingsGroup(b.getAttribute('data-sgroup')); });
+        });
+        try {
+            showSettingsGroup(localStorage.getItem('ainvr_set_group') || 'storage');
+        } catch (e) { showSettingsGroup('storage'); }
 
         // v2.0.1 回放页内二级切换：时间轴回放 / 录像文件
         $('pbPaneTimeline').addEventListener('click', function () { setPbPane('timeline'); });

@@ -343,6 +343,27 @@ body {
 .dir-selected code { font-family: Consolas, monospace; }
 .set-divider { height: 1px; background: var(--line); border: 0; margin: 16px 0; }
 
+/* ========== v2.2.3 设置页分组导航（DSM 控制面板式：左分类 + 右内容） ========== */
+.settings-layout { display: grid; grid-template-columns: 176px 1fr; gap: 16px; align-items: start; }
+.settings-nav {
+    display: flex; flex-direction: column; gap: 3px;
+    position: sticky; top: 12px;
+    background: var(--panel); border-radius: 12px; box-shadow: var(--shadow); padding: 10px 8px;
+}
+.settings-nav-item {
+    text-align: left; padding: 9px 12px; border: none; background: transparent;
+    border-radius: 8px; font-size: 13.5px; color: var(--ink); cursor: pointer; line-height: 1.2;
+}
+.settings-nav-item:hover { background: #f1f5f9; }
+.settings-nav-item.active { background: var(--primary); color: #fff; font-weight: 600; }
+.settings-body { min-width: 0; }
+.settings-body .set-card[hidden] { display: none; }
+@media (max-width: 760px) {
+    .settings-layout { grid-template-columns: 1fr; }
+    .settings-nav { position: static; flex-direction: row; overflow-x: auto; padding: 6px; }
+    .settings-nav-item { white-space: nowrap; padding: 8px 12px; }
+}
+
 /* ========== 共享看板 ========== */
 .modal-body { padding: 16px 18px; max-height: 72vh; overflow-y: auto; }
 .modal-body > label { display: block; margin: 14px 0 6px; font-size: 13px; color: #334155; font-weight: 600; }
