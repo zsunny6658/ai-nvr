@@ -1,4 +1,4 @@
-# iNvr 监控大屏客户端（wall-client）
+# aiNVR 监控大屏客户端（wall-client）
 
 共享看板的原生 RTSP 配套客户端，用于无人值守电视墙。浏览器看板走 HLS（分片 3s + 窗口，
 端到端延迟约 2–4s），本客户端通过 **RTSP-over-TCP 直连 + FFmpeg 低延迟解码 + JavaFX
@@ -6,9 +6,10 @@ PixelBuffer 直送上屏**，目标把延迟压到 0.5–1.5s，并复用服务�
 在线状态与事件推送，不新增任何服务端配置入口。
 
 - 技术栈：Java 17 / JavaFX 21 / JavaCV(FFmpeg) 1.5.10 / OkHttp 4 / Jackson 2 / slf4j-simple
+- 命名说明：子工程内部代码标识（包名 `com.invr.wall`、产物 `invr-wall.jar`、数据目录 `.invr-wall/`）保持沿用，不影响与 aiNVR 主服务配合使用
 - 支持布局：grid4（2×2）、grid6（1 大 5 小）、grid9（3×3）
 - 事件联动：grid4/9 全屏覆盖、grid6 主位交换，规则与 Web 端 `share.js` 同构
-- 独立 Maven 工程，不并入主服务 `invr.jar`，可单独打包部署到 Windows 大屏机
+- 独立 Maven 工程，不并入主服务 `ainvr-fnos.jar`，可单独打包部署到 Windows 大屏机
 
 > 完整设计与分期（M1–M4）见主工程 `docs/design/03-rtsp-wall-client-design.md`。
 
@@ -39,16 +40,16 @@ wall-client/
 | 操作系统 | Windows 10/11 x86_64（依赖已固定 windows classifier） |
 | 运行时 | JDK / JRE 17 及以上（开发机使用 IntelliJ 内置 JBR 21 编译，release 17） |
 | 网络 | 大屏机能同时访问服务端 HTTP 端口（默认 9080）与 RTSP 端口（默认 9554） |
-| 服务端 | 已部署含 board `rtsp{host,port}` 字段的 iNvr 版本；旧版本无该字段时回退 9554 与共享链接主机 |
+| 服务端 | 已部署含 board `rtsp{host,port}` 字段的 aiNVR 版本；旧版本无该字段时回退 9554 与共享链接主机 |
 
 ## 开发运行
 
 工程自带与主工程相同的 `maven-settings.xml`，无全局 Maven 时可直接指定 IDEA 内置 Maven：
 
 ```powershell
-$env:JAVA_HOME = "C:\Program Files\JetBrains\IntelliJ IDEA 2025.2.4\jbr"
-cd C:\Users\IndSvr\Desktop\iNvr\wall-client
-& "C:\Program Files\JetBrains\IntelliJ IDEA 2025.2.4\plugins\maven\lib\maven3\bin\mvn.cmd" `
+$env:JAVA_HOME = "<JDK17+ 路径，如 IntelliJ 内置 JBR>"
+cd <本仓库>/wall-client
+& "<IDEA 内置 Maven>\mvn.cmd" `
     -s maven-settings.xml javafx:run
 ```
 
