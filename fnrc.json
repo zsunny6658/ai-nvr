@@ -1,0 +1,12 @@
+{
+  "source_name": "aiNVR 官方源",
+  "apps": [
+    {
+      "id": "ainvr",
+      "name": "aiNVR",
+      "version": "2.3.0",
+      "download_url": "https://github.com/zsunny6658/ai-nvr/releases/download/v2.3.0/ainvr.fpk",
+      "platform": "x86"
+    }
+  ]
+}
