@@ -4,6 +4,7 @@
 
 `Java 17` · `Spring Boot 3` · `Netty` · `JavaCV(FFmpeg)` · `ONNX Runtime` · 无外部流媒体进程 · 无需刷固件
 
+- 官网：<https://ainvr.zsunny.top>
 - 上游项目：i-nvr by IndSvr（GPL-2.0），本仓库延续 GPL-2.0 发行并在应用内保留署名；
 - 本仓库（aiNVR 二开线）：[gitee.com/sunnymore/ai-nvr](https://gitee.com/sunnymore/ai-nvr)。
 
@@ -297,4 +298,3 @@ src/main/java/com/ainvr/
 - 详细设计文档：[`docs/design/01-xiaomi-protocol-design.md`](docs/design/01-xiaomi-protocol-design.md)
 - 共享看板设计文档：[`docs/design/02-shared-board-design.md`](docs/design/02-shared-board-design.md)
 - RTSP 大屏客户端：[`wall-client/README.md`](wall-client/README.md)
-- aiNVR 产品化评估：[`docs/design/04-ainvr-product-evaluation.md`](docs/design/04-ainvr-product-evaluation.md)
