@@ -2,7 +2,7 @@
   "schema_version": "moo",
   "source_info": {
     "name": "aiNVR 应用源",
-    "homepage": "https://github.com/zsunny6658/sunnyNVR",
+    "homepage": "https://github.com/zsunny6658/ai-nvr",
     "distributor": "Sunny",
     "description": "aiNVR 官方源：AI 增强小米摄像头 NVR（飞牛 fnOS fpk）",
     "updated_at": "2026-11-19T15:05:00+08:00"
@@ -16,7 +16,7 @@
       "author": "Sunny",
       "distributor": "Sunny",
       "homepage": "https://ainvr.zsunny.top",
-      "bug_report_url": "https://github.com/zsunny6658/sunnyNVR/issues",
+      "bug_report_url": "https://github.com/zsunny6658/ai-nvr/issues",
       "license": "GPL-2.0",
       "releases": {
         "2.3.0": {
@@ -24,7 +24,7 @@
           "changelog": "界面大版本：默认视觉全面转向深色「监控台」风格，「设置 → 外观」可切换浅色并记忆；桌面端改为左侧导航、手机端底部导航，未处理事件红点角标；摄像头卡顶部显示最近快照（30 秒刷新、可关），点击直接进入实时预览；时间轴回放 / 共享看板 / 登录与锁定页视觉同步统一；设置页开关改滑动样式并新增「外观」分组；移动端与飞牛 App 适配重调；命令行帮助与环境变量命名统一（ainvr / AINVR_REGION）。功能逻辑与协议无变更，可直接覆盖升级。",
           "packages": {
             "x86": {
-              "download_url": "https://github.com/zsunny6658/sunnyNVR/releases/download/v2.3.0/ainvr.fpk",
+              "download_url": "https://github.com/zsunny6658/ai-nvr/releases/download/v2.3.0/ainvr.fpk",
               "sha256": "5b643e63c275229d7954a7cda8da760a186907dea518294a32d9e26f7dcd100a",
               "size": 201825288,
               "size_mb": 192.47
@@ -33,12 +33,12 @@
         }
       },
       "sha256": "5b643e63c275229d7954a7cda8da760a186907dea518294a32d9e26f7dcd100a",
-      "icon_url": "https://raw.githubusercontent.com/zsunny6658/sunnyNVR/main/website/images/icon.png",
-      "readme_url": "https://raw.githubusercontent.com/zsunny6658/sunnyNVR/main/README.md",
+      "icon_url": "https://raw.githubusercontent.com/zsunny6658/ai-nvr/main/website/images/icon.png",
+      "readme_url": "https://raw.githubusercontent.com/zsunny6658/ai-nvr/main/README.md",
       "labels": "实用效率",
       "install_type": "系统空间",
       "version": "2.3.0",
-      "download_url": "https://github.com/zsunny6658/sunnyNVR/releases/download/v2.3.0/ainvr.fpk",
+      "download_url": "https://github.com/zsunny6658/ai-nvr/releases/download/v2.3.0/ainvr.fpk",
       "size": 201825288,
       "size_mb": 192.47
     }

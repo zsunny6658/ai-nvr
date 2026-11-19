@@ -6,8 +6,8 @@
 
 - 官网：<https://ainvr.zsunny.top>
 - 上游项目：i-nvr by IndSvr（GPL-2.0），本仓库延续 GPL-2.0 发行并在应用内保留署名；
-- 版本下载（主渠道）：[GitHub Releases](https://github.com/zsunny6658/sunnyNVR/releases)，也可从官网直接下载应用包；
-- 代码仓库：GitHub [zsunny6658/sunnyNVR](https://github.com/zsunny6658/sunnyNVR) · Gitee 镜像 [sunnymore/ai-nvr](https://gitee.com/sunnymore/ai-nvr)。
+- 版本下载（主渠道）：[GitHub Releases](https://github.com/zsunny6658/ai-nvr/releases)，也可从官网直接下载应用包；
+- 代码仓库：GitHub [zsunny6658/ai-nvr](https://github.com/zsunny6658/ai-nvr) · Gitee 镜像 [sunnymore/ai-nvr](https://gitee.com/sunnymore/ai-nvr)。
 
 ---
 
