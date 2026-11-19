@@ -52,13 +52,13 @@ import java.util.concurrent.atomic.AtomicReference;
  * aiNVR 命令行入口（M1）。
  *
  * <pre>
- *   invr login &lt;账号&gt; [密码]      登录米家账号（验证码/2FA 按提示交互；密码省略则安全输入）
- *   invr devices                 列出账号下摄像头
- *   invr negotiate &lt;did&gt;         miss_get_vendor 协商，打印 CS2 连接参数（私钥不打印）
- *   invr whoami                  查看当前会话
- *   invr logout                  清除本地会话
+ *   ainvr login &lt;账号&gt; [密码]      登录米家账号（验证码/2FA 按提示交互；密码省略则安全输入）
+ *   ainvr devices                 列出账号下摄像头
+ *   ainvr negotiate &lt;did&gt;         miss_get_vendor 协商，打印 CS2 连接参数（私钥不打印）
+ *   ainvr whoami                  查看当前会话
+ *   ainvr logout                  清除本地会话
  * </pre>
- * 区域通过环境变量 INVR_REGION 设置（cn/de/i2/ru/sg/us），默认 cn。
+ * 区域通过环境变量 AINVR_REGION 设置（cn/de/i2/ru/sg/us），默认 cn。
  */
 public class AinvrApplication {
 
@@ -119,27 +119,27 @@ public class AinvrApplication {
                 aiNVR - 小米摄像头 NVR（M1：云端认证与设备发现；M2：CS2/MISS 取流）
 
                 用法:
-                  invr login <账号> [密码]      登录米家账号（验证码/2FA 按提示交互）
-                  invr devices                 列出账号下摄像头
-                  invr negotiate <did>         miss 协商 CS2 连接参数
-                  invr stream <did> [秒数] [输出文件]   连接摄像头并把视频裸流落盘（默认30秒）
-                  invr record <did> [秒数] [分段秒] [目录]  MP4分段录像（含音频，默认60秒/120秒分段）
-                  invr fanout <did> [秒数]     单通道扇出自检（录像+裸流两个消费者复用一条上游）
-                  invr serve [端口=8554]       常驻 RTSP 下行服务（rtsp://主机:端口/<did>）
-                  invr whoami                  查看当前会话
-                  invr logout                  清除本地会话
+                  ainvr login <账号> [密码]      登录米家账号（验证码/2FA 按提示交互）
+                  ainvr devices                 列出账号下摄像头
+                  ainvr negotiate <did>         miss 协商 CS2 连接参数
+                  ainvr stream <did> [秒数] [输出文件]   连接摄像头并把视频裸流落盘（默认30秒）
+                  ainvr record <did> [秒数] [分段秒] [目录]  MP4分段录像（含音频，默认60秒/120秒分段）
+                  ainvr fanout <did> [秒数]     单通道扇出自检（录像+裸流两个消费者复用一条上游）
+                  ainvr serve [端口=8554]       常驻 RTSP 下行服务（rtsp://主机:端口/<did>）
+                  ainvr whoami                  查看当前会话
+                  ainvr logout                  清除本地会话
 
                 示例:
-                  invr stream 1190193414              取流 30 秒，写入 stream-<did>.h264/.h265
-                  invr stream 1190193414 60 clip.h264 取流 60 秒并指定输出文件
+                  ainvr stream 1190193414              取流 30 秒，写入 stream-<did>.h264/.h265
+                  ainvr stream 1190193414 60 clip.h264 取流 60 秒并指定输出文件
 
                 环境变量:
-                  INVR_REGION   区域 cn(默认)/de/i2/ru/sg/us
+                  AINVR_REGION   区域 cn(默认)/de/i2/ru/sg/us
                 """);
     }
 
     private static String region() {
-        String r = System.getenv("INVR_REGION");
+        String r = System.getenv("AINVR_REGION");
         return r == null || r.isBlank() ? "cn" : r.trim();
     }
 
@@ -149,7 +149,7 @@ public class AinvrApplication {
 
     private void doLogin(String[] args) throws IOException {
         if (args.length < 2) {
-            System.err.println("用法：invr login <账号> [密码]");
+            System.err.println("用法：ainvr login <账号> [密码]");
             System.exit(2);
         }
         String username = args[1];
@@ -202,7 +202,7 @@ public class AinvrApplication {
 
     private void doNegotiate(String[] args) {
         if (args.length < 2) {
-            System.err.println("用法：invr negotiate <did>");
+            System.err.println("用法：ainvr negotiate <did>");
             System.exit(2);
         }
         String did = args[1];
@@ -235,7 +235,7 @@ public class AinvrApplication {
 
     private void doCs2Url(String[] args) {
         if (args.length < 2) {
-            System.err.println("用法：invr cs2url <did>");
+            System.err.println("用法：ainvr cs2url <did>");
             System.exit(2);
         }
         String did = args[1];
@@ -266,7 +266,7 @@ public class AinvrApplication {
 
     private void doRemux(String[] args) {
         if (args.length < 3) {
-            System.err.println("用法：invr remux <输入.h265/.h264> <输出.mp4>");
+            System.err.println("用法：ainvr remux <输入.h265/.h264> <输出.mp4>");
             System.exit(2);
         }
         try {
@@ -298,7 +298,7 @@ public class AinvrApplication {
 
     private void doStreamUrl(String[] args) {
         if (args.length < 2) {
-            System.err.println("用法：invr streamurl \"<xiaomi://host/?vendor=cs2&model=..&device_public=..&client_public=..&client_private=..&sign=..>\" [秒数]");
+            System.err.println("用法：ainvr streamurl \"<xiaomi://host/?vendor=cs2&model=..&device_public=..&client_public=..&client_private=..&sign=..>\" [秒数]");
             System.exit(2);
         }
         String url = args[1];
@@ -400,7 +400,7 @@ public class AinvrApplication {
 
     private void doStream(String[] args) throws Exception {
         if (args.length < 2) {
-            System.err.println("用法：invr stream <did> [秒数] [输出文件]（秒数 0 表示持续取流，用于长稳/重连测试）");
+            System.err.println("用法：ainvr stream <did> [秒数] [输出文件]（秒数 0 表示持续取流，用于长稳/重连测试）");
             System.exit(2);
         }
         String did = args[1];
@@ -507,7 +507,7 @@ public class AinvrApplication {
 
     private void doRecord(String[] args) throws Exception {
         if (args.length < 2) {
-            System.err.println("用法：invr record <did> [秒数] [分段秒] [输出目录]");
+            System.err.println("用法：ainvr record <did> [秒数] [分段秒] [输出目录]");
             System.err.println("  秒数默认60（0=持续）；分段秒默认120；目录默认 recordings");
             System.exit(2);
         }
@@ -571,7 +571,7 @@ public class AinvrApplication {
      */
     private void doFanout(String[] args) throws Exception {
         if (args.length < 2) {
-            System.err.println("用法：invr fanout <did> [秒数=25]");
+            System.err.println("用法：ainvr fanout <did> [秒数=25]");
             System.exit(2);
         }
         String did = args[1];
@@ -646,7 +646,7 @@ public class AinvrApplication {
     }
 
     /**
-     * 常驻 RTSP 下行服务：{@code invr serve [端口=8554]}。
+     * 常驻 RTSP 下行服务：{@code ainvr serve [端口=8554]}。
      * 播放器访问 {@code rtsp://<本机IP>:<端口>/<did>}；多播放器/录像并发对同一摄像头只占一条上游。
      */
     private void doServe(String[] args) throws Exception {
@@ -719,7 +719,7 @@ public class AinvrApplication {
     private void doWhoami() {
         Optional<LoginSession> session = sessionStore.load();
         if (session.isEmpty()) {
-            System.out.println("未登录，请先执行 invr login <账号>");
+            System.out.println("未登录，请先执行 ainvr login <账号>");
             return;
         }
         LoginSession s = session.get();
@@ -739,7 +739,7 @@ public class AinvrApplication {
 
     private LoginSession requireSession() {
         return sessionStore.load().orElseThrow(() ->
-                new MiCloudException("未登录，请先执行 invr login <账号>"));
+                new MiCloudException("未登录，请先执行 ainvr login <账号>"));
     }
 
     /**
