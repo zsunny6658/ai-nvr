@@ -137,7 +137,8 @@ flowchart LR
 #### 构建
 
 ```bash
-git clone https://gitee.com/sunnymore/ai-nvr.git
+git clone https://github.com/zsunny6658/ai-nvr.git
+# Gitee 镜像：git clone https://gitee.com/sunnymore/ai-nvr.git
 cd ai-nvr
 
 # 通用 fat jar（Windows + Linux 双平台 native）

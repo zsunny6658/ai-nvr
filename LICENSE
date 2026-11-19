@@ -337,3 +337,14 @@ proprietary programs.  If your program is a subroutine library, you may
 consider it more useful to permit linking proprietary applications with the
 library.  If this is what you want to do, use the GNU Lesser General
 Public License instead of this License.
+
+
+------------------------------------------------------------
+
+aiNVR - AI-enhanced Xiaomi camera NVR
+Copyright (C) 2026 aiNVR contributors
+
+This project is a derivative work based on the upstream project
+"i-nvr" (by IndSvr), licensed under the GNU General Public License
+version 2. The upstream code remains copyright of its original
+author. aiNVR is distributed under GPL-2.0 as well.

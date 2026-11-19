@@ -4,7 +4,7 @@
     "name": "aiNVR 应用源",
     "homepage": "https://github.com/zsunny6658/ai-nvr",
     "distributor": "Sunny",
-    "description": "aiNVR 官方源：AI 增强小米摄像头 NVR（飞牛 fnOS fpk）",
+    "description": "aiNVR 官方源：AI 增强小米摄像头 NVR（飞牛 fnOS fpk），基于开源项目 i-nvr（GPL-2.0）二次开发并延续同许可",
     "updated_at": "2026-11-19T15:05:00+08:00"
   },
   "apps": {
