@@ -303,6 +303,7 @@
         $('lockView').hidden = true;
         $('appView').hidden = true;
         $('topRight').hidden = true;
+        document.body.classList.remove('authed');
         stopPoll();
         if (!$('gridModal').hidden) stopGridOnly();
         if (!$('previewModal').hidden) stopPreviewOnly();
@@ -350,6 +351,7 @@
         hideAll();
         $('appView').hidden = false;
         $('topRight').hidden = false;
+        document.body.classList.add('authed');
         $('userChip').textContent = '已登录 · ' + userId + '（' + region + '）';
         resetLoginPanels();
         loadDevices(true);
@@ -612,6 +614,7 @@
                 mo.enabled ? '运动侦测已开启' : '运动侦测未开启');
             statSet('dsUnhandled', 'dsUnhandledSub', ev.unhandled == null ? 0 : ev.unhandled,
                 '累计 ' + (ev.total || 0) + ' 条', ev.unhandled ? 'warn' : 'ok');
+            updateEvBadge(ev.unhandled);
             statSet('dsRecFiles', 'dsRecSub', rec.files == null ? 0 : rec.files,
                 fmtSize(rec.bytes));
             statSet('dsStreams', 'dsStreamsSub', st.activeUpstreams == null ? 0 : st.activeUpstreams,
@@ -620,6 +623,7 @@
             // 概览失败不打断主流程（门禁失效由 api() 统一处理）
         }
         loadCamEvents(); // 与概览同频（30 秒）刷新卡片快照，内部有签名判重
+        refreshCardSnaps(); // v2.3.0 卡顶快照同频刷新
     }
 
     /** 页脚显示运行版本与已运行时长；失败静默（不影响主流程）。 */
@@ -746,6 +750,12 @@
             ? '<button class="btn rec-on" data-act="recstop" data-did="' + esc(c.did) + '">停止录像</button>'
             : '<button class="btn" data-act="recstart" data-did="' + esc(c.did) + '"' + offlineDis + '>开始录像</button>';
         return '<div class="cam-card' + (c.online ? '' : ' offline') + '" data-did="' + esc(c.did) + '">' +
+            // v2.3.0 视频优先卡：顶部最近快照，点击进入实时预览（与预览按钮同一 data-act 委托）
+            '<button type="button" class="cam-media" data-act="preview" data-did="' + esc(c.did) + '"' +
+            (c.online ? '' : ' disabled') + ' title="点击进入实时预览">' +
+            '<img class="cam-media-img" data-snap-did="' + esc(c.did) + '" alt="最近画面" loading="lazy" hidden>' +
+            '<span class="cam-media-hint">' + (c.online ? '快照加载中…' : '') + '</span>' +
+            '</button>' +
             '<div class="cam-top"><div>' +
             '<div class="cam-name"><span class="nm">' + esc(c.name) + '</span>' + onlineBadge(c) + '</div>' +
             '<div class="cam-model">' + esc(c.model) + '</div>' +
@@ -776,6 +786,7 @@
         }
         grid.innerHTML = state.devices.map(cardHtml).join('');
         renderCamEvents(); // 卡片重建后用缓存快照重绘，不必重新请求
+        refreshCardSnaps(); // v2.3.0 首屏拉起卡顶快照
     }
 
     /* ---------- v1.2.14 首页卡片：最近画面变动事件快照 ----------
@@ -836,6 +847,54 @@
         }
     }
 
+    /** v2.3.0 摄像头卡快照：随概览 30 秒刷新；偏好存本浏览器，设置里可关。 */
+    var CARD_SNAP_KEY = 'ainvr_card_snap';
+    function cardSnapOn() {
+        try { return localStorage.getItem(CARD_SNAP_KEY) !== 'off'; } catch (e) { return true; }
+    }
+    function refreshCardSnaps() {
+        if (!cardSnapOn() || $('tab-cameras').hidden) { return; }
+        Array.prototype.forEach.call(document.querySelectorAll('.cam-media-img[data-snap-did]'), function (img) {
+            var did = img.getAttribute('data-snap-did');
+            var dev = null;
+            state.devices.forEach(function (c) { if (String(c.did) === String(did)) { dev = c; } });
+            if (!dev || !dev.online) { img.hidden = true; return; }
+            img.hidden = false;
+            img.onerror = function () { img.hidden = true; };
+            img.src = withToken('api/snapshot/' + encodeURIComponent(did) + '?t=' + Date.now());
+        });
+    }
+    function applyCardSnapPref() {
+        var on = cardSnapOn();
+        Array.prototype.forEach.call(document.querySelectorAll('.cam-media-img[data-snap-did]'), function (img) {
+            img.hidden = !on;
+        });
+        if (on) { refreshCardSnaps(); }
+    }
+    /** v2.3.0 导航未处理事件角标（侧栏 + 底部栏同步）。 */
+    function updateEvBadge(n) {
+        ['navEvBadge', 'navEvBadgeM'].forEach(function (id) {
+            var b = $(id);
+            if (!b) { return; }
+            b.hidden = !n;
+            b.textContent = n > 99 ? '99+' : String(n || '');
+        });
+    }
+    /* ---------- v2.3.0 主题：深色默认，浅色记忆在本浏览器 ---------- */
+    function currentTheme() {
+        return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+    }
+    function applyTheme(t) {
+        var root = document.documentElement;
+        if (t === 'light') { root.setAttribute('data-theme', 'light'); } else { root.removeAttribute('data-theme'); t = 'dark'; }
+        var m = document.querySelector('meta[name="theme-color"]');
+        if (m) { m.setAttribute('content', t === 'light' ? '#eef1f6' : '#0e1116'); }
+        document.querySelectorAll('input[name="uiTheme"]').forEach(function (r) { r.checked = r.value === t; });
+        var lb = $('btnThemeLabel');
+        if (lb) { lb.textContent = t === 'light' ? '深色模式' : '浅色模式'; }
+        try { localStorage.setItem('ainvr_theme', t); } catch (e2) { /* 存储不可用忽略 */ }
+    }
+
     /** 「查看全部」：切到事件告警页并按该摄像头筛选（用 pending 避免与 tab 自带加载打架）。 */
     function gotoCamEvents(did) {
         state.evPendingDid = String(did);
@@ -870,11 +929,11 @@
             net.className = 'net ' + (c.online ? 'online' : 'offline');
             net.innerHTML = '<span class="dot"></span>' + (c.online ? '在线' : '离线');
         }
-        var pb = card.querySelector('button[data-act="preview"]');
-        if (pb) {
+        // v2.3.0 卡顶快照与操作区都是预览入口，一并启停
+        card.querySelectorAll('button[data-act="preview"]').forEach(function (pb) {
             pb.disabled = !c.online;
-            pb.title = c.online ? '' : '设备离线，暂不可用';
-        }
+            pb.title = c.online ? '点击进入实时预览' : '设备离线，暂不可用';
+        });
     }
 
     function findDevice(did) {
@@ -4563,8 +4622,12 @@
         /** v2.0.1 一级导航收敛为 4 个：摄像头 / 回放 / 事件告警 / 设置（看板并入设置、录像文件并入回放）。 */
     function gotoTab(name) {
         document.querySelectorAll('.tab').forEach(function (x) { x.classList.remove('active'); });
-        var btn = document.querySelector('.tab[data-tab="' + name + '"]');
-        if (btn) btn.classList.add('active');
+        // v2.3.0 侧栏与底部导航承载同名页签，两处同步高亮
+        document.querySelectorAll('.tab[data-tab="' + name + '"]').forEach(function (b) { b.classList.add('active'); });
+        // v2.3.0 顶栏标题跟随当前页
+        var titles = { cameras: '摄像头', events: '事件告警', playback: '回放', settings: '系统设置' };
+        var tt = $('topbarTitle');
+        if (tt) { tt.textContent = titles[name] || ''; }
         $('tab-cameras').hidden = name !== 'cameras';
         $('tab-events').hidden = name !== 'events';
         $('tab-playback').hidden = name !== 'playback';
@@ -4635,6 +4698,25 @@
         try {
             showSettingsGroup(localStorage.getItem('ainvr_set_group') || 'storage');
         } catch (e) { showSettingsGroup('storage'); }
+
+        // v2.3.0 主题切换：侧栏快捷按钮 + 设置页单选；初始态与 head 引导脚本对齐
+        $('btnTheme').addEventListener('click', function () { applyTheme(currentTheme() === 'dark' ? 'light' : 'dark'); });
+        document.querySelectorAll('input[name="uiTheme"]').forEach(function (r) {
+            r.addEventListener('change', function () { if (r.checked) { applyTheme(r.value); } });
+        });
+        applyTheme(currentTheme());
+
+        // v2.3.0 摄像头卡快照开关
+        var snapCb = $('setCardSnap');
+        if (snapCb) {
+            snapCb.checked = cardSnapOn();
+            snapCb.addEventListener('change', function () {
+                try { localStorage.setItem(CARD_SNAP_KEY, snapCb.checked ? 'on' : 'off'); } catch (e2) { /* 存储不可用忽略 */ }
+                applyCardSnapPref();
+                var hint = $('setCardSnapHint');
+                if (hint) { hint.textContent = snapCb.checked ? '已开启：卡片顶部显示最近快照，每 30 秒自动刷新。' : '已关闭：卡片不再请求快照。'; }
+            });
+        }
 
         // v2.0.1 回放页内二级切换：时间轴回放 / 录像文件
         $('pbPaneTimeline').addEventListener('click', function () { setPbPane('timeline'); });
