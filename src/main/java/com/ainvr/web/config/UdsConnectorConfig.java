@@ -15,7 +15,7 @@ import java.lang.reflect.Method;
  *
  * <p>socket 路径判定优先级：</p>
  * <ol>
- *   <li>Spring 属性 {@code invr.uds-socket}（fnOS 打包时由 install_callback 把
+ *   <li>Spring 属性 {@code ainvr.uds-socket}（fnOS 打包时由 install_callback 把
  *       {@code ${TRIM_APPDEST}/app.sock} 固化写入 etc/application-fnos.yml）；</li>
  *   <li>环境变量 {@code TRIM_APPDEST}（兜底拼接 {@code $TRIM_APPDEST/app.sock}）。</li>
  * </ol>
@@ -36,7 +36,7 @@ public class UdsConnectorConfig {
 
     @Bean
     public WebServerFactoryCustomizer<TomcatServletWebServerFactory> udsConnectorCustomizer(
-            @Value("${invr.uds-socket:}") String configuredSocket) {
+            @Value("${ainvr.uds-socket:}") String configuredSocket) {
         return factory -> {
             String sock = configuredSocket == null ? "" : configuredSocket.trim();
             if (sock.isEmpty()) {
