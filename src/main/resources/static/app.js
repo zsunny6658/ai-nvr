@@ -807,7 +807,7 @@
         var boxes = document.querySelectorAll('.cam-events-body[data-camev]');
         Array.prototype.forEach.call(boxes, function (box) {
             var did = box.getAttribute('data-camev');
-            var list = state.camRecent[did] || [];
+            var list = (state.camRecent[did] || []).filter(function (ev) { return !!ev.snapshotUrl; });
             if (!list.length) {
                 box.innerHTML = '<div class="cam-events-empty">暂无画面变动快照</div>';
                 return;
