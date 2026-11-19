@@ -6,7 +6,8 @@
 
 - 官网：<https://ainvr.zsunny.top>
 - 上游项目：i-nvr by IndSvr（GPL-2.0），本仓库延续 GPL-2.0 发行并在应用内保留署名；
-- 本仓库（aiNVR 二开线）：[gitee.com/sunnymore/ai-nvr](https://gitee.com/sunnymore/ai-nvr)。
+- 版本下载（主渠道）：[GitHub Releases](https://github.com/zsunny6658/sunnyNVR/releases)，也可从官网直接下载应用包；
+- 代码仓库：GitHub [zsunny6658/sunnyNVR](https://github.com/zsunny6658/sunnyNVR) · Gitee 镜像 [sunnymore/ai-nvr](https://gitee.com/sunnymore/ai-nvr)。
 
 ---
 
@@ -124,7 +125,7 @@ flowchart LR
 
 ### 飞牛 fnOS 用户（推荐）
 
-下载仓库 Releases（或 `飞牛打包/output/ainvr.fpk`）中的应用包，在飞牛 App 中心手动上传安装，按向导登录米家账号即可。覆盖升级保留全部配置与录像。
+下载 GitHub Releases（或官网 <https://ainvr.zsunny.top/downloads/ainvr.fpk>）中的应用包，在飞牛 App 中心手动上传安装，按向导登录米家账号即可。覆盖升级保留全部配置与录像。
 
 ### 源码运行
 
