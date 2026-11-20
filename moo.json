@@ -37,6 +37,7 @@
       "readme_url": "https://raw.githubusercontent.com/zsunny6658/ai-nvr/main/README.md",
       "labels": "实用效率",
       "install_type": "系统空间",
+      "service_port": "9099",
       "version": "2.3.0",
       "download_url": "https://github.com/zsunny6658/ai-nvr/releases/download/v2.3.0/ainvr.fpk",
       "size": 201825288,
