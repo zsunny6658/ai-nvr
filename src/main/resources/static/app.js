@@ -1680,14 +1680,46 @@
                 return '<option value="' + esc(o.value) + '"' + (o.value === d.quality ? ' selected' : '')
                     + '>' + esc(o.label) + '</option>';
             }).join('') + '</select>';
+            var lensTag = d.secondaryLens ? '<span class="q-state">副镜头</span>' : '';
+            // 双摄第二镜头开关：auto 按型号识别 / on 手动开启 / off 手动关闭
+            var lensSel = '';
+            if (!d.secondaryLens) {
+                var cur = d.dualLensOverride === true ? 'on'
+                    : d.dualLensOverride === false ? 'off' : 'auto';
+                lensSel = '<select data-dl-did="' + esc(d.did) + '" title="双摄第二镜头">'
+                    + '<option value="auto"' + (cur === 'auto' ? ' selected' : '') + '>副镜头：自动'
+                    + (d.dualLensAuto ? '（本机型支持）' : '') + '</option>'
+                    + '<option value="on"' + (cur === 'on' ? ' selected' : '') + '>副镜头：开启</option>'
+                    + '<option value="off"' + (cur === 'off' ? ' selected' : '') + '>副镜头：关闭</option>'
+                    + '</select>';
+            }
             return '<div class="q-row"><div>' +
-                '<div class="q-name">' + esc(d.name || d.did) + reach + stream + '</div>' +
+                '<div class="q-name">' + esc(d.name || d.did) + lensTag + reach + stream + '</div>' +
                 '<div class="q-meta">' + esc(d.did) + ' · ' + esc(d.model)
                 + ' · 型号默认档位 ' + esc(d.modelDefault) + '</div>' +
-                '</div><div class="set-edit">' + sel +
+                '</div><div class="set-edit">' + lensSel + sel +
                 '<button class="btn primary" type="button" data-q-save="' + esc(d.did) + '">应用</button>' +
                 '</div></div>';
         }).join('');
+    }
+
+    async function saveDualLens(did, value) {
+        try {
+            var enabled = value === 'auto' ? null : value === 'on';
+            var s = await api('api/settings/dual-lens', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ did: did, enabled: enabled })
+            });
+            state.settings = s;
+            renderQualitySettings(s.quality);
+            var msg = enabled === null ? '副镜头已恢复按型号自动识别'
+                : enabled ? '副镜头已开启，设备列表将出现「（副镜头）」摄像头'
+                    : '副镜头已关闭';
+            toast(msg, 'ok');
+        } catch (e) {
+            toast('副镜头设置失败：' + e.message, 'err');
+        }
     }
 
     async function saveQuality(did, value) {
@@ -4447,6 +4479,12 @@
             var did = b.getAttribute('data-q-save');
             var sel = $('setQualityList').querySelector('select[data-q-did="' + CSS.escape(did) + '"]');
             if (sel) saveQuality(did, sel.value);
+        });
+        // 双摄第二镜头开关（切换即保存）
+        $('setQualityList').addEventListener('change', function (e) {
+            var sel = e.target.closest('select[data-dl-did]');
+            if (!sel) return;
+            saveDualLens(sel.getAttribute('data-dl-did'), sel.value);
         });
         $('ptzPad').addEventListener('click', function (e) {
             var b = e.target.closest('button[data-dir]');

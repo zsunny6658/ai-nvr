@@ -3,6 +3,7 @@ package com.ainvr.web.service;
 import com.ainvr.cloud.CloudMissOpener;
 import com.ainvr.hub.CameraConnector;
 import com.ainvr.hub.MissOpener;
+import com.ainvr.miss.DualLens;
 import com.ainvr.model.CameraDevice;
 import com.ainvr.store.AppSettingsStore;
 import com.ainvr.store.SessionStore;
@@ -37,11 +38,25 @@ public class DefaultCameraConnector implements CameraConnector {
 
     @Override
     public MissOpener openerFor(CameraDevice device) {
+        // 双摄第二镜头：虚拟 DID 后缀 #2 → VideoStart 用 videoquality2 载荷取第二镜头
+        String baseDid = DualLens.baseDid(device.did());
+        String channel = DualLens.isSecondary(device.did()) ? "2" : "";
         // 每次重连都从设备目录取最新对象：设备重新上线后云端 localip 可能变化，
         // 若沿用订阅建立时的旧 CameraDevice，会把取流打到旧 IP 上永远连不通。
-        Supplier<CameraDevice> freshDevice = () -> catalog.find(device.did()).orElse(device);
+        // 注意必须解析回真实设备（CloudMissOpener 用其 did/localip 建立云端会话）。
+        Supplier<CameraDevice> freshDevice = () ->
+                catalog.find(baseDid).orElseGet(() -> withBaseDid(device));
         // 档位从 Web 设置动态读取，保存后立即重连即可生效
-        Supplier<String> quality = () -> settingsStore.qualityFor(device.did());
-        return new CloudMissOpener(sessionStore, sessionHolder.ref(), freshDevice, "", quality, "1");
+        Supplier<String> quality = () -> settingsStore.qualityFor(baseDid);
+        return new CloudMissOpener(sessionStore, sessionHolder.ref(), freshDevice, channel, quality, "1");
+    }
+
+    /** 目录里暂时找不到真实设备时（刚登录 / 列表未拉取），就地剥离 #2 后缀兜底。 */
+    private static CameraDevice withBaseDid(CameraDevice c) {
+        if (!DualLens.isSecondary(c.did())) {
+            return c;
+        }
+        return new CameraDevice(DualLens.baseDid(c.did()), c.name(), c.model(),
+                c.mac(), c.localIp(), c.online());
     }
 }

@@ -71,6 +71,8 @@ public class AppSettingsStore {
     private static final String KEY_NOTIFY = "notify";
     /** v2.1.0 本地 AI 检测（子对象）：{enabled: bool, minScore: double}。 */
     private static final String KEY_AI = "ai";
+    /** 双摄第二镜头按设备开关：{@code {did: true|false}}；未配置=按型号自动识别。 */
+    private static final String KEY_DUAL_LENS = "dualLens";
     private static final TypeReference<LinkedHashMap<String, Object>> MAP_TYPE = new TypeReference<>() {};
 
     private final Path dir;
@@ -327,6 +329,39 @@ public class AppSettingsStore {
             m.put(KEY_PTZ_MODE, s);
         } else {
             m.remove(KEY_PTZ_MODE); // auto 作为默认值不落盘
+        }
+        persist(m);
+    }
+
+    // ===================== 双摄第二镜头开关 =====================
+
+    /**
+     * 该设备是否手动启用 / 关闭第二镜头；未配置返回 null（按型号自动识别，
+     * 见 {@code com.ainvr.miss.DualLens#knownDualLensModel}）。
+     */
+    public Boolean dualLensOverride(String did) {
+        Object v = all().get(KEY_DUAL_LENS);
+        if (!(v instanceof Map<?, ?> raw)) {
+            return null;
+        }
+        Object o = raw.get(did);
+        return o == null ? null : Boolean.parseBoolean(String.valueOf(o));
+    }
+
+    /** 保存双摄第二镜头开关；null 表示清除覆盖、恢复按型号自动识别。 */
+    public synchronized void saveDualLens(String did, Boolean enabled) {
+        Map<String, Object> m = all();
+        Map<String, Object> sub = m.get(KEY_DUAL_LENS) instanceof Map<?, ?> r
+                ? new LinkedHashMap<>((Map<String, Object>) r) : new LinkedHashMap<>();
+        if (enabled == null) {
+            sub.remove(did);
+        } else {
+            sub.put(did, enabled);
+        }
+        if (sub.isEmpty()) {
+            m.remove(KEY_DUAL_LENS);
+        } else {
+            m.put(KEY_DUAL_LENS, sub);
         }
         persist(m);
     }
@@ -749,7 +784,8 @@ public class AppSettingsStore {
             KEY_RECORD_MAX_PERCENT, KEY_RTSP_TOKEN, KEY_HLS_TARGET_SEC, KEY_HLS_WINDOW,
             KEY_HLS_IDLE_SEC, KEY_HLS_AUDIO, KEY_HLS_PREWARM, KEY_SHARE_EVENT_DURATION_SEC,
             KEY_SHARE_SSE_HEARTBEAT_SEC, KEY_SHARE_PAGE_RELOAD_SEC, KEY_SHARE_CONFIG_POLL_SEC,
-            KEY_DEVICE_QUALITY, KEY_PTZ_MODE, KEY_MOTION, KEY_MOTION_EXCLUDE_ZONES, KEY_NOTIFY, KEY_AI);
+            KEY_DEVICE_QUALITY, KEY_PTZ_MODE, KEY_MOTION, KEY_MOTION_EXCLUDE_ZONES, KEY_NOTIFY, KEY_AI,
+            KEY_DUAL_LENS);
 
     /**
      * v2.1.0 配置导入：只接受 {@link #IMPORTABLE_KEYS} 中的键，整体替换后原子落盘。

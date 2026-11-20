@@ -1,6 +1,7 @@
 package com.ainvr.web.api;
 
 import com.ainvr.hub.StreamHub;
+import com.ainvr.miss.DualLens;
 import com.ainvr.miss.MissCommands;
 import com.ainvr.model.CameraDevice;
 import com.ainvr.model.ShareBoard;
@@ -169,6 +170,13 @@ public class SettingsController {
                 d.put("online", c.online());
                 d.put("quality", configured == null ? "default" : configured);
                 d.put("modelDefault", MissCommands.defaultQuality(c.model()));
+                // 双摄第二镜头状态：secondary=true 表示这是 #2 虚拟条目本身（不显示开关）
+                boolean secondary = DualLens.isSecondary(c.did());
+                d.put("secondaryLens", secondary);
+                if (!secondary) {
+                    d.put("dualLensAuto", DualLens.knownDualLensModel(c.model()));
+                    d.put("dualLensOverride", settingsStore.dualLensOverride(c.did()));
+                }
                 d.put("streamState", streamHub.isHealthy(c.did()) ? "有画面"
                         : (streamHub.activeDids().contains(c.did()) ? "连接中" : "未取流"));
                 d.put("lanReachable", deviceProbe.reachable(c.did()));
@@ -234,6 +242,27 @@ public class SettingsController {
             throw ApiException.badRequest("云台命令格式仅支持 auto / direction / operation");
         }
         settingsStore.savePtzMode(mode);
+        return getSettings();
+    }
+
+    /**
+     * 双摄第二镜头开关：true 开启（设备列表追加「（副镜头）」虚拟摄像头）、false 关闭、
+     * null 清除覆盖恢复按型号自动识别。保存后立即刷新设备目录，无需重启应用。
+     */
+    @PutMapping("/settings/dual-lens")
+    public Map<String, Object> updateDualLens(@RequestBody(required = false) DualLensRequest req) {
+        if (req == null || req.did() == null || req.did().isBlank()) {
+            throw ApiException.badRequest("缺少设备 DID");
+        }
+        if (catalog.find(DualLens.baseDid(req.did())).isEmpty()) {
+            throw ApiException.notFound("设备列表中未找到 did=" + req.did());
+        }
+        settingsStore.saveDualLens(DualLens.baseDid(req.did()), req.enabled());
+        try {
+            catalog.refresh();
+        } catch (Exception e) {
+            log.warn("dual-lens 开关已保存，但设备目录刷新失败（后台会自动重试）：{}", e.toString());
+        }
         return getSettings();
     }
 
@@ -622,6 +651,9 @@ public class SettingsController {
     }
 
     public record PtzModeRequest(String mode) {
+    }
+
+    public record DualLensRequest(String did, Boolean enabled) {
     }
     /* ===================== v2.1.0 配置备份导出 / 导入 ===================== */
 

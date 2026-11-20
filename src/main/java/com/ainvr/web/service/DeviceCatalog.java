@@ -4,13 +4,16 @@ import com.ainvr.cloud.DeviceDiscovery;
 import com.ainvr.cloud.MiCloudApi;
 import com.ainvr.cloud.MiCloudUnauthorizedException;
 import com.ainvr.hub.StreamHub;
+import com.ainvr.miss.DualLens;
 import com.ainvr.model.CameraDevice;
+import com.ainvr.store.AppSettingsStore;
 import com.ainvr.store.EventStore;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
@@ -45,13 +48,16 @@ public class DeviceCatalog {
     private final SessionHolder sessionHolder;
     private final StreamHub streamHub;
     private final EventStore events;
+    private final AppSettingsStore settings;
     private volatile List<CameraDevice> devices = List.of();
     private final ScheduledExecutorService scheduler;
 
-    public DeviceCatalog(SessionHolder sessionHolder, StreamHub streamHub, EventStore events) {
+    public DeviceCatalog(SessionHolder sessionHolder, StreamHub streamHub, EventStore events,
+                         AppSettingsStore settings) {
         this.sessionHolder = sessionHolder;
         this.streamHub = streamHub;
         this.events = events;
+        this.settings = settings;
         this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "device-catalog-refresh");
             t.setDaemon(true);
@@ -89,9 +95,27 @@ public class DeviceCatalog {
             var renewed = sessionHolder.renew();
             fresh = new DeviceDiscovery(new MiCloudApi(renewed)).listCameras();
         }
-        devices = fresh;
+        devices = expandDualLens(fresh);
         notifyTransitions(previous, fresh);
         return fresh;
+    }
+
+    /**
+     * 双摄机型展开：为启用第二镜头的设备追加一条 DID 后缀为 {@code #2} 的虚拟摄像头条目，
+     * 名字追加「（副镜头）」。所有下游（预览 / 录像 / 回放 / 快照 / 事件）把它当普通摄像头，
+     * 独立取流、独立录像分段、独立事件；设备在线状态跟随真实设备。
+     */
+    private List<CameraDevice> expandDualLens(List<CameraDevice> real) {
+        List<CameraDevice> out = new ArrayList<>(real);
+        for (CameraDevice c : real) {
+            Boolean override = settings.dualLensOverride(c.did());
+            boolean enabled = override != null ? override : DualLens.knownDualLensModel(c.model());
+            if (enabled) {
+                out.add(new CameraDevice(DualLens.secondaryDid(c.did()),
+                        c.name() + "（副镜头）", c.model(), c.mac(), c.localIp(), c.online()));
+            }
+        }
+        return out;
     }
 
     /** 云端状态的两种关键跃变，都要求立即丢弃旧会话重新协商。 */
@@ -109,6 +133,8 @@ public class DeviceCatalog {
             if (!was.online() && now.online()) {
                 log.info("设备 {} 由离线转为在线，立即唤醒取流", now.did());
                 streamHub.wakeup(now.did(), "米家云：离线→在线", true);
+                // 双摄副镜头虚拟流一并唤醒（无活跃订阅时 wakeup 返回 false，无副作用）
+                streamHub.wakeup(DualLens.secondaryDid(now.did()), "米家云：离线→在线", true);
                 // 重连事件：集中呈现在事件告警页，无需逐一翻看预览窗口
                 events.add(now.did(), now.name(), "reconnect", "info", "设备重连上线", 0.0, null, List.of());
             } else if (was.online() && !now.online()) {
@@ -119,6 +145,7 @@ public class DeviceCatalog {
                 log.info("设备 {} 局域网 IP 由 {} 变为 {}，立即唤醒取流",
                         now.did(), was.localIp(), now.localIp());
                 streamHub.wakeup(now.did(), "云端局域网 IP 变化", true);
+                streamHub.wakeup(DualLens.secondaryDid(now.did()), "云端局域网 IP 变化", true);
             }
         }
     }

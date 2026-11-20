@@ -30,7 +30,7 @@ class StaticAssetContractTest {
 
         assertTrue(html.contains("btnPreviewBack"), "预览弹层缺少应用内返回按钮");
         assertTrue(html.contains("btnPlayerBack"), "回放弹层缺少应用内返回按钮");
-        assertTrue(html.contains("v=55"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
+        assertTrue(html.contains("v=56"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
         // v2.3.0 监控台壳层：侧栏 + 底部导航双入口，主题与快照设置存在
         assertTrue(html.contains("class=\"sidenav\""), "缺少侧栏导航");
         assertTrue(html.contains("class=\"bottomnav\""), "缺少底部导航");

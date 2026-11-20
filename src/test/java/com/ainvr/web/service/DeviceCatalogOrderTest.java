@@ -30,7 +30,8 @@ class DeviceCatalogOrderTest {
         }
         EventStore events = new EventStore(dir);
         return new DeviceCatalog(Mockito.mock(SessionHolder.class),
-                Mockito.mock(StreamHub.class), events);
+                Mockito.mock(StreamHub.class), events,
+                new com.ainvr.store.AppSettingsStore(dir));
     }
 
     private void inject(DeviceCatalog catalog, List<CameraDevice> list) {
