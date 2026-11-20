@@ -742,6 +742,10 @@
     }
 
     function onlineBadge(c) {
+        // v2.3.1 云端在线 + 局域网 CS2 不可达（DeviceProbe）= 摄像头休眠/局域网掉线，单独标识
+        if (c.online && c.lanReachable === false) {
+            return '<span class="net sleep"><span class="dot"></span>休眠</span>';
+        }
         return '<span class="net ' + (c.online ? 'online' : 'offline') + '"><span class="dot"></span>'
             + (c.online ? '在线' : '离线') + '</span>';
     }
@@ -886,13 +890,13 @@
         });
         trimApplyTitle(lastUnhandledCount);
     }
-    /* ---------- v2.3.0 主题：深色默认；v2.3.1 三态（深色 / 浅色 / 跟随系统） ---------- */
-    /** 用户选择的主题（原始值；auto = 跟随系统）。 */
+    /* ---------- v2.3.0 主题：v2.3.1 起三态（深色 / 浅色 / 跟随系统），默认跟随系统 ---------- */
+    /** 用户选择的主题（原始值；auto = 跟随系统）。未选择过时默认 auto。 */
     function storedTheme() {
         try {
             var v = localStorage.getItem('ainvr_theme');
-            return (v === 'light' || v === 'auto') ? v : 'dark';
-        } catch (e) { return 'dark'; }
+            return (v === 'light' || v === 'dark' || v === 'auto') ? v : 'auto';
+        } catch (e) { return 'auto'; }
     }
     /** 解析为实际生效的深浅色：显式值直通；auto 优先飞牛桌面外观，独立浏览器回落系统偏好。 */
     function resolveTheme(raw) {
@@ -2428,9 +2432,16 @@
                 okText: '选择此目录',
                 sidebarGroup: ['myFiles', 'external', 'favorites', 'storage']
             });
-            var arr = Array.isArray(res) ? res : (res && (res.data || res.paths));
-            if (Array.isArray(arr) && arr.length && typeof arr[0] === 'string' && arr[0]) {
-                return arr[0];
+            // 宿主返回形态不一：数组 / {data|paths|files:[...]} / {path:'...'}，逐层归一化
+            var arr = Array.isArray(res) ? res
+                : (res && (Array.isArray(res.data) ? res.data
+                    : Array.isArray(res.paths) ? res.paths
+                    : Array.isArray(res.files) ? res.files : null));
+            if (!arr && res && typeof res.path === 'string') { arr = [res.path]; }
+            if (Array.isArray(arr) && arr.length) {
+                var first = arr[0];
+                if (typeof first === 'string' && first) { return first; }
+                if (first && typeof first.path === 'string' && first.path) { return first.path; }
             }
         } catch (e) { /* 用户取消或宿主拒绝：按未选择处理 */ }
         return null;
@@ -2475,8 +2486,51 @@
             ? (archiveCfg.dir || '')
             : ((state.settings && state.settings.recordingDir) || '');
         // 飞牛宿主内提供系统文件选择器入口；独立浏览器保持隐藏（CSS sdk-only）
-        whenTrimHost(function (t) { $('dirSysPick').hidden = !t; });
+        whenTrimHost(function (t) {
+            $('dirSysPick').hidden = !t;
+            if (t) {
+                $('dirStatus').textContent = '飞牛应用沙盒内仅能列出已授权目录，推荐点「系统文件选择器…」浏览全部共享目录。';
+            }
+        });
         loadDir(start);
+    }
+
+    /** 把选定目录落到对应输入框并解锁保存按钮（系统选择器直达 / 弹窗确认共用）。 */
+    function applyPickedDir(p) {
+        if (dirTarget === 'archive') {
+            $('setArchiveDirInput').value = p;
+            $('btnSaveArchiveDir').disabled = false;
+        } else {
+            $('setDirInput').value = p;
+            $('btnSaveDir').disabled = false;
+        }
+    }
+
+    /** 「浏览…」入口：飞牛宿主直接调系统文件选择器（沙盒内后端列不出 fnOS 目录），
+     *  取消 / 失败 / 独立浏览器回落服务器目录弹窗。 */
+    function browseDirFlow(target) {
+        dirTarget = target === 'archive' ? 'archive' : 'recording';
+        whenTrimHost(function (t) {
+            if (!t) { openDirModal(dirTarget); return; }
+            // 宿主握手期间用户已等待：给出即时反馈再弹系统选择器
+            toast('正在打开飞牛文件选择器…');
+            trimPickDir(dirTarget === 'archive' ? '选择快照归档目录' : '选择录像存储目录')
+                .then(function (picked) {
+                    if (!picked) { openDirModal(dirTarget); return; }
+                    var p = picked.replace(/\/+$/, '') || '/';
+                    api('api/settings/browse?path=' + encodeURIComponent(p))
+                        .then(function (d) {
+                            if (d && d.currentWritable === true) {
+                                applyPickedDir(p);
+                                toast('已选择目录（记得点保存）：' + p, 'ok');
+                            } else {
+                                toast('该目录对本应用不可写：请在 fnOS 应用设置 → 存储管理中授权后再选', 'err');
+                                openDirModal(dirTarget);
+                            }
+                        })
+                        .catch(function () { openDirModal(dirTarget); });
+                });
+        });
     }
 
     /** 飞牛系统文件选择器：选完目录后校验可写性并作为当前选择。 */
@@ -4927,14 +4981,14 @@
         });
 
         // 设置：存储路径 / 分段 / 端口
-        $('btnBrowseDir').addEventListener('click', function () { openDirModal('recording'); });
+        $('btnBrowseDir').addEventListener('click', function () { browseDirFlow('recording'); });
         $('btnSaveDir').addEventListener('click', function () { saveSettings(false); });
         $('btnResetDir').addEventListener('click', function () {
             if (confirm('确认恢复为默认存储目录？\n当前正在录制的分段会在封段后写入默认目录。')) saveSettings(true);
         });
         $('btnRefreshDir').addEventListener('click', loadSettings);
         // v2.3.1 快照归档设置
-        $('btnBrowseArchiveDir').addEventListener('click', function () { openDirModal('archive'); });
+        $('btnBrowseArchiveDir').addEventListener('click', function () { browseDirFlow('archive'); });
         $('btnSaveArchiveDir').addEventListener('click', saveSnapshotArchive);
         $('btnTestArchiveDir').addEventListener('click', verifyArchiveDir);
         $('btnSaveMqtt').addEventListener('click', saveMqtt);

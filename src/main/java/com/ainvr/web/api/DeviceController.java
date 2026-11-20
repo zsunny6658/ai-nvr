@@ -5,6 +5,7 @@ import com.ainvr.rtsp.RtspServer;
 import com.ainvr.store.HostResolver;
 import com.ainvr.web.config.NvrProperties;
 import com.ainvr.web.service.DeviceCatalog;
+import com.ainvr.web.service.DeviceProbe;
 import com.ainvr.web.service.HlsService;
 import com.ainvr.web.service.RecordingService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -30,15 +31,18 @@ public class DeviceController {
     private final HlsService hlsService;
     private final NvrProperties props;
     private final RtspServer rtspServer;
+    private final DeviceProbe deviceProbe;
     private final HostResolver hostResolver = new HostResolver();
 
     public DeviceController(DeviceCatalog catalog, RecordingService recordingService,
-                            HlsService hlsService, NvrProperties props, RtspServer rtspServer) {
+                            HlsService hlsService, NvrProperties props, RtspServer rtspServer,
+                            DeviceProbe deviceProbe) {
         this.catalog = catalog;
         this.recordingService = recordingService;
         this.hlsService = hlsService;
         this.props = props;
         this.rtspServer = rtspServer;
+        this.deviceProbe = deviceProbe;
     }
 
     @GetMapping("/devices")
@@ -71,6 +75,10 @@ public class DeviceController {
         String effectiveIp = hostResolver.resolve(c);
         m.put("localIp", effectiveIp != null ? effectiveIp : c.localIp());
         m.put("online", c.online());
+        // v2.3.1 局域网 CS2 可达性（DeviceProbe 30s 一轮）：米家云 isOnline 只是云端心跳，
+        // 摄像头休眠时云端仍报在线，本字段为 false 即「云端在线但局域网不可达（休眠/掉线）」；
+        // null 表示尚未探测（如启动后 20 秒内或无可用 IP）。
+        m.put("lanReachable", deviceProbe.reachable(c.did()));
         m.put("recording", recordingService.isRecording(c.did()));
         m.put("previewing", hlsService.isPreviewing(c.did()));
         String rtspUrl = "rtsp://" + host + ":" + rtspServer.getPort() + "/" + c.did();

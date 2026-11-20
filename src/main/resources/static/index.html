@@ -6,13 +6,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <meta name="theme-color" content="#0e1116">
     <meta name="apple-mobile-web-app-capable" content="yes">
-    <!-- 主题引导：深色默认；localStorage 记忆浅色/跟随系统（auto 按系统偏好判定）；在 CSS 加载前置好 data-theme 避免闪白 -->
-    <script>(function () { try { var v = localStorage.getItem('ainvr_theme'); var light = v === 'light' || (v === 'auto' && window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches); if (light) { document.documentElement.setAttribute('data-theme', 'light'); } } catch (e) { } })();</script>
+    <!-- 主题引导：默认跟随系统（未选择过按 prefers-color-scheme 判定）；localStorage 显式记忆深/浅/跟随系统；在 CSS 加载前置好 data-theme 避免闪白 -->
+    <script>(function () { try { var v = localStorage.getItem('ainvr_theme'); var light = v === 'light' || (v !== 'dark' && window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches); if (light) { document.documentElement.setAttribute('data-theme', 'light'); } } catch (e) { } })();</script>
     <!-- 相对 base：直连根路径解析到 /，fnOS 网关 /app/{appname}/ 下解析到该前缀；资源/API 全部用相对路径 -->
     <base href="./">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='4' fill='%230e1116'/%3E%3Ccircle cx='8' cy='8' r='3' fill='%2322d3ee'/%3E%3C/svg%3E">
     <title>aiNVR · AI 增强摄像头 NVR</title>
-    <link rel="stylesheet" href="style.css?v=60">
+    <link rel="stylesheet" href="style.css?v=61">
 </head>
 <body>
 
@@ -681,13 +681,13 @@
             </div>
                 <div class="set-card set-card-wide" data-sgroup="appearance">
                     <h3>界面主题</h3>
-                    <p class="muted small">深色为默认主题，视频画面观感最佳；浅色适合日间高亮环境。切换立即生效并记忆在本浏览器，不占用服务端存储。</p>
+                    <p class="muted small">默认「跟随系统」：飞牛桌面内跟随桌面外观，独立浏览器跟随系统深浅色偏好；也可手动指定深色（视频画面观感最佳）或浅色（日间高亮环境）。切换立即生效并记忆在本浏览器，不占用服务端存储。</p>
                     <div class="theme-opts">
-                        <label class="layout-opt"><input type="radio" name="uiTheme" value="dark" checked>
-                            <span>深色</span><small>默认 · 监控台观感</small></label>
+                        <label class="layout-opt"><input type="radio" name="uiTheme" value="dark">
+                            <span>深色</span><small>监控台观感</small></label>
                         <label class="layout-opt"><input type="radio" name="uiTheme" value="light">
                             <span>浅色</span><small>日间高亮环境</small></label>
-                        <label class="layout-opt"><input type="radio" name="uiTheme" value="auto">
+                        <label class="layout-opt"><input type="radio" name="uiTheme" value="auto" checked>
                             <span>跟随系统</span><small>飞牛桌面外观 / 浏览器偏好</small></label>
                     </div>
                     <div class="set-divider"></div>
@@ -974,8 +974,8 @@
 <div id="toast" class="toast"></div>
 
 <script src="vendor/hls.min.js"></script>
-<script type="module" src="vendor/trimapp-bridge.js?v=60"></script>
-<script src="watchdog.js?v=60"></script>
-<script src="app.js?v=60"></script>
+<script type="module" src="vendor/trimapp-bridge.js?v=61"></script>
+<script src="watchdog.js?v=61"></script>
+<script src="app.js?v=61"></script>
 </body>
 </html>

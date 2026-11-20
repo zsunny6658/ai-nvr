@@ -191,7 +191,9 @@ body:not(.authed) .sidenav { display: none; }
 }
 
 /* ============ 按钮 ============ */
+/* inline-flex：.btn 也用于 <label>（备份导入等 file 触发器），inline 会因行内盒高度塌陷导致与相邻按钮不等高 */
 .btn {
+    display: inline-flex; align-items: center; justify-content: center;
     border: 1px solid var(--line-strong); background: transparent; color: var(--ink);
     padding: 8px 14px; border-radius: 8px; cursor: pointer; font-size: 13px;
     transition: all .15s; white-space: nowrap;
@@ -285,6 +287,8 @@ body:not(.authed) .sidenav { display: none; }
 .net.online { color: var(--green); background: var(--ok-bg); border: 1px solid var(--ok-line); }
 .net.online .dot { box-shadow: 0 0 6px rgba(52, 211, 153, .55); }
 .net.offline { color: var(--muted); background: var(--chip-bg); border: 1px solid var(--line); }
+/* v2.3.1 云端在线但局域网 CS2 不可达：摄像头休眠（米家省电模式常见），黄色弱警示 */
+.net.sleep { color: var(--amber); background: var(--warn-bg); border: 1px solid var(--warn-line); }
 .cam-model { font-size: 12px; color: var(--muted); margin-top: 3px; }
 .cam-ip { font-size: 12px; color: var(--faint); font-family: Consolas, monospace; margin-top: 1px; }
 .badges { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }

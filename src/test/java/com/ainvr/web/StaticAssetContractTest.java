@@ -30,7 +30,14 @@ class StaticAssetContractTest {
 
         assertTrue(html.contains("btnPreviewBack"), "预览弹层缺少应用内返回按钮");
         assertTrue(html.contains("btnPlayerBack"), "回放弹层缺少应用内返回按钮");
-        assertTrue(html.contains("v=60"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
+        assertTrue(html.contains("v=61"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
+        // v2.3.1 真机验证第二轮：浏览直调系统选择器 + 休眠徽标 + 主题跟随系统默认
+        assertTrue(js.contains("browseDirFlow"), "缺少目录浏览直调系统选择器逻辑");
+        assertTrue(js.contains("applyPickedDir"), "缺少选定目录落输入框逻辑");
+        assertTrue(js.contains("lanReachable"), "设备列表缺少局域网可达性字段");
+        assertTrue(js.contains("net sleep"), "缺少休眠徽标样式标记");
+        assertTrue(js.contains("(v === 'light' || v === 'dark' || v === 'auto') ? v : 'auto'"), "主题默认应跟随系统");
+        assertTrue(html.contains("value=\"auto\" checked"), "外观单选默认应为「跟随系统」");
         // v2.3.1 回放自定义控制 + 事件页更多操作收纳 + 设置宽卡
         assertTrue(html.contains("btnPbPlay"), "回放缺少自定义播放按钮");
         assertTrue(html.contains("btnPbMute"), "回放缺少自定义静音按钮");
