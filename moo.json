@@ -35,7 +35,7 @@
       "sha256": "5b643e63c275229d7954a7cda8da760a186907dea518294a32d9e26f7dcd100a",
       "icon_url": "https://raw.githubusercontent.com/zsunny6658/ai-nvr/main/website/images/icon.png",
       "readme_url": "https://raw.githubusercontent.com/zsunny6658/ai-nvr/main/README.md",
-      "labels": "实用效率",
+      "categories": ["摄影摄像", "实用效率"],
       "install_type": "系统空间",
       "service_port": "9099",
       "version": "2.3.0",
