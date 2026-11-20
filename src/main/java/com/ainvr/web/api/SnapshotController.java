@@ -37,7 +37,9 @@ public class SnapshotController {
             resp.sendError(HttpServletResponse.SC_GONE, "米家账号未登录");
             return;
         }
-        byte[] jpeg = snapshotService.capture(did);
+        // v2.3.1 走缓存版截帧：网页卡顶快照 / 外部脚本轮询时命中缓存零等待，
+        // 过期帧立即返回并后台串行刷新，避免每次请求都冷启动建连解码
+        byte[] jpeg = snapshotService.captureCached(did);
         resp.setContentType("image/jpeg");
         resp.setHeader("Cache-Control", "no-store");
         resp.setContentLength(jpeg.length);

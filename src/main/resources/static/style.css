@@ -144,8 +144,9 @@ body:not(.authed) .sidenav { display: none; }
 /* ============ 主区壳层 ============ */
 .shell { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .topbar {
-    min-height: 52px; background: var(--topbar-bg);
-    -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+    min-height: 52px; background: var(--nav);
+    /* v2.3.1 去掉 backdrop-filter 毛玻璃：长页面滚动/点击时该效果在 WebView 里重绘开销大，
+       是界面卡顿的主因之一；改为不透明导航色，视觉一致且渲染路径更轻 */
     border-bottom: 1px solid var(--line);
     display: flex; align-items: center; justify-content: space-between; gap: 10px;
     padding: 8px max(20px, env(safe-area-inset-left, 0px)) 8px max(20px, env(safe-area-inset-right, 0px));
@@ -420,7 +421,10 @@ body:not(.authed) .sidenav { display: none; }
 .pb-stage video.pb-off { opacity: 0; pointer-events: none; }
 .pb-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
     text-align: center; padding: 24px; color: #9fb0c3; font-size: 14px; background: rgba(10, 14, 20, .6); line-height: 1.7; }
-.pb-meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 12px 2px 8px; font-size: 13px; }
+.pb-meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 12px 2px 8px; font-size: 13px; flex-wrap: wrap; }
+/* v2.3.1 回放自定义控制：原生 controls 进度条只反映单段时长，易误读；去掉后以底部全天时间轴为准 */
+.pb-ctl { display: flex; gap: 6px; align-items: center; }
+.pb-stage video { cursor: pointer; }
 .pb-speed { display: flex; align-items: center; gap: 6px; margin-left: auto; }
 .pb-speed .select { width: auto; min-width: 64px; padding: 4px 8px; font-size: 13px; }
 .tl { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); padding: 12px 14px 14px; }
@@ -474,6 +478,8 @@ body:not(.authed) .sidenav { display: none; }
 .settings-nav-item.active { background: var(--primary); color: #fff; font-weight: 600; }
 .settings-body { min-width: 0; display: grid; grid-template-columns: 1.5fr 1fr; gap: 16px; align-items: start; }
 .settings-body .set-card[hidden] { display: none; }
+/* 宽卡：横跨两列（备份与恢复、共享看板、MQTT、清晰度/云台、AI 等内容多的卡） */
+.set-card-wide { grid-column: 1 / -1; }
 .set-card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); padding: 18px 20px; }
 .set-card h3 { margin: 0 0 6px; font-size: 15px; }
 .set-card label { display: block; margin: 16px 0 6px; font-size: 13px; color: var(--muted); }
@@ -547,8 +553,19 @@ body:not(.authed) .sidenav { display: none; }
 /* ============ 事件告警 ============ */
 .ev-stats { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-bottom: 12px; font-size: 12px; color: var(--muted); }
 .ev-stats b { color: var(--ink); font-size: 15px; font-variant-numeric: tabular-nums; }
-.ev-filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.ev-filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; align-items: center; }
 .ev-filters .select { min-width: 132px; }
+/* v2.3.1 低频/危险清理动作收纳进「更多操作」下拉 */
+.ev-more-actions { position: relative; }
+.ev-more-actions > summary { list-style: none; user-select: none; display: inline-block; }
+.ev-more-actions > summary::-webkit-details-marker { display: none; }
+.ev-more-menu {
+    position: absolute; right: 0; top: calc(100% + 6px); z-index: 15;
+    display: flex; flex-direction: column; gap: 6px; min-width: 132px;
+    background: var(--panel); border: 1px solid var(--line-strong); border-radius: 10px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, .25); padding: 8px;
+}
+.ev-more-menu .btn { width: 100%; text-align: center; }
 .ev-selall { display: flex; align-items: center; gap: 6px; white-space: nowrap; font-size: 12px; }
 .ev-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 12px; align-items: start; }
 .ev-card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;

@@ -37,6 +37,9 @@
         evAllTotal: 0, evDeleting: false,
         // v1.2.13：事件按摄像头分组（折叠状态 / 各设备事件数，来自 /api/events/stats）
         evCollapsed: new Set(), evCounts: {},
+        // v2.3.1：全部设备视图下重置加载时默认折叠除第一组外的所有分组（降低长页滚动）；
+        // 设置页 30 秒内重复进入不重新拉全量设置（降低切页卡顿）
+        evCollapsePending: false, settingsLoadedAt: 0,
         // v1.2.14：首页摄像头卡片的最近画面变动快照（did -> 事件数组 / id -> 事件 / 数据签名 / 跳转筛选）
         camRecent: {}, camRecentIndex: {}, camRecentSig: null, evPendingDid: '',
         // v1.2.8：PTZ 操作时临时切 JPEG 兼容帧，操作停止后自动切回 HLS
@@ -1612,6 +1615,7 @@
         try {
             var s = await api('api/settings');
             state.settings = s;
+            state.settingsLoadedAt = Date.now();
             $('setCurDir').textContent = s.recordingDir;
             $('setDefaultDir').textContent = s.defaultDir;
             $('setStats').innerHTML =
@@ -1631,7 +1635,8 @@
             // 分段时长
             $('setSegmentInput').value = s.segmentSec;
             $('setSegmentHint').textContent = (s.segmentCustomized ? '当前为自定义值，默认 ' + s.defaultSegmentSec + ' 秒。' : '当前为默认值。')
-                + '保存后正在录制的分段会封段并按新时长续录。';
+                + '保存后正在录制的分段会封段并按新时长续录。分段越小文件越多（默认 2 分钟 ≈ 每天 720 个/路），'
+                + '觉得文件太碎可在保存后调大到 300～1800 秒；分段时长不影响运动侦测自动录像的成段逻辑。';
             // 本地 AI 检测
             var ai = s.ai || {};
             $('setAiEnabled').checked = ai.enabled !== false;
@@ -3500,6 +3505,8 @@
             state.evOffset = 0;
             state.evRows = [];
             state.evSelected.clear();
+            // v2.3.1 全部设备视图：重置后默认折叠各摄像头分组（仅第一组展开），先看概览再按需展开
+            state.evCollapsePending = !$('evFilterDid').value;
         }
         state.evBusy = true;
         try {
@@ -3566,7 +3573,7 @@
                     (e.snapshotUrl ? '<button class="btn tiny soft" data-evact="snapshot" data-evid="' + e.id + '">查看快照</button>' : '') +
                     '<button class="btn tiny soft" data-evact="replay" data-evid="' + e.id + '">看回放</button>' +
                     (e.type === 'person' || e.type === 'vehicle' || e.type === 'pet'
-                        ? '<button class="btn tiny soft sdk-only" data-evact="archive" data-evid="' + e.id + '">打开归档</button>' : '') +
+                        ? '<button class="btn tiny soft" data-evact="archive" data-evid="' + e.id + '">打开归档</button>' : '') +
                     '<button class="btn tiny soft" data-evact="handled" data-evid="' + e.id +
                         '" data-evval="' + (e.handled ? 'false' : 'true') + '">' +
                         (e.handled ? '取消处理' : '标记已处理') + '</button>' +
@@ -3591,6 +3598,11 @@
             groups.get(k).push(e);
         });
         var keys = cameraGroupKeys(Array.from(groups.keys()));
+        // v2.3.1 全部设备视图默认折叠：仅保留第一组展开，其余只显示分组头（条数 / 未处理）
+        if (state.evCollapsePending && keys.length > 1) {
+            state.evCollapsed = new Set(keys.slice(1));
+        }
+        state.evCollapsePending = false;
         box.innerHTML = keys.map(function (did) {
             var rows = groups.get(did);
             var unhandled = rows.filter(function (e) { return !e.handled; }).length;
@@ -3622,11 +3634,17 @@
         updateEvBatchUi();
     }
 
-    /** v2.3.1 在飞牛文件管理中打开该事件的归档快照（后端按事件反查归档路径）。 */
+    /** v2.3.1 打开该事件的归档快照：飞牛宿主内直接调起文件管理；
+     *  独立浏览器则展示归档路径并复制到剪贴板（可粘到飞牛文件管理的「前往」）。 */
     async function evOpenArchive(id) {
         try {
             var r = await api('api/events/' + id + '/archive-path');
-            if (r && r.ok && r.path) { trimOpenFile(r.path); return; }
+            if (r && r.ok && r.path) {
+                if (trimState.app) { trimOpenFile(r.path); return; }
+                copyText(r.path);
+                toast('归档路径已复制，可在飞牛文件管理中打开：' + r.path, 'ok');
+                return;
+            }
             toast('该事件尚未归档：归档开启后新产生的 AI 事件才会归档', 'err');
         } catch (e) {
             if (e.status === 401) { scheduleGateRelock(); return; }
@@ -4342,7 +4360,9 @@
         else if (state.devices.length) { pb.did = String(state.devices[0].did); $('pbCam').value = pb.did; }
         setZoomUi();
         startPbLive();
-        if (!pb.inited) { pb.inited = true; loadTimeline(); }
+        // v2.3.1 首次进入自动续播最近一段录像（米家式：进回放即看到刚录的画面）；
+        // 带着事件跳转待办进来时不自动播，交给 applyPbPending 精确定位
+        if (!pb.inited) { pb.inited = true; loadTimeline(!state.pbPending); }
     }
 
     function renderPbCam() {
@@ -4359,7 +4379,11 @@
         if (el && !el.paused) { el.pause(); }
     }
 
-    async function loadTimeline() {
+    /**
+     * 拉取时间轴并重绘。autoLatest=true（v2.3.1，仅首次进入回放页）时自动从最后一段
+     * 的末尾往前 15 秒开始播放——米家式「一进回放就看到最近的画面」，不再黑屏等待点选。
+     */
+    async function loadTimeline(autoLatest) {
         var pb = state.pb;
         pb.did = $('pbCam').value || pb.did;
         pb.dateStr = $('pbDate').value || localDateStr(new Date());
@@ -4380,6 +4404,11 @@
         } catch (e2) { /* 高亮不可用时仅少一个提示层 */ }
         computeWin(true);
         renderTimeline();
+        if (autoLatest && pb.segs.length && pb.idx < 0) {
+            // 自动定位最后一段末尾附近；loadSeg 内部会自动起播
+            var last = pb.segs[pb.segs.length - 1];
+            loadSeg(pb.segs.length - 1, Math.max(0, last.durMs / 1000 - 15));
+        }
     }
 
     /** 分段集合的轻量签名（名称/起止/时长/录制态），用于判断静默刷新是否真有变化。 */
@@ -4526,7 +4555,8 @@
         var pb = state.pb;
         var v = pbV();
         if (pb.idx >= 0 && v.src) {
-            $('pbNow').textContent = hms(pb.curStart + (v.currentTime || 0) * 1000) + ' 播放中';
+            $('pbNow').textContent = hms(pb.curStart + (v.currentTime || 0) * 1000)
+                + (v.paused ? ' 已暂停' : ' 播放中');
             var s = pb.segs[pb.idx];
             // v2.2.5 元信息显示真实起止时间点
             $('pbSeg').textContent = '分段 ' + (pb.idx + 1) + '/' + pb.segs.length + ' · '
@@ -4608,9 +4638,7 @@
         var cur = pbV(), idle = pbIdle();
         cur.pause();
         idle.classList.remove('pb-off');
-        idle.setAttribute('controls', '');
         cur.classList.add('pb-off');
-        cur.removeAttribute('controls');
         pb.activeB = !pb.activeB;
         // 淡出完成后释放旧元素缓冲（双 video 不会同时占两份完整缓冲）
         setTimeout(function () {
@@ -5137,9 +5165,38 @@
                     updateCursor(); updateMeta(); autoFollow();
                 });
                 el.addEventListener('ended', pbNextSeg);
+                // v2.3.1 原生 controls 已移除：播放/暂停状态同步到自定义控制按钮
+                el.addEventListener('play', syncPbPlayBtn);
+                el.addEventListener('pause', syncPbPlayBtn);
+                // 点画面切换播放/暂停（待命元素 pb-off 有 pointer-events:none，不会误触）
+                el.addEventListener('click', togglePbPlay);
             }
             bindPbVideo($('pbVideo'));
             bindPbVideo($('pbVideoB'));
+
+            /* v2.3.1 自定义播放控制（原生 controls 移除后，进度以底部全天时间轴为准） */
+            function syncPbPlayBtn() {
+                var v = pbV();
+                $('btnPbPlay').textContent = (v && !v.paused && v.src) ? '⏸ 暂停' : '▶ 播放';
+                updateMeta();
+            }
+            function togglePbPlay() {
+                var v = pbV();
+                if (!v || !v.src) {
+                    // 还没选段：自动播最后一段（与进页自动续播一致）
+                    if (state.pb.segs.length) { loadSeg(state.pb.segs.length - 1, 0); }
+                    return;
+                }
+                if (v.paused) { v.play().catch(function () {}); } else { v.pause(); }
+            }
+            $('btnPbPlay').addEventListener('click', togglePbPlay);
+            $('btnPbMute').addEventListener('click', function () {
+                var v = pbV(), idle = pbIdle();
+                var mute = !(v && v.muted);
+                [v, idle].forEach(function (el) { if (el) { el.muted = mute; } });
+                this.textContent = mute ? '🔇 静音' : '🔊 声音开';
+            });
+
             $('pbSpeed').addEventListener('change', function () { applyPbRate(); });
             $('pbLoop').addEventListener('change', function () {
                 state.pb.loop = this.value;
@@ -5228,7 +5285,11 @@
         } else {
             pausePb(); stopPbLive();
         }
-        if (name === 'settings') { loadSettings(); loadBoards(); }
+        if (name === 'settings') {
+            // v2.3.1 切页卡顿优化：30 秒内重复进入设置页不再全量重拉（设置页接口多、
+            // 重复渲染开销大）；保存操作后各分组会自行刷新，需要强制最新时用页内刷新按钮
+            if (Date.now() - (state.settingsLoadedAt || 0) > 30000) { loadSettings(); loadBoards(); }
+        }
     }
 
     /** 回放页二级窗格：timeline=时间轴回放（原录像回放内容），files=录像文件列表。 */

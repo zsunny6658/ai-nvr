@@ -12,8 +12,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -28,6 +31,10 @@ import java.util.concurrent.TimeoutException;
  *
  * <p>冷启动（该摄像头当前无任何消费者）需先完成 CS2 建连与首个 IDR，故超时上限放宽到
  * {@value #CAPTURE_TIMEOUT_MS} ms；另有信号量限制并发截帧路数，避免异常调用堆积 native 解码器。</p>
+ *
+ * <p>v2.3.1 新增 {@link #captureCached(String)}：供网页「摄像头卡顶快照」这类周期轮询场景使用。
+ * 缓存新鲜期内直接返回上一帧（零等待、零建连）；过期后立即返回旧帧并交由单线程后台串行刷新，
+ * 多路摄像头逐个更新，不会同时拉起多路订阅。首次访问（无缓存）仍走同步截帧。</p>
  */
 @Service
 public class SnapshotService {
@@ -38,14 +45,68 @@ public class SnapshotService {
     private static final long CAPTURE_TIMEOUT_MS = 20_000;
     /** 同时进行的截帧解码上限（每个解码器都是独立 native 上下文）。 */
     private static final int MAX_INFLIGHT = 8;
+    /** v2.3.1 缓存帧新鲜期：期内直接回缓存，网页卡顶快照零等待。 */
+    private static final long CACHE_FRESH_MS = 20_000;
 
     private final StreamHub hub;
     private final CameraConnector connector;
     private final Semaphore inflight = new Semaphore(MAX_INFLIGHT, true);
+    /** v2.3.1 按 DID 缓存最近一帧（网页卡顶快照走缓存，避免每次冷启动建连）。 */
+    private final Map<String, CachedFrame> cache = new ConcurrentHashMap<>();
+    /** 后台刷新专用单线程：多路摄像头到期逐个串行刷新，避免同时订阅 CS2 通道造成抖动。 */
+    private final java.util.concurrent.ExecutorService refreshPool =
+            Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "invr-snap-refresh");
+                t.setDaemon(true);
+                return t;
+            });
+
+    private static final class CachedFrame {
+        final byte[] jpeg;
+        final long capturedAt;
+        volatile boolean refreshing;
+
+        CachedFrame(byte[] jpeg, long capturedAt) {
+            this.jpeg = jpeg;
+            this.capturedAt = capturedAt;
+        }
+    }
 
     public SnapshotService(StreamHub hub, CameraConnector connector) {
         this.hub = hub;
         this.connector = connector;
+    }
+
+    /**
+     * 带缓存的截帧（v2.3.1）：新鲜期内直接回缓存帧；过期回旧帧并后台串行刷新；
+     * 无缓存时同步截帧。设备离线等业务错误（{@link ApiException}）直接抛出。
+     */
+    public byte[] captureCached(String did) {
+        CachedFrame f = cache.get(did);
+        long now = System.currentTimeMillis();
+        if (f != null) {
+            if (now - f.capturedAt > CACHE_FRESH_MS && !f.refreshing) {
+                f.refreshing = true;
+                refreshPool.execute(() -> {
+                    try {
+                        byte[] jpeg = capture(did);
+                        cache.put(did, new CachedFrame(jpeg, System.currentTimeMillis()));
+                    } catch (Exception e) {
+                        // 刷新失败保留旧帧，下轮重试；设备离线时持续保留最后一帧更有价值
+                        log.debug("[{}] 快照后台刷新失败（保留旧帧）：{}", did, e.getMessage());
+                    } finally {
+                        CachedFrame cur = cache.get(did);
+                        if (cur != null) {
+                            cur.refreshing = false;
+                        }
+                    }
+                });
+            }
+            return f.jpeg;
+        }
+        byte[] jpeg = capture(did);
+        cache.put(did, new CachedFrame(jpeg, System.currentTimeMillis()));
+        return jpeg;
     }
 
     /**
@@ -122,5 +183,7 @@ public class SnapshotService {
     public void shutdown() {
         // 解码器随请求结束自行释放；这里仅留统一关闭钩子，避免容器销毁时残留等待
         log.debug("SnapshotService 关闭，在途请求 {} 个", MAX_INFLIGHT - inflight.availablePermits());
+        refreshPool.shutdownNow();
+        cache.clear();
     }
 }

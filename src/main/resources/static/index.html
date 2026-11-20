@@ -12,7 +12,7 @@
     <base href="./">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='4' fill='%230e1116'/%3E%3Ccircle cx='8' cy='8' r='3' fill='%2322d3ee'/%3E%3C/svg%3E">
     <title>aiNVR · AI 增强摄像头 NVR</title>
-    <link rel="stylesheet" href="style.css?v=59">
+    <link rel="stylesheet" href="style.css?v=60">
 </head>
 <body>
 
@@ -173,6 +173,15 @@
                 </select>
                 <input type="date" id="evFilterDate" class="select" aria-label="日期">
                 <button class="btn soft" id="btnEvReset" type="button">重置</button>
+                <!-- v2.3.1 危险/低频清理动作收进「更多」，常驻工具条只留批量操作 -->
+                <details class="ev-more-actions">
+                    <summary class="btn soft">更多操作 ▾</summary>
+                    <div class="ev-more-menu">
+                        <button class="btn tiny soft" id="btnEvPurgeBroken" type="button">清理糊屏事件</button>
+                        <button class="btn tiny soft" id="btnEvClearFiltered" type="button">清空当前筛选</button>
+                        <button class="btn tiny soft-danger" id="btnEvClearAll" type="button">清空全部</button>
+                    </div>
+                </details>
             </div>
             <div class="rec-toolbar ev-toolbar">
                 <label class="ev-selall"><input type="checkbox" id="evSelAll" aria-label="全选本页"> 全选本页</label>
@@ -181,11 +190,6 @@
                     <button class="btn tiny soft" id="btnEvBatchHandled" disabled>标记已处理</button>
                     <button class="btn tiny soft-danger" id="btnEvBatchDel" disabled>批量删除</button>
                     <button class="btn tiny" id="btnEvClearSel" hidden>取消选择</button>
-                    <!-- v1.2.16 只清理残缺帧/灰屏快照导致的糊屏事件，保留正常画面 -->
-                    <button class="btn tiny soft" id="btnEvPurgeBroken" type="button">清理糊屏事件</button>
-                    <!-- v1.2.15 一次清空：按当前筛选 / 全量，均带二次确认 -->
-                    <button class="btn tiny soft" id="btnEvClearFiltered" type="button">清空当前筛选</button>
-                    <button class="btn tiny soft-danger" id="btnEvClearAll" type="button">清空全部</button>
                 </div>
             </div>
             <div class="ev-list" id="evList"></div>
@@ -216,12 +220,16 @@
             </div>
 
             <div class="pb-stage">
-                <video id="pbVideo" controls playsinline webkit-playsinline x5-playsinline x5-video-player-type="h5" x5-video-player-fullscreen="true"></video>
+                <video id="pbVideo" playsinline webkit-playsinline x5-playsinline x5-video-player-type="h5" x5-video-player-fullscreen="true"></video>
                 <video id="pbVideoB" class="pb-off" preload="auto" playsinline webkit-playsinline x5-playsinline x5-video-player-type="h5" x5-video-player-fullscreen="true"></video>
                 <div id="pbEmpty" class="pb-empty">选择摄像头与日期，点击下方时间轴上的蓝色录像区段即可回放；分段会自动无缝连续播放。</div>
             </div>
             <div class="pb-meta">
-                <span id="pbNow" class="muted">--:--:--</span>
+                <span class="pb-ctl">
+                    <button class="btn tiny soft" id="btnPbPlay" type="button" title="播放 / 暂停（空格）">▶ 播放</button>
+                    <button class="btn tiny soft" id="btnPbMute" type="button" title="静音开关">🔊 声音开</button>
+                </span>
+                <span id="pbNow" class="muted"></span>
                 <span id="pbSeg" class="muted"></span>
                 <span class="pb-speed">
                     <label class="muted" for="pbSpeed">倍速</label>
@@ -335,9 +343,9 @@
                         <button class="btn" id="btnTestArchiveDir" type="button">校验目录可写</button>
                     </div>
                     <div id="setArchiveMsg" class="muted small"></div>
-                    <p class="muted small">目录布局：<code>归档目录/yyyy-MM-dd/摄像头名/时分秒-事件id-类型.jpg</code>。仅对开启归档<strong>之后</strong>新产生的 AI 事件生效，历史事件不回溯归档。</p>
+                    <p class="muted small">目录布局：<code>归档目录/yyyy-MM-dd/摄像头名/时分秒-事件id-类型.jpg</code>。仅对开启归档<strong>之后</strong>新产生的 AI 事件生效，历史事件不回溯归档。<br>查看入口：①「事件告警」页按类型筛出 AI 人形 / 车辆 / 宠物事件，点事件卡上的<strong>「打开归档」</strong>直达对应文件；②飞牛文件管理中直接浏览归档目录。</p>
                 </div>
-                <div class="set-card" data-sgroup="ha">
+                <div class="set-card set-card-wide" data-sgroup="ha">
                     <h3>Home Assistant（MQTT）</h3>
                     <p class="muted small">一次配置，全部摄像头<strong>自动</strong>出现在 HA：每台摄像头注册 1 个画面实体 + 人形 / 车辆 / 宠物 / 画面变动 4 个传感器，自动化直接按<strong>识别结果</strong>写条件（深夜有人 → 开灯）。无需逐台直连、无需 HACS 集成、无需 Frigate。前提：HA 已装 MQTT 集成（设置 → 设备与服务 → 添加 MQTT Broker）。</p>
                     <label class="ev-switch"><input type="checkbox" id="setMqttEnabled"> 启用 MQTT 发布</label>
@@ -384,15 +392,16 @@
                         <button class="btn primary" id="btnSaveRetention" type="button">保存</button>
                     </div>
                     <p class="muted small" id="setRetentionHint"></p>
-                    <label>录像目录容量水位（%，0=关闭；超限时从最旧分段开始循环覆盖，v1.2.21）</label>
+                    <label>录像目录容量水位（%，0=关闭；超限时从最旧分段开始循环覆盖）</label>
                     <div class="set-edit">
                         <input type="number" id="setWaterInput" min="0" max="95" step="1">
                         <button class="btn primary" id="btnSaveWater" type="button">保存</button>
                     </div>
                     <p class="muted small" id="setWaterHint">例：设 80 表示录像分段总大小最多占所在卷容量的 80%，超出即自动删除最旧分段。与保留天数互补：天数控制「最多留多久」，水位控制「最多占多少」。</p>
                     <div class="set-kv" id="setMisc"></div>
+                    <p class="muted small">程序数据目录是应用自身的数据所在：设置项、访问密码凭据、事件库、快照索引与 AI 模型等都保存在这里，与录像文件相互独立。<strong>请勿手动删除或改动该目录</strong>，否则设置会重置、事件记录会丢失；系统升级不影响它。</p>
                 </div>
-                <div class="set-card" data-sgroup="motion">
+                <div class="set-card set-card-wide" data-sgroup="motion">
                     <h3>运动侦测与自动录像</h3>
                     <p class="muted small">基于实时画面的 8×8 感知哈希帧差检测，复用兼容画面已有的解码帧，不额外占用摄像头取流通道。自动录像在检测到运动时开录、画面静止后按尾延时自动封段停录，不会影响手动录像。默认全部关闭。</p>
                     <label class="ev-switch"><input type="checkbox" id="setMotionEnabled"> 启用运动侦测与事件记录</label>
@@ -402,7 +411,7 @@
                         <label class="ev-switch inline"><input type="checkbox" id="setMotionAllDids" checked> 全部设备</label>
                     </div>
                     <div id="setMotionDids" class="did-checklist"></div>
-                    <label>检测排除区域（v1.2.19，树影 / 马路 / 常亮屏幕等误报来源）</label>
+                    <label>检测排除区域（树影 / 马路 / 常亮屏幕等误报来源）</label>
                     <div class="set-edit">
                         <select id="setRoiDid"></select>
                         <button class="btn" id="btnOpenRoi" type="button">框选排除区域</button>
@@ -415,7 +424,7 @@
                     </div>
                     <label>静止多久后停止自动录像（秒，5～600）</label>
                     <div class="set-edit"><input type="number" id="setRecordTail" min="5" max="600" step="5"></div>
-                    <label class="ev-switch"><input type="checkbox" id="setMotionSchedule"> 仅在指定时段侦测（v1.2.21，如仅夜间；支持跨午夜）</label>
+                    <label class="ev-switch"><input type="checkbox" id="setMotionSchedule"> 仅在指定时段侦测（如仅夜间；支持跨午夜）</label>
                     <div class="set-edit" id="setMotionScheduleRow" hidden>
                         <input type="time" id="setMotionActiveStart" step="60">
                         <span class="muted small">至</span>
@@ -433,9 +442,9 @@
                     </div>
                     <div id="setMotionHint" class="muted small"></div>
                 </div>
-                <div class="set-card" data-sgroup="notify">
+                <div class="set-card set-card-wide" data-sgroup="notify">
                     <h3>事件通知推送</h3>
-                    <p class="muted small">画面变动 / 设备离线等事件产生时，通过 Webhook 或邮件推送到外部（v1.2.19）。发送失败自动重试 2 次；SMTP 授权码保存在本机设置文件中，不会回显明文。</p>
+                    <p class="muted small">画面变动 / 设备离线等事件产生时，通过 Webhook 或邮件推送到外部。发送失败自动重试 2 次；SMTP 授权码保存在本机设置文件中，不会回显明文。</p>
                     <label class="ev-switch"><input type="checkbox" id="setNotifyEnabled"> 启用事件通知推送</label>
                     <label>推送的事件类型</label>
                     <div class="did-checklist" id="setNotifyTypes">
@@ -558,7 +567,7 @@
                         <button class="btn primary" id="btnSaveRtsp" type="button">保存</button>
                     </div>
                     <p class="muted small" id="setRtspHint"></p>
-                    <label>RTSP 访问令牌（v1.2.22，可选；VLC 等播放器地址需带 ?t=令牌。留空不变，输入 - 清除）</label>
+                    <label>RTSP 访问令牌（可选；VLC 等播放器地址需带 ?t=令牌。留空不变，输入 - 清除）</label>
                     <div class="set-edit">
                         <input type="text" id="setRtspTokenInput" placeholder="4～64 个字符，不含空格 / ? #" autocapitalize="off" autocorrect="off" spellcheck="false">
                         <button class="btn primary" id="btnSaveRtspToken" type="button">保存令牌</button>
@@ -587,7 +596,7 @@
                     </div>
                     <p class="muted small" id="setHlsHint"></p>
                 </div>
-                <div class="set-card" data-sgroup="stream">
+                <div class="set-card set-card-wide" data-sgroup="stream">
                     <h3>按设备取流清晰度 / 云台</h3>
                     <p class="muted small">清晰度档位在每次建立取流连接时生效，保存后会立即重建当前连接（短暂中断数秒）。「自动」按型号选择，并在设备持续不出画面时自动降级；手动固定档位后不再自动降级。云台方向键在实时预览窗口内，复用当前取流会话，不会额外占用摄像头连接。</p>
                     <div id="setQualityList" class="q-list"></div>
@@ -630,7 +639,7 @@
                     </div>
                     <p class="muted small" id="setShareHint"></p>
                 </div>
-                    <div class="set-card" id="aiCard" data-sgroup="ai">
+                    <div class="set-card set-card-wide" id="aiCard" data-sgroup="ai">
                     <h3>本地 AI 检测</h3>
                     <p class="muted small">对运动侦测的事件快照做本地推理（SSD-MobileNetV1，完全离线），自动把事件细化为 AI 人形 / 车辆 / 宠物检测，事件页可按类型筛选。推理在后台单核排队执行，不影响录像。<br>
                         最低配置：双核 CPU、空闲内存 1GB、数据盘剩余 300MB（单帧 1～3 秒）；推荐配置：4 核 CPU、空闲内存 2GB（单帧约 0.3～1 秒）。</p>
@@ -670,7 +679,7 @@
             <p class="muted small">配置多宫格并生成免登录共享链接，可直接配置到 Android TV 或其他浏览器长时间展示；外部事件系统可通过 Webhook 驱动画面切换。</p>
             <div class="grid" id="boardGrid"></div>
             </div>
-                <div class="set-card" data-sgroup="appearance">
+                <div class="set-card set-card-wide" data-sgroup="appearance">
                     <h3>界面主题</h3>
                     <p class="muted small">深色为默认主题，视频画面观感最佳；浅色适合日间高亮环境。切换立即生效并记忆在本浏览器，不占用服务端存储。</p>
                     <div class="theme-opts">
@@ -965,8 +974,8 @@
 <div id="toast" class="toast"></div>
 
 <script src="vendor/hls.min.js"></script>
-<script type="module" src="vendor/trimapp-bridge.js?v=59"></script>
-<script src="watchdog.js?v=59"></script>
-<script src="app.js?v=59"></script>
+<script type="module" src="vendor/trimapp-bridge.js?v=60"></script>
+<script src="watchdog.js?v=60"></script>
+<script src="app.js?v=60"></script>
 </body>
 </html>

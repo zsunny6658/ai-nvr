@@ -30,7 +30,13 @@ class StaticAssetContractTest {
 
         assertTrue(html.contains("btnPreviewBack"), "预览弹层缺少应用内返回按钮");
         assertTrue(html.contains("btnPlayerBack"), "回放弹层缺少应用内返回按钮");
-        assertTrue(html.contains("v=59"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
+        assertTrue(html.contains("v=60"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
+        // v2.3.1 回放自定义控制 + 事件页更多操作收纳 + 设置宽卡
+        assertTrue(html.contains("btnPbPlay"), "回放缺少自定义播放按钮");
+        assertTrue(html.contains("btnPbMute"), "回放缺少自定义静音按钮");
+        assertTrue(html.contains("ev-more-actions"), "事件页缺少「更多操作」收纳");
+        assertTrue(html.contains("set-card-wide"), "设置页缺少宽卡标记");
+        assertTrue(js.contains("togglePbPlay"), "回放缺少自定义播放控制逻辑");
         // v2.3.1 飞牛桌面 SDK 融合 + 快照归档
         assertTrue(html.contains("vendor/trimapp-bridge.js"), "缺少 @trimjs/web-app 桥接脚本");
         assertTrue(html.contains("dirSysPick"), "目录弹窗缺少系统文件选择器按钮");
