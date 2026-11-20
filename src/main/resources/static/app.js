@@ -742,12 +742,30 @@
     }
 
     function onlineBadge(c) {
-        // v2.3.1 云端在线 + 局域网 CS2 不可达（DeviceProbe）= 摄像头休眠/局域网掉线，单独标识
+        // v2.3.1 休眠判定以云端 MIoT camera_control.on 属性为准（MiotSleepService）：
+        // 休眠中 CS2 唤醒监听仍应答 LAN_SEARCH，可达性区分不出休眠。
+        // sleeping=true 显示黄色「休眠」徽标，点击直接下发唤醒。
+        if (c.online && c.sleeping === true) {
+            return '<button type="button" class="net sleep" data-act="wake" data-did="' + esc(c.did)
+                + '" title="休眠中 · 点击唤醒">休眠</button>';
+        }
         if (c.online && c.lanReachable === false) {
-            return '<span class="net sleep"><span class="dot"></span>休眠</span>';
+            return '<span class="net sleep"><span class="dot"></span>不可达</span>';
         }
         return '<span class="net ' + (c.online ? 'online' : 'offline') + '"><span class="dot"></span>'
             + (c.online ? '在线' : '离线') + '</span>';
+    }
+
+    /** v2.3.1 点击「休眠」徽标直接唤醒摄像头（云端下发，成功后刷新设备列表）。 */
+    async function wakeCamera(did) {
+        try {
+            await api('api/devices/' + encodeURIComponent(did) + '/sleep/1', { method: 'POST' });
+            toast('唤醒指令已下发，摄像头启动约需几秒', 'ok');
+            loadDevices(true);
+        } catch (e) {
+            if (e.status === 401) { scheduleGateRelock(); return; }
+            toast('唤醒失败：' + e.message, 'err');
+        }
     }
 
     function cardHtml(c) {
@@ -5494,6 +5512,7 @@
             else if (act === 'recstop') stopRecord(did);
             else if (act === 'probe') runProbe(did, false);
             else if (act === 'deepprobe') runProbe(did, true);
+            else if (act === 'wake') wakeCamera(did);
             else if (act === 'probeclose') {
                 var box = b.closest('.cam-card').querySelector('.probe-box');
                 if (box) { box.remove(); }

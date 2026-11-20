@@ -31,11 +31,14 @@ class StaticAssetContractTest {
 
         assertTrue(html.contains("btnPreviewBack"), "预览弹层缺少应用内返回按钮");
         assertTrue(html.contains("btnPlayerBack"), "回放弹层缺少应用内返回按钮");
-        assertTrue(html.contains("v=62"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
+        assertTrue(html.contains("v=63"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
         // v2.3.1 真机验证第二轮：浏览直调系统选择器 + 休眠徽标 + 主题跟随系统默认
         assertTrue(js.contains("browseDirFlow"), "缺少目录浏览直调系统选择器逻辑");
         assertTrue(js.contains("applyPickedDir"), "缺少选定目录落输入框逻辑");
         assertTrue(js.contains("lanReachable"), "设备列表缺少局域网可达性字段");
+        // v2.3.1 第三轮补丁：休眠判定以云端 MIoT 休眠属性为准，徽标可点击唤醒
+        assertTrue(js.contains("sleeping === true"), "休眠徽标应依据云端 sleeping 属性");
+        assertTrue(js.contains("wakeCamera"), "缺少点击休眠徽标唤醒逻辑");
         assertTrue(js.contains("net sleep"), "缺少休眠徽标样式标记");
         assertTrue(js.contains("(v === 'light' || v === 'dark' || v === 'auto') ? v : 'auto'"), "主题默认应跟随系统");
         assertTrue(html.contains("value=\"auto\" checked"), "外观单选默认应为「跟随系统」");

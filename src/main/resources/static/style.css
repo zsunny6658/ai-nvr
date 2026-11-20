@@ -289,6 +289,10 @@ body:not(.authed) .sidenav { display: none; }
 .net.offline { color: var(--muted); background: var(--chip-bg); border: 1px solid var(--line); }
 /* v2.3.1 云端在线但局域网 CS2 不可达：摄像头休眠（米家省电模式常见），黄色弱警示 */
 .net.sleep { color: var(--amber); background: var(--warn-bg); border: 1px solid var(--warn-line); }
+/* v2.3.1 休眠徽标为可点击的 button 形态（点击唤醒）：去掉按钮默认外观 */
+button.net.sleep { cursor: pointer; font: inherit; font-size: 11px; font-weight: 600; font-family: inherit; }
+button.net.sleep::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+button.net.sleep:hover { filter: brightness(1.15); }
 .cam-model { font-size: 12px; color: var(--muted); margin-top: 3px; }
 .cam-ip { font-size: 12px; color: var(--faint); font-family: Consolas, monospace; margin-top: 1px; }
 .badges { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }

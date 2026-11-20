@@ -7,10 +7,12 @@ import com.ainvr.web.config.NvrProperties;
 import com.ainvr.web.service.DeviceCatalog;
 import com.ainvr.web.service.DeviceProbe;
 import com.ainvr.web.service.HlsService;
+import com.ainvr.web.service.MiotSleepService;
 import com.ainvr.web.service.RecordingService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -32,17 +34,19 @@ public class DeviceController {
     private final NvrProperties props;
     private final RtspServer rtspServer;
     private final DeviceProbe deviceProbe;
+    private final MiotSleepService sleepService;
     private final HostResolver hostResolver = new HostResolver();
 
     public DeviceController(DeviceCatalog catalog, RecordingService recordingService,
                             HlsService hlsService, NvrProperties props, RtspServer rtspServer,
-                            DeviceProbe deviceProbe) {
+                            DeviceProbe deviceProbe, MiotSleepService sleepService) {
         this.catalog = catalog;
         this.recordingService = recordingService;
         this.hlsService = hlsService;
         this.props = props;
         this.rtspServer = rtspServer;
         this.deviceProbe = deviceProbe;
+        this.sleepService = sleepService;
     }
 
     @GetMapping("/devices")
@@ -79,6 +83,10 @@ public class DeviceController {
         // 摄像头休眠时云端仍报在线，本字段为 false 即「云端在线但局域网不可达（休眠/掉线）」；
         // null 表示尚未探测（如启动后 20 秒内或无可用 IP）。
         m.put("lanReachable", deviceProbe.reachable(c.did()));
+        // v2.3.1 休眠状态（MiotSleepService 90s 一轮，MIoT camera_control.on）：
+        // 休眠中 CS2 唤醒监听仍会应答 LAN_SEARCH，可达性区分不出休眠，以云端属性为准；
+        // true=休眠中（界面显示黄色「休眠」徽标，可点击唤醒），null=尚未探测/固件不支持。
+        m.put("sleeping", sleepService.sleeping(c.did()));
         m.put("recording", recordingService.isRecording(c.did()));
         m.put("previewing", hlsService.isPreviewing(c.did()));
         String rtspUrl = "rtsp://" + host + ":" + rtspServer.getPort() + "/" + c.did();
@@ -91,5 +99,12 @@ public class DeviceController {
         // 相对路径：配合前端 <base href="./">，直连根路径与 fnOS 网关 /app/{appname}/ 下都能正确解析
         m.put("hlsUrl", "hls/" + c.did() + "/index.m3u8");
         return m;
+    }
+
+    /** 唤醒 / 休眠摄像头（MIoT camera_control.on 属性写操作，云端下发）。 */
+    @PostMapping("/devices/{did}/sleep/{wake}")
+    public Map<String, Object> setSleep(@PathVariable String did, @PathVariable boolean wake) {
+        sleepService.setSleep(did, !wake);
+        return Map.of("ok", true, "sleeping", !wake);
     }
 }
