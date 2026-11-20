@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -30,7 +31,7 @@ class StaticAssetContractTest {
 
         assertTrue(html.contains("btnPreviewBack"), "预览弹层缺少应用内返回按钮");
         assertTrue(html.contains("btnPlayerBack"), "回放弹层缺少应用内返回按钮");
-        assertTrue(html.contains("v=61"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
+        assertTrue(html.contains("v=62"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
         // v2.3.1 真机验证第二轮：浏览直调系统选择器 + 休眠徽标 + 主题跟随系统默认
         assertTrue(js.contains("browseDirFlow"), "缺少目录浏览直调系统选择器逻辑");
         assertTrue(js.contains("applyPickedDir"), "缺少选定目录落输入框逻辑");
@@ -38,6 +39,13 @@ class StaticAssetContractTest {
         assertTrue(js.contains("net sleep"), "缺少休眠徽标样式标记");
         assertTrue(js.contains("(v === 'light' || v === 'dark' || v === 'auto') ? v : 'auto'"), "主题默认应跟随系统");
         assertTrue(html.contains("value=\"auto\" checked"), "外观单选默认应为「跟随系统」");
+        // v2.3.1 真机验证第三轮：固定编号排序 + 预览不再全屏 + A-law 修复
+        assertTrue(js.contains("saveDeviceOrder"), "缺少摄像头顺序保存逻辑");
+        assertTrue(js.contains("api/settings/device-order"), "缺少摄像头顺序端点调用");
+        assertTrue(js.contains("q-move"), "设置页缺少摄像头调序按钮标记");
+        assertFalse(html.contains("x5-video-player-fullscreen"), "预览不应保留 X5 强制全屏属性");
+        assertTrue(js.contains("ALAW_SEG_END"), "缺少标准 G.711 A-law 编码实现");
+        assertTrue(css.contains(".q-no"), "缺少摄像头编号样式");
         // v2.3.1 回放自定义控制 + 事件页更多操作收纳 + 设置宽卡
         assertTrue(html.contains("btnPbPlay"), "回放缺少自定义播放按钮");
         assertTrue(html.contains("btnPbMute"), "回放缺少自定义静音按钮");

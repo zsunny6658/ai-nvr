@@ -73,6 +73,8 @@ public class AppSettingsStore {
     private static final String KEY_AI = "ai";
     /** 双摄第二镜头按设备开关：{@code {did: true|false}}；未配置=按型号自动识别。 */
     private static final String KEY_DUAL_LENS = "dualLens";
+    /** 摄像头显示顺序（baseDid → 序号），v2.3.1 新增。 */
+    private static final String KEY_DEVICE_ORDER = "deviceOrder";
     /** v2.3.1 事件快照归档：{enabled: bool, dir: 绝对路径}。 */
     private static final String KEY_SNAPSHOT_ARCHIVE = "snapshotArchive";
     private static final String KEY_MQTT = "mqtt";
@@ -365,6 +367,48 @@ public class AppSettingsStore {
             m.remove(KEY_DUAL_LENS);
         } else {
             m.put(KEY_DUAL_LENS, sub);
+        }
+        persist(m);
+    }
+
+    // ===================== 摄像头显示顺序 =====================
+
+    /**
+     * 摄像头显示顺序（baseDid → 序号，0 起）。未出现在该表中的设备排在已编号设备之后、
+     * 按发现顺序展示。序号由设置页的排序 UI 生成，保存后所有列表（摄像头 / 预览宫格 /
+     * 回放下拉 / 事件分组）统一按该顺序排列，不再随云端刷新顺序漂移。
+     */
+    public Map<String, Integer> deviceOrder() {
+        Object v = all().get(KEY_DEVICE_ORDER);
+        Map<String, Integer> out = new LinkedHashMap<>();
+        if (v instanceof Map<?, ?> raw) {
+            for (Map.Entry<?, ?> e : raw.entrySet()) {
+                try {
+                    out.put(String.valueOf(e.getKey()), Integer.parseInt(String.valueOf(e.getValue())));
+                } catch (NumberFormatException ignored) {
+                    // 脏数据忽略该条
+                }
+            }
+        }
+        return out;
+    }
+
+    /** 保存摄像头显示顺序：传入有序 baseDid 列表按 0..n-1 重编号；列表外设备清空编号排到末尾。 */
+    public synchronized void saveDeviceOrder(List<String> dids) {
+        Map<String, Object> m = all();
+        Map<String, Object> sub = new LinkedHashMap<>();
+        int i = 0;
+        if (dids != null) {
+            for (String d : dids) {
+                if (d != null && !d.isBlank()) {
+                    sub.put(d.trim(), i++);
+                }
+            }
+        }
+        if (sub.isEmpty()) {
+            m.remove(KEY_DEVICE_ORDER);
+        } else {
+            m.put(KEY_DEVICE_ORDER, sub);
         }
         persist(m);
     }
@@ -903,7 +947,7 @@ public class AppSettingsStore {
             KEY_HLS_IDLE_SEC, KEY_HLS_AUDIO, KEY_HLS_PREWARM, KEY_SHARE_EVENT_DURATION_SEC,
             KEY_SHARE_SSE_HEARTBEAT_SEC, KEY_SHARE_PAGE_RELOAD_SEC, KEY_SHARE_CONFIG_POLL_SEC,
             KEY_DEVICE_QUALITY, KEY_PTZ_MODE, KEY_MOTION, KEY_MOTION_EXCLUDE_ZONES, KEY_NOTIFY, KEY_AI,
-            KEY_DUAL_LENS, KEY_SNAPSHOT_ARCHIVE, KEY_MQTT);
+            KEY_DUAL_LENS, KEY_SNAPSHOT_ARCHIVE, KEY_MQTT, KEY_DEVICE_ORDER);
 
     /**
      * v2.1.0 配置导入：只接受 {@link #IMPORTABLE_KEYS} 中的键，整体替换后原子落盘。

@@ -347,6 +347,23 @@ public class SettingsController {
         return getSettings();
     }
 
+    /**
+     * 摄像头显示顺序（v2.3.1）：传入有序 baseDid 列表，按 0..n-1 固定编号。
+     * 摄像头页 / 预览宫格 / 回放下拉 / 事件分组统一按该顺序排列，不再随云端刷新漂移。
+     */
+    @PutMapping("/settings/device-order")
+    public Map<String, Object> updateDeviceOrder(@RequestBody(required = false) DeviceOrderRequest req) {
+        if (req == null || req.order() == null || req.order().isEmpty()) {
+            throw ApiException.badRequest("缺少有序设备 DID 列表");
+        }
+        settingsStore.saveDeviceOrder(req.order());
+        return getSettings();
+    }
+
+    /** 摄像头顺序请求体：{@code {"order": ["did1", "did2", ...]}}。 */
+    public record DeviceOrderRequest(java.util.List<String> order) {
+    }
+
     /** 修改录像分段时长（秒，10～3600；等于配置默认值时恢复默认）。 */
     @PutMapping("/settings/segment")
     public Map<String, Object> updateSegment(@RequestBody(required = false) SegmentRequest req) {

@@ -912,8 +912,10 @@ body.authed .container { padding-bottom: calc(78px + env(safe-area-inset-bottom,
     .settings-nav-item { white-space: nowrap; padding: 8px 12px; }
 }
 @media (max-width: 640px) {
-    .modal-preview .video-wrap { min-height: 26dvh; }
-    .ptz-console { max-height: 32dvh; }
+    /* 米家式布局：画面固定占约 4 成高度，控制区吃剩余空间并内部滚动，
+       云台 / 喊话 / 清晰度始终在画面下方触手可及，不再被拉伸的画面顶出屏幕 */
+    .modal-preview .video-wrap { flex: 0 0 auto; height: 42dvh; min-height: 26dvh; }
+    .ptz-console { flex: 1 1 auto; max-height: none; overflow-y: auto; -webkit-overflow-scrolling: touch; }
     .preview-foot { padding-top: 6px; }
     .share-line > .muted, .rtsp-line > .muted { flex-basis: auto; }
     .share-line > .muted { order: 0; }
@@ -928,7 +930,7 @@ body.authed .container { padding-bottom: calc(78px + env(safe-area-inset-bottom,
     .ptz-status { font-size: 10px; }
 }
 @media (max-width: 640px) {
-    .ptz-console { flex-direction: row; align-items: flex-start; gap: 10px; max-height: 34dvh; }
+    .ptz-console { flex-direction: row; align-items: flex-start; gap: 10px; }
     .ptz-pad-wrap { display: flex; flex-direction: column; align-items: center; gap: 0; flex: 0 0 auto; }
     .ptz-label { display: none; }
     .ptz-controls { min-width: 0; gap: 6px; }
@@ -958,6 +960,14 @@ body.authed .container { padding-bottom: calc(78px + env(safe-area-inset-bottom,
 }
 @media (hover: none) {
     .ptz-key, .btn, .tab, select { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+    /* 手机上隐藏原生视频控件的全屏按钮：点了会进系统播放器，云台/喊话按钮就够不着了（米家式内嵌画面） */
+    .modal-preview video::-webkit-media-controls-fullscreen-button { display: none !important; }
+}
+/* v2.3.1 摄像头固定编号 + 调序按钮 */
+.q-no { display: inline-block; font-weight: 700; font-size: 11px; color: var(--accent-ink);
+    background: var(--accent-bg); border-radius: 5px; padding: 1px 6px; margin-right: 6px; }
+.q-move { display: inline-flex; gap: 4px; margin-left: 8px; vertical-align: middle; }
+.q-move .btn { padding: 1px 8px; font-size: 12px; }
     .ptz-key { -webkit-user-select: none; user-select: none; }
 }
 

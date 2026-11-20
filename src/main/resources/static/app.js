@@ -1711,7 +1711,7 @@
             box.innerHTML = '<div class="q-empty">尚未发现摄像头，请先在「设备」页刷新设备列表。</div>';
             return;
         }
-        box.innerHTML = list.map(function (d) {
+        box.innerHTML = list.map(function (d, idx) {
             var reach = d.lanReachable === true ? '<span class="q-state ok">局域网可达</span>'
                 : d.lanReachable === false ? '<span class="q-state bad">局域网不可达</span>'
                     : '<span class="q-state">探测中</span>';
@@ -1722,6 +1722,13 @@
                     + '>' + esc(o.label) + '</option>';
             }).join('') + '</select>';
             var lensTag = d.secondaryLens ? '<span class="q-state">副镜头</span>' : '';
+            // v2.3.1 固定编号：主镜头显示序号 + ↑↓ 调序（副镜头随主镜头移动，不单独给按钮）
+            var noTag = d.secondaryLens ? '' : '<span class="q-no">#' + (idx + 1) + '</span>';
+            var moveBtns = d.secondaryLens ? ''
+                : '<span class="q-move"><button class="btn tiny" type="button" data-q-up="' + esc(d.did)
+                    + '" title="上移"' + (idx === 0 ? ' disabled' : '') + '>↑</button>'
+                    + '<button class="btn tiny" type="button" data-q-down="' + esc(d.did)
+                    + '" title="下移"' + (idx >= list.length - 1 ? ' disabled' : '') + '>↓</button></span>';
             // 双摄第二镜头开关：auto 按型号识别 / on 手动开启 / off 手动关闭
             var lensSel = '';
             if (!d.secondaryLens) {
@@ -1735,13 +1742,48 @@
                     + '</select>';
             }
             return '<div class="q-row"><div>' +
-                '<div class="q-name">' + esc(d.name || d.did) + lensTag + reach + stream + '</div>' +
+                '<div class="q-name">' + noTag + esc(d.name || d.did) + lensTag + reach + stream + moveBtns + '</div>' +
                 '<div class="q-meta">' + esc(d.did) + ' · ' + esc(d.model)
                 + ' · 型号默认档位 ' + esc(d.modelDefault) + '</div>' +
                 '</div><div class="set-edit">' + lensSel + sel +
                 '<button class="btn primary" type="button" data-q-save="' + esc(d.did) + '">应用</button>' +
                 '</div></div>';
         }).join('');
+    }
+
+    /** v2.3.1 保存摄像头顺序：副镜头随主镜头一起移动。 */
+    async function saveDeviceOrder(dids) {
+        try {
+            var s = await api('api/settings/device-order', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ order: dids })
+            });
+            state.settings = s;
+            renderQualitySettings(s.quality);
+            loadDevices(true); // 摄像头页 / 宫格 / 回放下拉立即按新顺序重排
+            toast('顺序已保存并固定', 'ok');
+        } catch (e) {
+            toast('保存顺序失败：' + e.message, 'err');
+        }
+    }
+
+    /** 上移 / 下移一台摄像头（连同其副镜头）。 */
+    function moveDevice(did, dir) {
+        var list = (state.settings && state.settings.quality && state.settings.quality.devices) || [];
+        var dids = list.map(function (d) { return d.did; });
+        var baseOrder = [], companion = {};
+        dids.forEach(function (d) {
+            if (/#2$/.test(d)) { companion[d.replace(/#2$/, '')] = d; }
+            else { baseOrder.push(d); }
+        });
+        var idx = baseOrder.indexOf(did);
+        var ni = idx + dir;
+        if (idx < 0 || ni < 0 || ni >= baseOrder.length) { return; }
+        var t = baseOrder[idx]; baseOrder[idx] = baseOrder[ni]; baseOrder[ni] = t;
+        var full = [];
+        baseOrder.forEach(function (b) { full.push(b); if (companion[b]) { full.push(companion[b]); } });
+        saveDeviceOrder(full);
     }
 
     async function saveDualLens(did, value) {
@@ -3367,8 +3409,9 @@
        浏览器麦克风 → 8kHz 重采样 → G.711 A-law（或 hlc6 线性 PCM）编码 →
        WebSocket 二进制上行 → 服务端 MISS CS2 通道 3 → 摄像头扬声器。
        复用当前取流会话（0x106/0x108），不新增摄像头连接。 */
-    var talk = { ws: null, ctx: null, stream: null, node: null, src: null,
-        active: false, did: null, linearPcm: false, buf: null };
+    var talk = { ws: null, ctx: null, stream: null, node: null, src: null, gain: null,
+        active: false, did: null, linearPcm: false, buf: null,
+        acc: null, accPos: 0 };
 
     function talkTip(text, kind) {
         var el = $('talkTip');
@@ -3385,14 +3428,25 @@
     }
 
     /* 线性 PCM 16bit → G.711 A-law（标准算法） */
+    /* 标准 G.711 线性 → A-law（Sun g711 算法，16bit 输入）。
+       v2.3.1 修正：旧实现对小幅负样本取段错误（-100 会解成 -8448 的大振幅），
+       摄像头端听感为满幅杂音、听不清语音。 */
+    var ALAW_SEG_END = [0x1F, 0x3F, 0x7F, 0xFF, 0x1FF, 0x3FF, 0x7FF, 0xFFF];
     function linearToAlaw(sample) {
-        var a = sample < 0 ? ~sample + 0x1005 : sample + 0x85;
-        var sign = sample < 0 ? 0x55 : 0xD5;
-        if (a > 0xFFFF) a = 0xFFFF;
-        var exp = a > 0x7FFF ? 7 : (a > 0x3FFF ? 6 : (a > 0x1FFF ? 5 : (a > 0x0FFF ? 4
-            : (a > 0x07FF ? 3 : (a > 0x03FF ? 2 : (a > 0x01FF ? 1 : 0))))));
-        var man = (a >> (exp + 3)) & 0x0F;
-        return (sign ^ (exp << 4) ^ man) & 0xFF;
+        var pcm = sample >> 3; // 16bit → 13bit（A-law 运算域，算术右移）
+        var mask;
+        if (pcm >= 0) { mask = 0xD5; }
+        else { mask = 0x55; pcm = -pcm - 8; }
+        if (pcm > 0xFFF) { pcm = 0xFFF; }
+        var seg = 0;
+        while (seg < 8 && pcm > ALAW_SEG_END[seg]) { seg++; }
+        var aval;
+        if (seg >= 8) { aval = 0x7F; }
+        else {
+            aval = seg << 4;
+            aval |= (seg < 2 ? (pcm >> 1) : (pcm >> seg)) & 0xF;
+        }
+        return (aval ^ mask) & 0xFF;
     }
 
     async function talkStart(did) {
@@ -3445,19 +3499,27 @@
         try {
             var Ctx = window.AudioContext || window.webkitAudioContext;
             talk.ctx = new Ctx();
+            talk.acc = [];
+            talk.accPos = 0;
             talk.src = talk.ctx.createMediaStreamSource(talk.stream);
-            // 采集 2048 样本一帧，降采样到 8kHz 后按 320 样本（40ms）切块上行
+            // 采集 2048 样本一帧，跨回调累积后按精确比率线性插值降采样到 8kHz，
+            // 再按 320 样本（40ms A-law）/ 640 样本（40ms 线性 PCM）切块上行
             talk.node = talk.ctx.createScriptProcessor(2048, 1, 1);
-            var ratio = Math.max(1, Math.round(talk.ctx.sampleRate / 8000));
             talk.node.onaudioprocess = function (e) {
                 if (!talk.active || !talk.ws || talk.ws.readyState !== 1) { return; }
                 var input = e.inputBuffer.getChannelData(0);
+                var acc = talk.acc, pos = talk.accPos;
+                for (var i = 0; i < input.length; i++) { acc.push(input[i]); }
+                var step = (talk.ctx.sampleRate || 44100) / 8000;
                 var down = [];
-                for (var i = 0; i < input.length; i += ratio) {
-                    var sum = 0, n = 0;
-                    for (var j = i; j < Math.min(i + ratio, input.length); j++) { sum += input[j]; n++; }
-                    down.push(sum / (n || 1));
+                while (pos + 1 < acc.length) {
+                    var i0 = Math.floor(pos), f = pos - i0;
+                    down.push(acc[i0] * (1 - f) + acc[i0 + 1] * f);
+                    pos += step;
                 }
+                var keepFrom = Math.floor(pos);
+                talk.acc = acc.slice(keepFrom);
+                talk.accPos = pos - keepFrom;
                 if (talk.linearPcm) {
                     // hlc6：16bit 小端线性 PCM，每 40ms 640 字节
                     var pcm = new Int16Array(down.length);
@@ -3476,7 +3538,12 @@
                 }
             };
             talk.src.connect(talk.node);
-            talk.node.connect(talk.ctx.destination);
+            // 经零增益节点接到 destination：保证 ScriptProcessor 持续回调，又不把麦克风
+            // 声音外放（手机扬声器外放会被麦克风再次拾音造成回声啸叫）
+            talk.gain = talk.ctx.createGain();
+            talk.gain.gain.value = 0;
+            talk.node.connect(talk.gain);
+            talk.gain.connect(talk.ctx.destination);
         } catch (e) {
             setPtzStatus('麦克风处理初始化失败：' + e.message, 'err');
             talkStop(true);
@@ -3497,10 +3564,13 @@
 
     function talkCleanup() {
         if (talk.node) { try { talk.node.disconnect(); } catch (e) { /* 忽略 */ } talk.node = null; }
+        if (talk.gain) { try { talk.gain.disconnect(); } catch (e) { /* 忽略 */ } talk.gain = null; }
         if (talk.src) { try { talk.src.disconnect(); } catch (e) { /* 忽略 */ } talk.src = null; }
         if (talk.ctx) { try { talk.ctx.close(); } catch (e) { /* 忽略 */ } talk.ctx = null; }
         if (talk.stream) { talk.stream.getTracks().forEach(function (t) { t.stop(); }); talk.stream = null; }
         talk.buf = null;
+        talk.acc = null;
+        talk.accPos = 0;
     }
 
     function talkStop(silent) {
@@ -5085,6 +5155,10 @@
         $('btnRefreshQuality').addEventListener('click', loadSettings);
         $('btnSavePtzMode').addEventListener('click', savePtzMode);
         $('setQualityList').addEventListener('click', function (e) {
+            var up = e.target.closest('button[data-q-up]');
+            if (up) { moveDevice(up.getAttribute('data-q-up'), -1); return; }
+            var down = e.target.closest('button[data-q-down]');
+            if (down) { moveDevice(down.getAttribute('data-q-down'), 1); return; }
             var b = e.target.closest('button[data-q-save]');
             if (!b) return;
             var did = b.getAttribute('data-q-save');

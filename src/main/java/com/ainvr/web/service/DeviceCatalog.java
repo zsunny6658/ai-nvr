@@ -153,16 +153,27 @@ public class DeviceCatalog {
     /**
      * 当前设备列表。v1.2.21 起固定按名称排序（中文拼音 Collator，同名按 did 兜底），
      * 米家云端返回顺序在两次刷新间不保证稳定，此前会导致预览宫格 / 回放设备下拉
-     * 的 tab 顺序漂移而点错设备。
+     * 的 tab 顺序漂移而点错设备。v2.3.1：用户在设置页手动排序后（settings 的
+     * {@code deviceOrder}），按编号升序固定，副镜头紧跟主镜头；未编号设备按发现顺序排最后。
      */
     public List<CameraDevice> all() {
         List<CameraDevice> snapshot = devices;
         if (snapshot.size() < 2) {
             return snapshot;
         }
-        Collator collator = Collator.getInstance(Locale.CHINA);
+        Map<String, Integer> order = settings.deviceOrder();
+        if (order.isEmpty()) {
+            Collator collator = Collator.getInstance(Locale.CHINA);
+            return snapshot.stream()
+                    .sorted(Comparator.comparing(CameraDevice::name, collator)
+                            .thenComparing(CameraDevice::did))
+                    .toList();
+        }
         return snapshot.stream()
-                .sorted(Comparator.comparing(CameraDevice::name, collator)
+                .sorted(Comparator
+                        .comparingInt((CameraDevice c) ->
+                                order.getOrDefault(DualLens.baseDid(c.did()), Integer.MAX_VALUE))
+                        .thenComparingInt(c -> c.did().endsWith(DualLens.SUFFIX) ? 1 : 0)
                         .thenComparing(CameraDevice::did))
                 .toList();
     }
