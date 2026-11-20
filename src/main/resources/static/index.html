@@ -6,13 +6,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <meta name="theme-color" content="#0e1116">
     <meta name="apple-mobile-web-app-capable" content="yes">
-    <!-- 主题引导：深色默认，localStorage 记忆浅色；在 CSS 加载前置好 data-theme 避免闪白 -->
-    <script>(function () { try { if (localStorage.getItem('ainvr_theme') === 'light') { document.documentElement.setAttribute('data-theme', 'light'); } } catch (e) { } })();</script>
+    <!-- 主题引导：深色默认；localStorage 记忆浅色/跟随系统（auto 按系统偏好判定）；在 CSS 加载前置好 data-theme 避免闪白 -->
+    <script>(function () { try { var v = localStorage.getItem('ainvr_theme'); var light = v === 'light' || (v === 'auto' && window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches); if (light) { document.documentElement.setAttribute('data-theme', 'light'); } } catch (e) { } })();</script>
     <!-- 相对 base：直连根路径解析到 /，fnOS 网关 /app/{appname}/ 下解析到该前缀；资源/API 全部用相对路径 -->
     <base href="./">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='4' fill='%230e1116'/%3E%3Ccircle cx='8' cy='8' r='3' fill='%2322d3ee'/%3E%3C/svg%3E">
     <title>aiNVR · AI 增强摄像头 NVR</title>
-    <link rel="stylesheet" href="style.css?v=58">
+    <link rel="stylesheet" href="style.css?v=59">
 </head>
 <body>
 
@@ -297,6 +297,7 @@
                     <button class="settings-nav-item" data-sgroup="stream" type="button">实时画面</button>
                     <button class="settings-nav-item" data-sgroup="ai" type="button">AI 检测</button>
                     <button class="settings-nav-item" data-sgroup="share" type="button">共享看板</button>
+                    <button class="settings-nav-item" data-sgroup="ha" type="button">智能联动</button>
                     <button class="settings-nav-item" data-sgroup="security" type="button">安全与系统</button>
                     <button class="settings-nav-item" data-sgroup="appearance" type="button">外观</button>
                 </nav>
@@ -335,6 +336,39 @@
                     </div>
                     <div id="setArchiveMsg" class="muted small"></div>
                     <p class="muted small">目录布局：<code>归档目录/yyyy-MM-dd/摄像头名/时分秒-事件id-类型.jpg</code>。仅对开启归档<strong>之后</strong>新产生的 AI 事件生效，历史事件不回溯归档。</p>
+                </div>
+                <div class="set-card" data-sgroup="ha">
+                    <h3>Home Assistant（MQTT）</h3>
+                    <p class="muted small">一次配置，全部摄像头<strong>自动</strong>出现在 HA：每台摄像头注册 1 个画面实体 + 人形 / 车辆 / 宠物 / 画面变动 4 个传感器，自动化直接按<strong>识别结果</strong>写条件（深夜有人 → 开灯）。无需逐台直连、无需 HACS 集成、无需 Frigate。前提：HA 已装 MQTT 集成（设置 → 设备与服务 → 添加 MQTT Broker）。</p>
+                    <label class="ev-switch"><input type="checkbox" id="setMqttEnabled"> 启用 MQTT 发布</label>
+                    <label>Broker 地址与端口</label>
+                    <div class="set-edit">
+                        <input type="text" id="setMqttHost" placeholder="HA 所在主机 IP 或域名" autocomplete="off">
+                        <input type="number" id="setMqttPort" min="1" max="65535" placeholder="1883" style="max-width:110px">
+                    </div>
+                    <label>用户名 / 密码（broker 未开认证可留空）</label>
+                    <div class="set-edit">
+                        <input type="text" id="setMqttUser" autocomplete="off" placeholder="可留空">
+                        <input type="password" id="setMqttPass" autocomplete="new-password" placeholder="可留空">
+                    </div>
+                    <label class="ev-switch"><input type="checkbox" id="setMqttTls"> TLS 加密（端口通常 8883）</label>
+                    <details class="mqtt-adv">
+                        <summary class="muted small">高级选项</summary>
+                        <label>发现前缀（默认 homeassistant）</label>
+                        <input type="text" id="setMqttDiscoveryPrefix" autocomplete="off">
+                        <label>主题前缀（默认 ainvr）</label>
+                        <input type="text" id="setMqttBaseTopic" autocomplete="off">
+                        <label>传感器自动回落（秒，10～3600）</label>
+                        <input type="number" id="setMqttOffDelay" min="10" max="3600">
+                        <label>画面快照周期（秒，0 = 仅事件时推送）</label>
+                        <input type="number" id="setMqttSnapInterval" min="0" max="600">
+                    </details>
+                    <div class="set-actions">
+                        <button class="btn primary" id="btnSaveMqtt" type="button">保存并连接</button>
+                        <button class="btn" id="btnTestMqtt" type="button">测试连接</button>
+                    </div>
+                    <div id="setMqttMsg" class="muted small"></div>
+                    <p class="muted small" id="setMqttStatus"></p>
                 </div>
                 <div class="set-card" data-sgroup="storage">
                     <h3>录像参数</h3>
@@ -644,6 +678,8 @@
                             <span>深色</span><small>默认 · 监控台观感</small></label>
                         <label class="layout-opt"><input type="radio" name="uiTheme" value="light">
                             <span>浅色</span><small>日间高亮环境</small></label>
+                        <label class="layout-opt"><input type="radio" name="uiTheme" value="auto">
+                            <span>跟随系统</span><small>飞牛桌面外观 / 浏览器偏好</small></label>
                     </div>
                     <div class="set-divider"></div>
                     <h3>摄像头卡快照</h3>
@@ -929,8 +965,8 @@
 <div id="toast" class="toast"></div>
 
 <script src="vendor/hls.min.js"></script>
-<script type="module" src="vendor/trimapp-bridge.js?v=58"></script>
-<script src="watchdog.js?v=58"></script>
-<script src="app.js?v=58"></script>
+<script type="module" src="vendor/trimapp-bridge.js?v=59"></script>
+<script src="watchdog.js?v=59"></script>
+<script src="app.js?v=59"></script>
 </body>
 </html>

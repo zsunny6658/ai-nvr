@@ -883,19 +883,38 @@
         });
         trimApplyTitle(lastUnhandledCount);
     }
-    /* ---------- v2.3.0 主题：深色默认，浅色记忆在本浏览器 ---------- */
-    function currentTheme() {
-        return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+    /* ---------- v2.3.0 主题：深色默认；v2.3.1 三态（深色 / 浅色 / 跟随系统） ---------- */
+    /** 用户选择的主题（原始值；auto = 跟随系统）。 */
+    function storedTheme() {
+        try {
+            var v = localStorage.getItem('ainvr_theme');
+            return (v === 'light' || v === 'auto') ? v : 'dark';
+        } catch (e) { return 'dark'; }
     }
-    function applyTheme(t) {
+    /** 解析为实际生效的深浅色：显式值直通；auto 优先飞牛桌面外观，独立浏览器回落系统偏好。 */
+    function resolveTheme(raw) {
+        if (raw === 'light' || raw === 'dark') { return raw; }
+        if (trimState && typeof trimState.theme === 'string') { return trimState.theme; }
+        try {
+            if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) return 'light';
+        } catch (e) { /* 老浏览器无该 API：回落深色 */ }
+        return 'dark';
+    }
+    function currentTheme() { return resolveTheme(storedTheme()); }
+    function applyTheme(raw) {
+        var t = resolveTheme(raw);
         var root = document.documentElement;
-        if (t === 'light') { root.setAttribute('data-theme', 'light'); } else { root.removeAttribute('data-theme'); t = 'dark'; }
+        if (t === 'light') { root.setAttribute('data-theme', 'light'); } else { root.removeAttribute('data-theme'); }
         var m = document.querySelector('meta[name="theme-color"]');
         if (m) { m.setAttribute('content', t === 'light' ? '#eef1f6' : '#0e1116'); }
-        document.querySelectorAll('input[name="uiTheme"]').forEach(function (r) { r.checked = r.value === t; });
+        document.querySelectorAll('input[name="uiTheme"]').forEach(function (r) { r.checked = r.value === raw; });
         var lb = $('btnThemeLabel');
-        if (lb) { lb.textContent = t === 'light' ? '深色模式' : '浅色模式'; }
-        try { localStorage.setItem('ainvr_theme', t); } catch (e2) { /* 存储不可用忽略 */ }
+        if (lb) {
+            // 快捷按钮展示「点击后将切到」的模式：深色→浅色→跟随系统 循环
+            var next = raw === 'dark' ? 'light' : raw === 'light' ? 'auto' : 'dark';
+            lb.textContent = next === 'light' ? '浅色模式' : next === 'auto' ? '跟随系统' : '深色模式';
+        }
+        try { localStorage.setItem('ainvr_theme', raw); } catch (e2) { /* 存储不可用忽略 */ }
     }
 
     /** 「查看全部」：切到事件告警页并按该摄像头筛选（用 pending 避免与 tab 自带加载打架）。 */
@@ -1607,6 +1626,8 @@
             $('btnSaveDir').disabled = true;
             // v2.3.1 事件快照归档
             renderSnapshotArchive(s);
+            // v2.3.1 Home Assistant（MQTT）
+            renderMqtt(s);
             // 分段时长
             $('setSegmentInput').value = s.segmentSec;
             $('setSegmentHint').textContent = (s.segmentCustomized ? '当前为自定义值，默认 ' + s.defaultSegmentSec + ' 秒。' : '当前为默认值。')
@@ -2322,7 +2343,7 @@
     /* SDK 由 vendor/trimapp-bridge.js 以 ESM module 挂到 window.TrimApp 并派发
        trimapp:ready。独立浏览器访问时探测不到宿主（isStandaloneWeb=true），
        全部 sdk-only 能力保持隐藏，行为与旧版一致。 */
-    var trimState = { probed: false, hostOk: false, app: null };
+    var trimState = { probed: false, hostOk: false, app: null, theme: null };
     var trimCbs = [];
 
     /** 宿主就绪回调：宿主可用时以 SDK 实例调用 cb，否则以 null 调用（一次性探测，结果缓存）。 */
@@ -2334,7 +2355,10 @@
             trimState.probed = true;
             trimState.hostOk = ok;
             trimState.app = app || null;
-            if (ok) { document.body.classList.add('sdk-host'); }
+            if (ok) {
+                document.body.classList.add('sdk-host');
+                trimStartThemeSync(app);
+            }
             var cbs = trimCbs; trimCbs = [];
             cbs.forEach(function (f) { f(ok ? trimState.app : null); });
         }
@@ -2367,6 +2391,23 @@
             done = true;
             finish(false, null);
         }, 8000);
+    }
+
+    /** 飞牛宿主外观主题同步：轮询 getPlatformConfig().theme（桌面切换外观后 ≤15s 生效），
+     *  页面重新可见时立即刷新；主题设置为「跟随系统」时即时生效。 */
+    function trimStartThemeSync(t) {
+        var refresh = function () {
+            Promise.resolve(t.getPlatformConfig()).then(function (c) {
+                var th = c && c.theme === 'light' ? 'light' : 'dark';
+                if (trimState.theme !== th) {
+                    trimState.theme = th;
+                    if (storedTheme() === 'auto') { applyTheme('auto'); }
+                }
+            }).catch(function () { /* 宿主不支持时静默：回落浏览器偏好 */ });
+        };
+        refresh();
+        setInterval(refresh, 15000);
+        document.addEventListener('visibilitychange', function () { if (!document.hidden) refresh(); });
     }
 
     /** 飞牛系统文件选择器选目录；返回绝对路径或 null（取消 / 拒绝 / 无宿主）。 */
@@ -2624,6 +2665,95 @@
         } catch (e) {
             if (e.status === 401) { scheduleGateRelock(); return; }
             toast('校验失败：' + (e.message || dir), 'err');
+        }
+    }
+
+    /* ---------- v2.3.1 Home Assistant（MQTT）设置 ---------- */
+    function renderMqtt(s) {
+        var m = (s && s.mqtt) || {};
+        $('setMqttEnabled').checked = m.enabled === true;
+        $('setMqttHost').value = m.host || '';
+        $('setMqttPort').value = m.port || 1883;
+        $('setMqttUser').value = m.username || '';
+        $('setMqttPass').value = '';
+        $('setMqttPass').placeholder = m.mqttPassSet ? '●●●●●●（已保存，留空保持不变）' : '可留空';
+        $('setMqttTls').checked = m.tls === true;
+        $('setMqttDiscoveryPrefix').value = m.discoveryPrefix || 'homeassistant';
+        $('setMqttBaseTopic').value = m.baseTopic || 'ainvr';
+        $('setMqttOffDelay').value = m.offDelaySec || 90;
+        $('setMqttSnapInterval').value = m.snapshotIntervalSec != null ? m.snapshotIntervalSec : 30;
+        var ha = m.ha || {};
+        var st = $('setMqttStatus');
+        if (ha.connected === true) {
+            st.textContent = '已连接 broker：' + (ha.deviceCount || 0) + ' 台摄像头 × 5 实体已发布到 HA discovery，设备页面应已出现。';
+        } else if (ha.lastError) {
+            st.textContent = '未连接：' + ha.lastError + '（保存后会自动重试）';
+        } else {
+            st.textContent = '未启用或尚未连接。';
+        }
+    }
+
+    function mqttFormBody(withPassword) {
+        var snap = parseInt($('setMqttSnapInterval').value, 10);
+        var body = {
+            enabled: $('setMqttEnabled').checked,
+            host: $('setMqttHost').value.trim(),
+            port: parseInt($('setMqttPort').value, 10) || 1883,
+            username: $('setMqttUser').value.trim(),
+            tls: $('setMqttTls').checked,
+            discoveryPrefix: $('setMqttDiscoveryPrefix').value.trim() || 'homeassistant',
+            baseTopic: $('setMqttBaseTopic').value.trim() || 'ainvr',
+            offDelaySec: parseInt($('setMqttOffDelay').value, 10) || 90,
+            snapshotIntervalSec: isNaN(snap) ? null : snap
+        };
+        var pass = $('setMqttPass').value;
+        if (withPassword || pass) { body.password = pass; }
+        return body;
+    }
+
+    async function saveMqtt() {
+        var body = mqttFormBody(true);
+        if (body.enabled && !body.host) {
+            toast('请填写 Broker 地址', 'err');
+            return;
+        }
+        var btn = $('btnSaveMqtt');
+        btn.disabled = true;
+        $('setMqttMsg').textContent = '';
+        try {
+            var s = await api('api/settings/mqtt', {
+                method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            state.settings = s;
+            renderMqtt(s);
+            toast(body.enabled ? 'MQTT 设置已保存，正在连接…' : 'MQTT 已关闭', 'ok');
+        } catch (e) {
+            if (e.status === 401) { scheduleGateRelock(); return; }
+            $('setMqttMsg').textContent = e.message || '保存失败';
+            toast('保存失败：' + (e.message || '未知错误'), 'err');
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
+    async function testMqtt() {
+        var btn = $('btnTestMqtt');
+        btn.disabled = true;
+        $('setMqttMsg').textContent = '正在测试连接…';
+        try {
+            var r = await api('api/settings/mqtt/test', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(mqttFormBody(false))
+            });
+            $('setMqttMsg').textContent = r && r.ok
+                ? '✓ 连接成功（' + (r.latencyMs || 0) + 'ms），可以保存并连接。'
+                : '✗ 连接失败：' + ((r && r.error) || '未知错误');
+        } catch (e) {
+            if (e.status === 401) { scheduleGateRelock(); return; }
+            $('setMqttMsg').textContent = '✗ 测试失败：' + (e.message || '未知错误');
+        } finally {
+            btn.disabled = false;
         }
     }
 
@@ -4779,6 +4909,8 @@
         $('btnBrowseArchiveDir').addEventListener('click', function () { openDirModal('archive'); });
         $('btnSaveArchiveDir').addEventListener('click', saveSnapshotArchive);
         $('btnTestArchiveDir').addEventListener('click', verifyArchiveDir);
+        $('btnSaveMqtt').addEventListener('click', saveMqtt);
+        $('btnTestMqtt').addEventListener('click', testMqtt);
         $('btnSaveSegment').addEventListener('click', saveSegment);
         $('btnSaveRtsp').addEventListener('click', saveRtsp);
         $('btnSaveRtspToken').addEventListener('click', saveRtspToken);
@@ -5136,12 +5268,15 @@
             showSettingsGroup(localStorage.getItem('ainvr_set_group') || 'storage');
         } catch (e) { showSettingsGroup('storage'); }
 
-        // v2.3.0 主题切换：侧栏快捷按钮 + 设置页单选；初始态与 head 引导脚本对齐
-        $('btnTheme').addEventListener('click', function () { applyTheme(currentTheme() === 'dark' ? 'light' : 'dark'); });
+        // v2.3.0 主题切换：侧栏快捷按钮 + 设置页单选；v2.3.1 快捷按钮循环（深色→浅色→跟随系统）
+        $('btnTheme').addEventListener('click', function () {
+            var cur = storedTheme();
+            applyTheme(cur === 'dark' ? 'light' : cur === 'light' ? 'auto' : 'dark');
+        });
         document.querySelectorAll('input[name="uiTheme"]').forEach(function (r) {
             r.addEventListener('change', function () { if (r.checked) { applyTheme(r.value); } });
         });
-        applyTheme(currentTheme());
+        applyTheme(storedTheme());
 
         // v2.3.0 摄像头卡快照开关
         var snapCb = $('setCardSnap');

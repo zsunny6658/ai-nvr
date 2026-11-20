@@ -30,12 +30,15 @@ class StaticAssetContractTest {
 
         assertTrue(html.contains("btnPreviewBack"), "预览弹层缺少应用内返回按钮");
         assertTrue(html.contains("btnPlayerBack"), "回放弹层缺少应用内返回按钮");
-        assertTrue(html.contains("v=58"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
+        assertTrue(html.contains("v=59"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
         // v2.3.1 飞牛桌面 SDK 融合 + 快照归档
         assertTrue(html.contains("vendor/trimapp-bridge.js"), "缺少 @trimjs/web-app 桥接脚本");
         assertTrue(html.contains("dirSysPick"), "目录弹窗缺少系统文件选择器按钮");
         assertTrue(html.contains("setSnapArchEnabled"), "缺少快照归档开关");
         assertTrue(html.contains("setArchiveDirInput"), "缺少归档目录输入");
+        assertTrue(html.contains("data-sgroup=\"ha\""), "缺少智能联动（Home Assistant）设置分组");
+        assertTrue(html.contains("btnSaveMqtt"), "缺少 MQTT 保存按钮");
+        assertTrue(html.contains("value=\"auto\""), "主题缺少「跟随系统」选项");
         assertTrue(js.contains("whenTrimHost"), "缺少 SDK 宿主探测");
         assertTrue(js.contains("trimPickDir"), "缺少系统文件选择器调用");
         assertTrue(js.contains("trimOpenFile"), "缺少在文件管理中打开调用");

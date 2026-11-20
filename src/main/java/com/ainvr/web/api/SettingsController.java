@@ -14,6 +14,7 @@ import com.ainvr.web.service.AiDetectService;
 import com.ainvr.web.service.DeviceCatalog;
 import com.ainvr.web.service.DeviceProbe;
 import com.ainvr.web.service.HlsService;
+import com.ainvr.web.service.HaMqttService;
 import com.ainvr.web.service.RecordingService;
 import com.ainvr.web.service.ShareEventService;
 import com.ainvr.web.service.SnapshotArchiveService;
@@ -67,6 +68,7 @@ public class SettingsController {
     private final DeviceProbe deviceProbe;
     private final AiDetectService aiDetectService;
     private final SnapshotArchiveService snapshotArchive;
+    private final HaMqttService mqtt;
 
     public SettingsController(RecordingService recordingService, RtspServer rtspServer,
                               NvrProperties props, AppSettingsStore settingsStore,
@@ -74,7 +76,7 @@ public class SettingsController {
                               ObjectMapper mapper, AiDetectService aiDetectService,
                               HlsService hlsService, ShareEventService shareEventService,
                               DeviceCatalog catalog, StreamHub streamHub, DeviceProbe deviceProbe,
-                              SnapshotArchiveService snapshotArchive) {
+                              SnapshotArchiveService snapshotArchive, HaMqttService mqtt) {
         this.recordingService = recordingService;
         this.rtspServer = rtspServer;
         this.props = props;
@@ -89,6 +91,7 @@ public class SettingsController {
         this.deviceProbe = deviceProbe;
         this.aiDetectService = aiDetectService;
         this.snapshotArchive = snapshotArchive;
+        this.mqtt = mqtt;
     }
 
     /** 聚合返回全部设置（录像相关 + 实时 RTSP 端口）。 */
@@ -104,7 +107,43 @@ public class SettingsController {
         m.put("quality", qualityInfo());
         m.put("ai", aiDetectService.status());
         m.put("snapshotArchive", settingsStore.snapshotArchive());
+        m.put("mqtt", mqttInfo());
         return m;
+    }
+
+    /** MQTT 设置（密码只回传是否已设置的布尔位，不回显明文）。 */
+    private Map<String, Object> mqttInfo() {
+        Map<String, Object> raw = settingsStore.mqtt();
+        Map<String, Object> out = new java.util.LinkedHashMap<>(raw);
+        boolean passSet = raw.get("password") != null && !String.valueOf(raw.get("password")).isEmpty();
+        out.remove("password");
+        out.put("mqttPassSet", passSet);
+        out.put("ha", mqtt.status());
+        return out;
+    }
+
+    /** v2.3.1 MQTT / Home Assistant 设置保存：保存后热重载 MQTT 连接。 */
+    @org.springframework.web.bind.annotation.PutMapping("/settings/mqtt")
+    public Map<String, Object> updateMqtt(@RequestBody(required = false) java.util.Map<String, Object> body) {
+        if (body == null) {
+            throw ApiException.badRequest("缺少请求体");
+        }
+        settingsStore.saveMqtt(body);
+        mqtt.reload();
+        return mqttInfo();
+    }
+
+    /** v2.3.1 MQTT 连接测试：请求体里的 host/port/user/pass/tls 直接生效（可先测后存）。 */
+    @org.springframework.web.bind.annotation.PostMapping("/settings/mqtt/test")
+    public Map<String, Object> testMqtt(@RequestBody(required = false) java.util.Map<String, Object> body) {
+        if (body == null) {
+            throw ApiException.badRequest("缺少请求体");
+        }
+        // 密码未填写时沿用已保存的（前端掩码不回显的语义）
+        if (body.get("password") == null || String.valueOf(body.get("password")).isEmpty()) {
+            body.put("password", settingsStore.mqtt().get("password"));
+        }
+        return mqtt.testConnection(body);
     }
 
     /** v2.3.1 事件快照归档：开关 + 归档目录（目录为空视为关闭）。 */

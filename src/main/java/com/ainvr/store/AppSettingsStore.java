@@ -75,6 +75,7 @@ public class AppSettingsStore {
     private static final String KEY_DUAL_LENS = "dualLens";
     /** v2.3.1 事件快照归档：{enabled: bool, dir: 绝对路径}。 */
     private static final String KEY_SNAPSHOT_ARCHIVE = "snapshotArchive";
+    private static final String KEY_MQTT = "mqtt";
     private static final TypeReference<LinkedHashMap<String, Object>> MAP_TYPE = new TypeReference<>() {};
 
     private final Path dir;
@@ -397,6 +398,90 @@ public class AppSettingsStore {
         sub.put("dir", d);
         m.put(KEY_SNAPSHOT_ARCHIVE, sub);
         persist(m);
+    }
+
+    // ===================== MQTT / Home Assistant =====================
+
+    /** MQTT / Home Assistant 接入设置（settings.json 的 {@code mqtt} 子对象，v2.3.1 新增）。 */
+    public Map<String, Object> mqtt() {
+        Object v = all().get(KEY_MQTT);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("enabled", false);
+        out.put("host", "");
+        out.put("port", 1883);
+        out.put("username", "");
+        out.put("password", "");
+        out.put("tls", false);
+        out.put("discoveryPrefix", "homeassistant");
+        out.put("baseTopic", "ainvr");
+        out.put("offDelaySec", 90);
+        out.put("snapshotIntervalSec", 30);
+        if (!(v instanceof Map<?, ?> raw)) {
+            return out;
+        }
+        out.put("enabled", Boolean.parseBoolean(String.valueOf(raw.get("enabled"))));
+        out.put("host", strOrEmpty(raw.get("host")));
+        out.put("port", intOr(raw.get("port"), 1883, 1, 65535));
+        out.put("username", strOrEmpty(raw.get("username")));
+        out.put("password", strOrEmpty(raw.get("password")));
+        out.put("tls", Boolean.parseBoolean(String.valueOf(raw.get("tls"))));
+        Object dp = raw.get("discoveryPrefix");
+        String dpS = dp == null ? "" : String.valueOf(dp).trim();
+        out.put("discoveryPrefix", dpS.isEmpty() ? "homeassistant" : dpS);
+        Object bt = raw.get("baseTopic");
+        String btS = bt == null ? "" : String.valueOf(bt).trim();
+        out.put("baseTopic", btS.isEmpty() ? "ainvr" : btS.replaceAll("[^A-Za-z0-9_\\-]", ""));
+        out.put("offDelaySec", intOr(raw.get("offDelaySec"), 90, 10, 3600));
+        out.put("snapshotIntervalSec", intOr(raw.get("snapshotIntervalSec"), 30, 0, 600));
+        return out;
+    }
+
+    /** 保存 MQTT 设置；enabled 时 host 必须非空。 */
+    public synchronized void saveMqtt(Map<String, Object> in) {
+        Map<String, Object> m = all();
+        Map<String, Object> cur = mqtt();
+        Map<String, Object> sub = new LinkedHashMap<>();
+        boolean enabled = Boolean.parseBoolean(String.valueOf(in.getOrDefault("enabled", cur.get("enabled"))));
+        String host = in.containsKey("host") ? strOrEmpty(in.get("host")) : String.valueOf(cur.get("host"));
+        sub.put("enabled", enabled && !host.isEmpty());
+        sub.put("host", host);
+        sub.put("port", in.containsKey("port") ? intOr(in.get("port"), 1883, 1, 65535) : cur.get("port"));
+        sub.put("username", in.containsKey("username") ? strOrEmpty(in.get("username")) : cur.get("username"));
+        // 密码语义：显式传空串 = 清除；不传 = 保持原值（前端掩码不回显）
+        if (in.containsKey("password")) {
+            sub.put("password", strOrEmpty(in.get("password")));
+        } else {
+            sub.put("password", cur.get("password"));
+        }
+        sub.put("tls", Boolean.parseBoolean(String.valueOf(in.getOrDefault("tls", cur.get("tls")))));
+        Object dp = in.getOrDefault("discoveryPrefix", cur.get("discoveryPrefix"));
+        String dpS = strOrEmpty(dp);
+        sub.put("discoveryPrefix", dpS.isEmpty() ? "homeassistant" : dpS);
+        Object bt = in.getOrDefault("baseTopic", cur.get("baseTopic"));
+        String btS = strOrEmpty(bt).replaceAll("[^A-Za-z0-9_\\-]", "");
+        sub.put("baseTopic", btS.isEmpty() ? "ainvr" : btS);
+        sub.put("offDelaySec", in.containsKey("offDelaySec")
+                ? intOr(in.get("offDelaySec"), 90, 10, 3600) : cur.get("offDelaySec"));
+        sub.put("snapshotIntervalSec", in.containsKey("snapshotIntervalSec")
+                ? intOr(in.get("snapshotIntervalSec"), 30, 0, 600) : cur.get("snapshotIntervalSec"));
+        m.put(KEY_MQTT, sub);
+        persist(m);
+    }
+
+    private static String strOrEmpty(Object v) {
+        return v == null ? "" : String.valueOf(v).trim();
+    }
+
+    private static int intOr(Object v, int dft, int min, int max) {
+        if (v == null) {
+            return dft;
+        }
+        try {
+            int n = Integer.parseInt(String.valueOf(v).trim());
+            return Math.max(min, Math.min(max, n));
+        } catch (NumberFormatException e) {
+            return dft;
+        }
     }
 
     // ===================== 运动侦测 =====================
@@ -818,7 +903,7 @@ public class AppSettingsStore {
             KEY_HLS_IDLE_SEC, KEY_HLS_AUDIO, KEY_HLS_PREWARM, KEY_SHARE_EVENT_DURATION_SEC,
             KEY_SHARE_SSE_HEARTBEAT_SEC, KEY_SHARE_PAGE_RELOAD_SEC, KEY_SHARE_CONFIG_POLL_SEC,
             KEY_DEVICE_QUALITY, KEY_PTZ_MODE, KEY_MOTION, KEY_MOTION_EXCLUDE_ZONES, KEY_NOTIFY, KEY_AI,
-            KEY_DUAL_LENS, KEY_SNAPSHOT_ARCHIVE);
+            KEY_DUAL_LENS, KEY_SNAPSHOT_ARCHIVE, KEY_MQTT);
 
     /**
      * v2.1.0 配置导入：只接受 {@link #IMPORTABLE_KEYS} 中的键，整体替换后原子落盘。
