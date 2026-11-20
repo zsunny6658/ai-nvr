@@ -31,7 +31,12 @@ class StaticAssetContractTest {
 
         assertTrue(html.contains("btnPreviewBack"), "预览弹层缺少应用内返回按钮");
         assertTrue(html.contains("btnPlayerBack"), "回放弹层缺少应用内返回按钮");
-        assertTrue(html.contains("v=63"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
+        assertTrue(html.contains("v=64"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
+        // v2.3.1 第四轮性能修复：解锁懒加载录像列表 + 分组增量渲染 + 回放换段预载修复
+        assertTrue(js.contains("maybeSwapEarly"), "缺少回放边界提前交接逻辑");
+        assertTrue(js.contains("idle.preload = 'auto'"), "待命元素应显式 auto 预缓冲");
+        assertTrue(js.contains("data-rmore"), "录像文件列表缺少「加载更多」增量渲染");
+        assertTrue(js.contains("recListCurrent"), "录像列表缺少当前全量数据缓存");
         // v2.3.1 真机验证第二轮：浏览直调系统选择器 + 休眠徽标 + 主题跟随系统默认
         assertTrue(js.contains("browseDirFlow"), "缺少目录浏览直调系统选择器逻辑");
         assertTrue(js.contains("applyPickedDir"), "缺少选定目录落输入框逻辑");

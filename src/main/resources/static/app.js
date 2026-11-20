@@ -30,7 +30,8 @@
         recSelected: new Set(),
         recRows: new Map(),
         // v1.2.13：按摄像头分组展示（折叠状态 / 各设备文件数）
-        recCollapsed: new Set(), recCounts: {},
+        // v2.3.1：每组增量渲染（首次 50 行，点「加载更多」续 200 行），避免上千行 DOM 一次成型卡死主线程
+        recCollapsed: new Set(), recCounts: {}, recShown: new Map(), recListCurrent: [],
         // v1.2.8：事件告警页（选中集 / 已加载行 / 分页游标）
         evSelected: new Set(), evRows: [], evOffset: 0, evTotal: 0, evBusy: false,
         // v1.2.15：全量事件数 / 删除或清空操作的重入保护
@@ -51,6 +52,7 @@
             inited: false, did: null, dateStr: null,
             zoom: 24, winStart: 0, dayStart: 0, winDur: 86400000,
             segs: [], idx: -1, curStart: 0, pendingOffset: null,
+            swapping: false, // v2.3.1 换段交接进行中（防 ended/提前交接重入）
             motionMs: [],
             liveTimer: null, liveBusy: false,
             loop: 'off', // v2.1.0 循环播放：off | seg（单段）| day（当天）
@@ -358,7 +360,9 @@
         $('userChip').textContent = '已登录 · ' + userId + '（' + region + '）';
         resetLoginPanels();
         loadDevices(true);
-        loadRecordings();
+        // v2.3.1 解锁卡顿修复：录像列表不再解锁即加载——后端要扫整个录像目录、前端要
+        // 一次性渲染上千行 DOM（每行 4 个按钮），主线程被阻塞数秒导致进界面特别卡。
+        // 已改为打开「回放 → 录像文件」窗格时按需加载（setPbPane），并做分组增量渲染。
         loadBoards();
         loadDashboard(); // 内含卡片最近快照刷新（v1.2.14）
         loadAbout();
@@ -1304,7 +1308,8 @@
             // 确保设备名已加载，录像列表才能显示“名称（DID）”而非裸 DID
             if (!state.devices.length) { try { await loadDevices(false); } catch (e2) { /* 忽略，退回显示 DID */ } }
             var list = await api(url);
-            state.recRows = new Map((list || []).map(function (r) {
+            state.recListCurrent = list || [];
+            state.recRows = new Map(state.recListCurrent.map(function (r) {
                 return [r.name, { size: r.size || 0, recording: !!r.recording }];
             }));
             // 刷新后剔除已被删除 / 已不在当前筛选结果里的勾选，避免误删看不见的文件
@@ -1354,7 +1359,13 @@
             '</td></tr>';
     }
 
-    /** v1.2.13 录像按摄像头分组：每组一个可折叠标题行（设备名 / 文件数 / 占用空间）。 */
+    /** v1.2.13 录像按摄像头分组：每组一个可折叠标题行（设备名 / 文件数 / 占用空间）。
+     *  v2.3.1 每组增量渲染：先出 50 行，底部「加载更多」续 200 行——上千个分段一次
+     *  全部渲染（每行 4 个按钮）会阻塞主线程数秒，是录像文件页卡顿的主因。 */
+    var REC_PAGE_FIRST = 50, REC_PAGE_MORE = 200;
+
+    function recShownOf(did) { return state.recShown.get(did) || REC_PAGE_FIRST; }
+
     function renderRecordings(list) {
         var tb = $('recList');
         renderRecFilter();
@@ -1383,14 +1394,22 @@
             var rows = groups.get(did);
             var collapsed = state.recCollapsed.has(did);
             var bytes = rows.reduce(function (s, r) { return s + (r.size || 0); }, 0);
+            var shown = recShownOf(did);
             var head = '<tr class="rec-group" data-recgroup="' + esc(did) + '"><td colspan="6">' +
                 '<button type="button" class="cam-group-toggle" aria-expanded="' + (!collapsed) + '">' +
                     '<span class="cam-caret">' + (collapsed ? '▸' : '▾') + '</span>' +
                     '<span class="cam-group-name">' + esc(cameraName(did)) + '</span>' +
                     '<span class="cam-group-did">' + esc(did) + '</span>' +
-                    '<span class="cam-group-count">' + rows.length + ' 个文件 · ' + fmtSize(bytes) + '</span>' +
+                    '<span class="cam-group-count">' + rows.length + ' 个文件 · ' + fmtSize(bytes) +
+                    (rows.length > shown ? ' · 已显示 ' + Math.min(shown, rows.length) : '') + '</span>' +
                 '</button></td></tr>';
-            return head + rows.map(function (r) { return recRowHtml(r, collapsed); }).join('');
+            var body = rows.slice(0, shown).map(function (r) { return recRowHtml(r, collapsed); }).join('');
+            if (rows.length > shown) {
+                body += '<tr class="rec-more-row"><td colspan="6">' +
+                    '<button type="button" class="btn tiny" data-rmore="' + esc(did) + '">加载更多（还有 ' +
+                    (rows.length - shown) + ' 个）</button></td></tr>';
+            }
+            return head + body;
         }).join('');
         tb.querySelectorAll('button[data-ract]').forEach(function (btn) {
             btn.addEventListener('click', function () {
@@ -1402,6 +1421,13 @@
                     var p = btn.getAttribute('data-path');
                     if (p) trimOpenFile(p);
                 }
+            });
+        });
+        tb.querySelectorAll('button[data-rmore]').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                var did = btn.getAttribute('data-rmore');
+                state.recShown.set(did, recShownOf(did) + REC_PAGE_MORE);
+                renderRecordings(state.recListCurrent);
             });
         });
         tb.querySelectorAll('.rec-group').forEach(function (tr) {
@@ -4736,6 +4762,7 @@
     function loadSeg(i, offsetSec) {
         var pb = state.pb;
         if (i < 0 || i >= pb.segs.length) return;
+        pb.swapping = false; // 手动换段：放弃任何进行中的自动交接
         pb.idx = i;
         var s = pb.segs[i];
         pb.curStart = s.startMs;
@@ -4755,6 +4782,11 @@
      * v2.2.5 预载下一段：当前段剩余 < 8 秒时把下一段装进待命 video 预缓冲，
      * 播到边界直接交换显示，消除“一段播完再加载”的可见卡顿（米家式连续回放）。
      * 待命元素就绪标记存在 dataset.srcName（来源段文件名），readyState>=2 即可无缝切换。
+     * v2.3.1 两个黑屏根因修复：
+     * 1) 同一段已开始预载时不再重设 src——原实现每个 timeupdate（约 4 次/秒）都重设，
+     *    缓冲被反复打断、readyState 永远到不了 2，边界只能走整段重载兜底（黑屏）；
+     * 2) 待命元素显式 preload='auto'——Chrome/WebView 默认 preload=metadata，
+     *    不 play() 就只拉元数据不缓冲数据，边界起播必然等待。
      */
     function maybePreloadNext() {
         var pb = state.pb;
@@ -4767,32 +4799,70 @@
         if (ni < 0) return;
         var idle = pbIdle();
         var s = pb.segs[ni];
-        if (idle.dataset.srcName === s.name && idle.readyState >= 2) return;
+        if (idle.dataset.srcName === s.name) return; // 已在预载或已就绪：绝不重设 src 打断缓冲
+        idle.preload = 'auto';
         idle.dataset.srcName = s.name;
         idle.playbackRate = v.playbackRate || 1; // 预载时同步倍速/静音，切换后即刻生效
         idle.muted = v.muted;
         idle.src = withToken('api/recordings/' + encodeURIComponent(s.name));
     }
 
-    /** 无缝切换：两个 video 交换角色（待命元素已缓冲，起播零加载）。 */
+    /** v2.3.1 边界提前交接：本段只剩 <0.4s（按倍速折算）且下一段已缓冲就绪时立即
+     *  换段，不等 ended 事件——ended 之后浏览器可能先清帧，等待事件派发也会空转。 */
+    function maybeSwapEarly() {
+        var pb = state.pb;
+        if (pb.idx < 0 || pb.loop === 'seg' || pb.swapping) return;
+        var v = pbV();
+        if (!v.duration || !isFinite(v.duration)) return;
+        var remain = (v.duration - (v.currentTime || 0)) * 1000;
+        var rate = v.playbackRate || 1;
+        if (remain <= 0 || remain > 400 * rate) return;
+        var ni = pb.idx + 1;
+        if (ni >= pb.segs.length) {
+            if (pb.loop === 'day' && pb.segs.length > 0) { ni = 0; } else { return; }
+        }
+        var idle = pbIdle();
+        if (idle.dataset.srcName !== pb.segs[ni].name || idle.readyState < 2) return;
+        swapTo(ni);
+    }
+
+    /** 无缝切换：两个 video 交换角色。
+     *  v2.3.1 出帧感知交接：先暂停旧元素（保留最后一帧作为过渡底图）、起播待命元素，
+     *  待其真正渲染出新帧（requestVideoFrameCallback / timeupdate）再隐藏旧元素——
+     *  原实现同步互切透明度，待命元素尚未出帧时两帧之间露出 stage 黑底（黑屏闪现根因）。 */
     function swapTo(ni) {
         var pb = state.pb;
-        var cur = pbV(), idle = pbIdle();
-        cur.pause();
-        idle.classList.remove('pb-off');
-        cur.classList.add('pb-off');
-        pb.activeB = !pb.activeB;
-        // 淡出完成后释放旧元素缓冲（双 video 不会同时占两份完整缓冲）
-        setTimeout(function () {
-            try { cur.removeAttribute('src'); cur.load(); } catch (e) { /* 忽略 */ }
-            cur.dataset.srcName = '';
-        }, 500);
+        if (pb.swapping) return;
+        pb.swapping = true;
+        var cur = pbV(), idle = pbIdle(); // 先取旧活动元素 / 待命元素
+        pb.activeB = !pb.activeB; // 交换活动/待命角色（pbV/pbIdle 据此取元素）
+        cur.pause(); // pause 后最后一帧继续显示，作为交接期间的底图
         pb.idx = ni;
         pb.curStart = pb.segs[ni].startMs;
         applyPbRate();
-        idle.play().catch(function () {});
         if (pb.zoom !== 24) { computeWin(true); }
         renderTimeline();
+        // 待命元素位于旧元素下层（DOM 顺序靠前），此时显示不影响画面
+        idle.classList.remove('pb-off');
+        idle.play().catch(function () {});
+        var hidden = false;
+        var hide = function () {
+            if (hidden) return;
+            hidden = true;
+            pb.swapping = false;
+            cur.classList.add('pb-off');
+            // 淡出完成后释放旧元素缓冲（双 video 不会同时占两份完整缓冲）
+            setTimeout(function () {
+                try { cur.removeAttribute('src'); cur.load(); } catch (e) { /* 忽略 */ }
+                cur.dataset.srcName = '';
+            }, 500);
+        };
+        if (typeof idle.requestVideoFrameCallback === 'function') {
+            idle.requestVideoFrameCallback(hide);
+        } else {
+            idle.addEventListener('timeupdate', hide, { once: true });
+        }
+        setTimeout(hide, 500); // 兜底：出帧回调异常时也能完成交接
     }
 
     function pbNextSeg() {
@@ -5307,6 +5377,7 @@
                     }
                 });
                 el.addEventListener('timeupdate', function () {
+                    maybeSwapEarly(); // v2.3.1 剩余 <0.4s 且下一段就绪：不等 ended 提前交接
                     maybePreloadNext(); // v2.2.5 剩余 <8 秒时把下一段预载进待命元素
                     updateCursor(); updateMeta(); autoFollow();
                 });
