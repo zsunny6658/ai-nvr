@@ -1,6 +1,7 @@
 package com.ainvr.hub;
 
 import com.ainvr.miss.MissClient;
+import com.ainvr.miss.MissCommands;
 import com.ainvr.miss.MissPacket;
 import com.ainvr.miss.NalUnits;
 import org.slf4j.Logger;
@@ -377,6 +378,69 @@ public final class CameraStream {
             return MotorReply.none();
         }
         return new MotorReply(c.motorReply(), c.motorReplyAt(), c.motorCommandAt());
+    }
+
+    // ===================== 对讲喊话（SpeakerStart 0x106 / 音频上行 / SpeakerStop 0x108） =====================
+
+    /**
+     * 对讲会话句柄：持有发起时的 {@link MissClient} 与上行编码。
+     * 会话重建（重连）后旧句柄写入会抛 IOException，调用方据此结束本次喊话。
+     */
+    public record SpeakerSession(MissClient client, int codec, boolean linearPcm) {
+    }
+
+    /**
+     * 开启对讲上行：在当前取流会话上发 0x106。无健康会话返回 null。
+     * 设备应答 0x107 由命令排空线程异步记录，调用方可延迟后通过 {@link #speakerReply()} 读取。
+     */
+    public SpeakerSession speakerStart() {
+        MissClient c = current;
+        if (c == null || !healthy) {
+            return null;
+        }
+        try {
+            c.startSpeaker();
+            return new SpeakerSession(c, MissCommands.speakerCodecFor(model),
+                    MissCommands.speakerLinearPcm(model));
+        } catch (Exception e) {
+            log.warn("[{}] 对讲开启失败（0x106 发送异常）：{}", did, e.toString());
+            return null;
+        }
+    }
+
+    /** 上行一个音频块（通常 40ms：A-law 320B / 线性 PCM 640B）。会话已重建/关闭时抛 IOException。 */
+    public void speakerWrite(SpeakerSession s, byte[] payload) throws IOException {
+        if (s == null || s.client() != current) {
+            throw new IOException("对讲会话已失效（上游已重建）");
+        }
+        s.client().writeAudio(s.codec(), payload);
+    }
+
+    /** 结束对讲（0x108）。尽力而为：会话已关闭时静默忽略。 */
+    public void speakerStop(SpeakerSession s) {
+        if (s == null) {
+            return;
+        }
+        try {
+            s.client().stopSpeaker();
+        } catch (Exception e) {
+            log.debug("[{}] 对讲停止发送失败（忽略）：{}", did, e.toString());
+        }
+    }
+
+    /** 对讲开启/应答快照：{@code replyAt==0} 表示设备未应答。 */
+    public record SpeakerReply(String reply, long replyAt, long commandAt) {
+        public static SpeakerReply none() {
+            return new SpeakerReply(null, 0L, 0L);
+        }
+    }
+
+    public SpeakerReply speakerReply() {
+        MissClient c = current;
+        if (c == null) {
+            return SpeakerReply.none();
+        }
+        return new SpeakerReply(c.lastSpeakerReply(), c.lastSpeakerReplyAt(), c.lastSpeakerCommandAt());
     }
 
     /** 当前上游是否可用（有订阅者且已收到媒体包）。 */

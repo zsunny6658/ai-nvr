@@ -8,6 +8,7 @@ import com.ainvr.model.CameraDevice;
 import com.ainvr.store.AppSettingsStore;
 import com.ainvr.web.service.DeviceCatalog;
 import com.ainvr.web.service.DeviceProbe;
+import com.ainvr.web.service.MiotPresetService;
 import com.ainvr.web.service.MotionDetector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -59,14 +60,16 @@ public class PtzController {
     private final AppSettingsStore settingsStore;
     private final DeviceProbe deviceProbe;
     private final MotionDetector motion;
+    private final MiotPresetService presets;
 
     public PtzController(StreamHub hub, DeviceCatalog catalog, AppSettingsStore settingsStore,
-                         DeviceProbe deviceProbe, MotionDetector motion) {
+                         DeviceProbe deviceProbe, MotionDetector motion, MiotPresetService presets) {
         this.hub = hub;
         this.catalog = catalog;
         this.settingsStore = settingsStore;
         this.deviceProbe = deviceProbe;
         this.motion = motion;
+        this.presets = presets;
     }
 
     /** 发送一次云台动作：方向键点一次走一步；stop 用于连续运动模式的停止。 */
@@ -163,5 +166,51 @@ public class PtzController {
     }
 
     public record PtzRequest(String direction, int speed, String mode) {
+    }
+
+    // ===================== 云台预置位（米家「常看位置」MIoT fav-area） =====================
+
+    /**
+     * 读取该设备的预置位列表。固件不支持/未设置时返回空列表（前端隐藏预置位区）。
+     */
+    @GetMapping("/{did}/presets")
+    public Map<String, Object> listPresets(@PathVariable String did) {
+        catalog.find(did).orElseThrow(() ->
+                ApiException.notFound("设备列表中未找到 did=" + did));
+        List<MiotPresetService.Preset> list;
+        try {
+            list = presets.list(did);
+        } catch (Exception e) {
+            log.info("[{}] 预置位列表读取失败（按不支持处理）：{}", did, e.toString());
+            list = List.of();
+        }
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("ok", true);
+        m.put("did", did);
+        m.put("presets", list.stream().map(p -> Map.of("location", p.location(), "name", p.name())).toList());
+        m.put("note", "预置位在米家 App 中设置（摄像头设置 → 云台 → 常看位置），aiNVR 负责展示与跳转");
+        return m;
+    }
+
+    /** 跳转到指定预置位（location 为列表返回的索引值）。 */
+    @PostMapping("/{did}/preset")
+    public Map<String, Object> gotoPreset(@PathVariable String did,
+                                          @RequestBody(required = false) PresetRequest req) {
+        if (req == null || req.location() == null || req.location() < 0 || req.location() > 64) {
+            throw ApiException.badRequest("location 需为 0~64 之间的预置位索引");
+        }
+        catalog.find(did).orElseThrow(() ->
+                ApiException.notFound("设备列表中未找到 did=" + did));
+        try {
+            presets.gotoPreset(did, req.location());
+        } catch (Exception e) {
+            log.info("[{}] 预置位跳转失败：{}", did, e.toString());
+            throw new ApiException(502, "预置位调用失败（米家云/固件不支持）："
+                    + (e.getMessage() == null ? e.toString() : e.getMessage()));
+        }
+        return Map.of("ok", true, "did", did, "location", req.location());
+    }
+
+    public record PresetRequest(Integer location) {
     }
 }

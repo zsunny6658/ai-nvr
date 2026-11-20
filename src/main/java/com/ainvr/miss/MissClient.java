@@ -33,6 +33,12 @@ public final class MissClient implements AutoCloseable {
     /** 最近一次云台命令的发出时刻，用于判断 0x113 是否是本次命令的应答。 */
     private volatile long lastMotorCommandAt;
 
+    /** 最近一次 SpeakerStart（0x107）应答明文，由命令通道排空线程写入。 */
+    private volatile String lastSpeakerReply;
+    private volatile long lastSpeakerReplyAt;
+    /** 最近一次 SpeakerStart（0x106）发出时刻。 */
+    private volatile long lastSpeakerCommandAt;
+
     private MissClient(Cs2Connection conn, byte[] sharedKey, String model) {
         this.conn = conn;
         this.sharedKey = sharedKey;
@@ -101,6 +107,13 @@ public final class MissClient implements AutoCloseable {
                                 lastMotorReplyAt = System.currentTimeMillis();
                                 detail += " 云台应答：" + reply;
                                 log.info("MISS 云台设备应答 0x113：{}", reply);
+                            } else if (inner == MissCommands.CMD_SPEAKER_START_RES) {
+                                // 对讲（0x106）的设备应答：记录明文与时刻，前端据此判断设备是否接受喊话。
+                                String reply = readableUtf8(plain, 4);
+                                lastSpeakerReply = reply;
+                                lastSpeakerReplyAt = System.currentTimeMillis();
+                                detail += " 扬声器应答：" + reply;
+                                log.info("MISS 扬声器设备应答 0x107：{}", reply);
                             } else if (inner != 0x114 && plain.length > 4) {
                                 detail += " 明文：" + readableUtf8(plain, 4);
                             }
@@ -261,6 +274,64 @@ public final class MissClient implements AutoCloseable {
         return lastMotorCommandAt;
     }
 
+    /**
+     * 开启扬声器会话（SpeakerStartReq 0x106，无 body），复用当前取流连接。
+     *
+     * <p>对照 go2rtc {@code Client.StartSpeaker()}：设备应答 0x107 由命令通道排空线程
+     * 异步记录（见 {@link #lastSpeakerReply()}）。go2rtc 在 start 后固定 sleep 1 秒再发
+     * 音频，调用方应遵循同样的间隔（见 CameraStream 对讲会话）。</p>
+     */
+    public void startSpeaker() throws IOException {
+        byte[] outer = new byte[4];
+        putBe32(outer, MissCommands.CMD_SPEAKER_START_REQ);
+        lastSpeakerCommandAt = System.currentTimeMillis();
+        writeEncrypted(outer);
+        log.info("MISS SpeakerStart 0x106 已发送（对讲上行开始）");
+    }
+
+    /** 关闭扬声器会话（SpeakerStop 0x108，无 body）。 */
+    public void stopSpeaker() throws IOException {
+        byte[] outer = new byte[4];
+        putBe32(outer, MissCommands.CMD_SPEAKER_STOP);
+        writeEncrypted(outer);
+        log.info("MISS SpeakerStop 0x108 已发送（对讲上行结束）");
+    }
+
+    /**
+     * 上行一个音频媒体包（对讲喊话）。对照 go2rtc {@code Client.WriteAudio()}：
+     * 32 字节小端头（LE32 载荷长度 / LE32 codecId / LE64 毫秒时间戳@offset16）
+     * + ChaCha20 加密载荷，经 CS2 通道 3 发送（{@code Cs2Connection.writeAudioPacket}）。
+     *
+     * <p>载荷格式由 {@link MissCommands#speakerCodecFor(String)} 决定：绝大多数机型为
+     * G.711 A-law 8kHz（每 40ms 恰好 320 字节）；hlc6 为 16bit 线性 PCM（640 字节/40ms）。</p>
+     */
+    public void writeAudio(int codecId, byte[] payload) throws IOException {
+        if (closed) {
+            throw new IOException("MISS 会话已关闭");
+        }
+        byte[] encrypted = ChaCha20Cipher.encode(sharedKey, payload);
+        byte[] header = new byte[32];
+        putLe32(header, 0, encrypted.length);
+        putLe32(header, 4, codecId);
+        putLe32(header, 16, (int) (System.currentTimeMillis() & 0xFFFFFFFFL));
+        conn.writeAudioPacket(header, encrypted);
+    }
+
+    /** 最近一次 0x107 扬声器应答明文（可能为 null：设备未应答或尚未发送 0x106）。 */
+    public String lastSpeakerReply() {
+        return lastSpeakerReply;
+    }
+
+    /** 最近一次 0x107 应答到达时刻（0 表示从未收到）。 */
+    public long lastSpeakerReplyAt() {
+        return lastSpeakerReplyAt;
+    }
+
+    /** 最近一次 0x106 命令发出时刻。 */
+    public long lastSpeakerCommandAt() {
+        return lastSpeakerCommandAt;
+    }
+
     /** 写入大端 32 位命令字。 */
     private static void putBe32(byte[] dst, int cmd) {
         dst[0] = (byte) ((cmd >>> 24) & 0xFF);
@@ -347,6 +418,14 @@ public final class MissClient implements AutoCloseable {
     private static int le32(byte[] b, int off) {
         return (b[off] & 0xFF) | ((b[off + 1] & 0xFF) << 8)
                 | ((b[off + 2] & 0xFF) << 16) | ((b[off + 3] & 0xFF) << 24);
+    }
+
+    /** 写入小端 32 位值（媒体包头用）。 */
+    private static void putLe32(byte[] dst, int off, int v) {
+        dst[off] = (byte) (v & 0xFF);
+        dst[off + 1] = (byte) ((v >>> 8) & 0xFF);
+        dst[off + 2] = (byte) ((v >>> 16) & 0xFF);
+        dst[off + 3] = (byte) ((v >>> 24) & 0xFF);
     }
 
     private static long le64(byte[] b, int off) {

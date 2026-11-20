@@ -95,6 +95,35 @@ public final class StreamHub {
         return cs == null ? MotorReply.none() : cs.motorReply();
     }
 
+    /** 在该设备的现有会话上开启对讲（0x106）；无健康会话返回 null。 */
+    public CameraStream.SpeakerSession speakerStart(String did) {
+        CameraStream cs = streams.get(did);
+        return cs == null ? null : cs.speakerStart();
+    }
+
+    /** 上行一个对讲音频块；上游已重建/关闭时抛 IOException。 */
+    public void speakerWrite(String did, CameraStream.SpeakerSession s, byte[] payload) throws java.io.IOException {
+        CameraStream cs = streams.get(did);
+        if (cs == null) {
+            throw new java.io.IOException("设备当前没有取流会话");
+        }
+        cs.speakerWrite(s, payload);
+    }
+
+    /** 结束对讲（0x108，尽力而为）。 */
+    public void speakerStop(String did, CameraStream.SpeakerSession s) {
+        CameraStream cs = streams.get(did);
+        if (cs != null) {
+            cs.speakerStop(s);
+        }
+    }
+
+    /** 该设备对讲开启/应答快照。 */
+    public CameraStream.SpeakerReply speakerReply(String did) {
+        CameraStream cs = streams.get(did);
+        return cs == null ? CameraStream.SpeakerReply.none() : cs.speakerReply();
+    }
+
     /** 该设备当前是否有一条健康的上游取流会话。 */
     public boolean isHealthy(String did) {
         CameraStream cs = streams.get(did);

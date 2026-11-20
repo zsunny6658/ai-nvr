@@ -83,6 +83,26 @@ public final class MissCommands {
     }
 
     /**
+     * 对讲上行编码：绝大多数机型为 G.711 A-law 8kHz（{@link #CODEC_PCMA}，每 40ms 320 字节）；
+     * {@code isa.camera.hlc6} 与 dafang/xiaofang 老机型为 16bit 线性 PCM（{@link #CODEC_PCM}，
+     * 每 40ms 640 字节）——dafang 私有协议本项目不支持，仅 hlc6 走线性 PCM；
+     * {@code chuangmi.camera.72ac1} 需要 OPUS（go2rtc SpeakerCodec 实测），暂不支持其上行。
+     */
+    public static int speakerCodecFor(String model) {
+        return "isa.camera.hlc6".equals(model) ? CODEC_PCM : CODEC_PCMA;
+    }
+
+    /** 该机型对讲上行是否为 16bit 线性 PCM（前端按此选择采样编码方式）。 */
+    public static boolean speakerLinearPcm(String model) {
+        return "isa.camera.hlc6".equals(model);
+    }
+
+    /** 该机型是否支持对讲上行（72ac1 需要 OPUS 帧拼接，暂不支持）。 */
+    public static boolean speakerSupported(String model) {
+        return !"chuangmi.camera.72ac1".equals(model);
+    }
+
+    /**
      * 按 DID / 全局系统属性覆盖取流档位，便于现场在不改包的情况下试参数：
      * {@code -Dinvr.quality.<did>=0|1|2|3} 或 {@code -Dinvr.quality=1}。
      */

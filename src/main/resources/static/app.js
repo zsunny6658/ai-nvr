@@ -1835,6 +1835,7 @@
     /* 打开预览时拉取该设备的清晰度档位、当前配置、推荐云台格式与取流状态。 */
     async function loadPreviewControls(did) {
         setPtzStatus('正在读取设备控制信息…');
+        loadPreviewPresets(did);
         try {
             var c = await api('api/ptz/' + encodeURIComponent(did) + '/capabilities');
             $('previewQuality').innerHTML = (c.qualityOptions || []).map(function (o) {
@@ -1848,6 +1849,46 @@
                 + '；点方向键后会自动追到最新画面。');
         } catch (e) {
             setPtzStatus('控制信息加载失败：' + e.message, 'warn');
+        }
+    }
+
+    /* 云台预置位（米家「常看位置」）：打开预览时异步加载；固件不支持/未设置时隐藏该区。 */
+    async function loadPreviewPresets(did) {
+        var field = $('presetField');
+        try {
+            var r = await api('api/ptz/' + encodeURIComponent(did) + '/presets');
+            var list = r.presets || [];
+            if (!list.length) { field.hidden = true; return; }
+            $('previewPreset').innerHTML = list.map(function (p) {
+                return '<option value="' + esc(p.location) + '">'
+                    + esc(p.name || ('位置 ' + p.location)) + '</option>';
+            }).join('');
+            field.hidden = false;
+        } catch (e) {
+            field.hidden = true;
+        }
+    }
+
+    async function gotoPreset(did) {
+        var loc = parseInt($('previewPreset').value, 10);
+        if (isNaN(loc)) { return; }
+        var btn = $('btnGotoPreset');
+        btn.disabled = true;
+        setPtzStatus('正在转到预置位…', 'ok');
+        beginPtzCompat();
+        try {
+            await api('api/ptz/' + encodeURIComponent(did) + '/preset', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ location: loc })
+            });
+            setPtzStatus('已调用预置位，画面正在转动', 'ok');
+            setTimeout(function () { chaseLiveEdge(true); }, 1200);
+        } catch (e) {
+            setPtzStatus('预置位调用失败：' + e.message, 'err');
+        } finally {
+            btn.disabled = false;
+            updateLiveBadge();
         }
     }
 
@@ -2945,9 +2986,164 @@
     function closePreview() {
         // 双击 / 触摸+click 重复触发守卫：避免二次 leaveOverlayHistory 退掉首页历史条目
         if ($('previewModal').hidden && !overlayHistoryDepth) return;
+        talkStop(true);
         stopPreviewOnly();
         leaveOverlayHistory();
         loadDevices(false);
+    }
+
+    /* ==================== v2.3.1 对讲喊话 ====================
+       浏览器麦克风 → 8kHz 重采样 → G.711 A-law（或 hlc6 线性 PCM）编码 →
+       WebSocket 二进制上行 → 服务端 MISS CS2 通道 3 → 摄像头扬声器。
+       复用当前取流会话（0x106/0x108），不新增摄像头连接。 */
+    var talk = { ws: null, ctx: null, stream: null, node: null, src: null,
+        active: false, did: null, linearPcm: false, buf: null };
+
+    function talkTip(text, kind) {
+        var el = $('talkTip');
+        if (el) { el.textContent = text; el.className = 'ptz-tip' + (kind ? ' ' + kind : ''); }
+    }
+
+    function talkUrl(did) {
+        // WebSocket 无法走相对路径：以当前页面路径（兼容 fnOS 网关 /app/{appname}/）拼绝对地址
+        var base = location.pathname.replace(/[^/]*$/, '');
+        var proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
+        var u = proto + location.host + base + 'ws/talk/' + encodeURIComponent(did);
+        var t = getToken();
+        return t ? u + '?__ainvr_t=' + encodeURIComponent(t) : u;
+    }
+
+    /* 线性 PCM 16bit → G.711 A-law（标准算法） */
+    function linearToAlaw(sample) {
+        var a = sample < 0 ? ~sample + 0x1005 : sample + 0x85;
+        var sign = sample < 0 ? 0x55 : 0xD5;
+        if (a > 0xFFFF) a = 0xFFFF;
+        var exp = a > 0x7FFF ? 7 : (a > 0x3FFF ? 6 : (a > 0x1FFF ? 5 : (a > 0x0FFF ? 4
+            : (a > 0x07FF ? 3 : (a > 0x03FF ? 2 : (a > 0x01FF ? 1 : 0))))));
+        var man = (a >> (exp + 3)) & 0x0F;
+        return (sign ^ (exp << 4) ^ man) & 0xFF;
+    }
+
+    async function talkStart(did) {
+        if (talk.active) { talkStop(true); return; }
+        talk.did = did;
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.WebSocket) {
+            setPtzStatus('当前浏览器不支持麦克风访问（需 HTTPS 或 localhost 环境）', 'err');
+            return;
+        }
+        try {
+            talk.stream = await navigator.mediaDevices.getUserMedia({
+                audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+            });
+        } catch (e) {
+            setPtzStatus('无法访问麦克风：' + e.message + '（浏览器需 HTTPS/localhost 才允许麦克风）', 'err');
+            talkCleanup();
+            return;
+        }
+        talk.active = true;
+        $('btnTalk').classList.add('talking');
+        $('btnTalk').textContent = '🔇 结束喊话';
+        talkTip('对讲已开启：请对着麦克风说话，再次点击结束', 'ok');
+        setPtzStatus('对讲通道建立中…', 'warn');
+
+        var ws = new WebSocket(talkUrl(did));
+        ws.binaryType = 'arraybuffer';
+        talk.ws = ws;
+        ws.onmessage = function (ev) {
+            if (typeof ev.data !== 'string') { return; }
+            var msg;
+            try { msg = JSON.parse(ev.data); } catch (e2) { return; }
+            if (!msg.ok) {
+                setPtzStatus('喊话失败：' + (msg.error || '未知原因'), 'err');
+                talkStop(true);
+                return;
+            }
+            talk.linearPcm = !!msg.linearPcm;
+            talk.buf = null;
+            setPtzStatus('对讲已接通' + (msg.deviceReplied ? '（设备已确认扬声器）' : '（设备未应答，声音可能仍可送达）'), 'ok');
+            talkTip('对讲进行中：说话即可，再次点击「结束喊话」停止', 'ok');
+            talkStartMic();
+        };
+        ws.onclose = function () {
+            if (talk.active) { talkStop(true); }
+        };
+        ws.onerror = function () { /* onclose 会跟进 */ };
+    }
+
+    function talkStartMic() {
+        try {
+            var Ctx = window.AudioContext || window.webkitAudioContext;
+            talk.ctx = new Ctx();
+            talk.src = talk.ctx.createMediaStreamSource(talk.stream);
+            // 采集 2048 样本一帧，降采样到 8kHz 后按 320 样本（40ms）切块上行
+            talk.node = talk.ctx.createScriptProcessor(2048, 1, 1);
+            var ratio = Math.max(1, Math.round(talk.ctx.sampleRate / 8000));
+            talk.node.onaudioprocess = function (e) {
+                if (!talk.active || !talk.ws || talk.ws.readyState !== 1) { return; }
+                var input = e.inputBuffer.getChannelData(0);
+                var down = [];
+                for (var i = 0; i < input.length; i += ratio) {
+                    var sum = 0, n = 0;
+                    for (var j = i; j < Math.min(i + ratio, input.length); j++) { sum += input[j]; n++; }
+                    down.push(sum / (n || 1));
+                }
+                if (talk.linearPcm) {
+                    // hlc6：16bit 小端线性 PCM，每 40ms 640 字节
+                    var pcm = new Int16Array(down.length);
+                    for (var m = 0; m < down.length; m++) {
+                        pcm[m] = Math.max(-32768, Math.min(32767, Math.round(down[m] * 32767)));
+                    }
+                    pushTalkChunk(new Uint8Array(pcm.buffer), 640);
+                } else {
+                    // 绝大多数机型：G.711 A-law 8kHz，每 40ms 320 字节
+                    var bytes = new Uint8Array(down.length);
+                    for (var k = 0; k < down.length; k++) {
+                        var s = Math.max(-32768, Math.min(32767, Math.round(down[k] * 32767)));
+                        bytes[k] = linearToAlaw(s);
+                    }
+                    pushTalkChunk(bytes, 320);
+                }
+            };
+            talk.src.connect(talk.node);
+            talk.node.connect(talk.ctx.destination);
+        } catch (e) {
+            setPtzStatus('麦克风处理初始化失败：' + e.message, 'err');
+            talkStop(true);
+        }
+    }
+
+    /* 累积到整块（320B A-law / 640B PCM）再发送，保证服务端 MISS 包大小正确 */
+    function pushTalkChunk(bytes, chunkSize) {
+        if (!talk.buf) { talk.buf = []; }
+        for (var i = 0; i < bytes.length; i++) {
+            talk.buf.push(bytes[i]);
+        }
+        while (talk.buf.length >= chunkSize && talk.ws && talk.ws.readyState === 1) {
+            var chunk = new Uint8Array(talk.buf.splice(0, chunkSize));
+            talk.ws.send(chunk.buffer);
+        }
+    }
+
+    function talkCleanup() {
+        if (talk.node) { try { talk.node.disconnect(); } catch (e) { /* 忽略 */ } talk.node = null; }
+        if (talk.src) { try { talk.src.disconnect(); } catch (e) { /* 忽略 */ } talk.src = null; }
+        if (talk.ctx) { try { talk.ctx.close(); } catch (e) { /* 忽略 */ } talk.ctx = null; }
+        if (talk.stream) { talk.stream.getTracks().forEach(function (t) { t.stop(); }); talk.stream = null; }
+        talk.buf = null;
+    }
+
+    function talkStop(silent) {
+        var wasActive = talk.active;
+        talk.active = false;
+        talkCleanup();
+        if (talk.ws) {
+            try { talk.ws.close(); } catch (e) { /* 忽略 */ }
+            talk.ws = null;
+        }
+        $('btnTalk').classList.remove('talking');
+        $('btnTalk').textContent = '🎤 喊话';
+        if (wasActive && !silent) { toast('对讲已结束', 'ok'); }
+        if (wasActive) { talkTip('喊话复用当前连接，点击开始/再次点击结束', ''); }
     }
 
     /* ==================== v1.2.8 事件告警页 ====================
@@ -4497,6 +4693,7 @@
         $('previewQuality').addEventListener('change', function () {
             var did = state.previewDid;
             if (!did) return;
+            talkStop(true); // 清晰度切换会重建取流会话，对讲通道随之失效
             setPtzStatus('正在应用清晰度并重建取流（画面会短暂中断）…');
             saveQuality(did, $('previewQuality').value);
         });
@@ -4812,6 +5009,16 @@
 
         $('previewClose').addEventListener('click', closePreview);
         $('btnPreviewBack').addEventListener('click', closePreview);
+        $('btnTalk').addEventListener('click', function () {
+            var did = state.previewDid;
+            if (!did) { toast('请先打开一路预览', 'err'); return; }
+            talkStart(did);
+        });
+        $('btnGotoPreset').addEventListener('click', function () {
+            var did = state.previewDid;
+            if (!did) { return; }
+            gotoPreset(did);
+        });
         /* v1.2.21 多宫格 */
         $('btnGridPreview').addEventListener('click', openGrid);
         $('gridClose').addEventListener('click', closeGrid);
