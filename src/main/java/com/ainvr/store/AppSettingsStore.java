@@ -73,6 +73,8 @@ public class AppSettingsStore {
     private static final String KEY_AI = "ai";
     /** 双摄第二镜头按设备开关：{@code {did: true|false}}；未配置=按型号自动识别。 */
     private static final String KEY_DUAL_LENS = "dualLens";
+    /** v2.3.1 事件快照归档：{enabled: bool, dir: 绝对路径}。 */
+    private static final String KEY_SNAPSHOT_ARCHIVE = "snapshotArchive";
     private static final TypeReference<LinkedHashMap<String, Object>> MAP_TYPE = new TypeReference<>() {};
 
     private final Path dir;
@@ -363,6 +365,37 @@ public class AppSettingsStore {
         } else {
             m.put(KEY_DUAL_LENS, sub);
         }
+        persist(m);
+    }
+
+    // ===================== 快照归档 =====================
+
+    /**
+     * 读取事件快照归档设置；未配置或字段缺失时逐项回落默认值（关闭 / 空目录）。
+     * 目录为空视为未启用，即使 enabled 为 true 也不归档。
+     */
+    public Map<String, Object> snapshotArchive() {
+        Object v = all().get(KEY_SNAPSHOT_ARCHIVE);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("enabled", false);
+        out.put("dir", "");
+        if (!(v instanceof Map<?, ?> raw)) {
+            return out;
+        }
+        out.put("enabled", Boolean.parseBoolean(String.valueOf(raw.get("enabled"))));
+        Object dir = raw.get("dir");
+        out.put("dir", dir == null ? "" : String.valueOf(dir).trim());
+        return out;
+    }
+
+    /** 保存事件快照归档设置；dir 为空或 null 时强制关闭。 */
+    public synchronized void saveSnapshotArchive(boolean enabled, String dir) {
+        Map<String, Object> m = all();
+        String d = dir == null ? "" : dir.trim();
+        Map<String, Object> sub = new LinkedHashMap<>();
+        sub.put("enabled", enabled && !d.isEmpty());
+        sub.put("dir", d);
+        m.put(KEY_SNAPSHOT_ARCHIVE, sub);
         persist(m);
     }
 
@@ -785,7 +818,7 @@ public class AppSettingsStore {
             KEY_HLS_IDLE_SEC, KEY_HLS_AUDIO, KEY_HLS_PREWARM, KEY_SHARE_EVENT_DURATION_SEC,
             KEY_SHARE_SSE_HEARTBEAT_SEC, KEY_SHARE_PAGE_RELOAD_SEC, KEY_SHARE_CONFIG_POLL_SEC,
             KEY_DEVICE_QUALITY, KEY_PTZ_MODE, KEY_MOTION, KEY_MOTION_EXCLUDE_ZONES, KEY_NOTIFY, KEY_AI,
-            KEY_DUAL_LENS);
+            KEY_DUAL_LENS, KEY_SNAPSHOT_ARCHIVE);
 
     /**
      * v2.1.0 配置导入：只接受 {@link #IMPORTABLE_KEYS} 中的键，整体替换后原子落盘。

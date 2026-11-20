@@ -76,7 +76,7 @@ class SettingsBackupTest {
         mvc = MockMvcBuilders.standaloneSetup(new SettingsController(
                         recordingService, rtspServer, props, settingsStore, accessKeyStore,
                         boardStore, mapper, aiDetectService, hlsService, shareEventService,
-                        catalog, mock(StreamHub.class), mock(DeviceProbe.class)))
+                        catalog, mock(StreamHub.class), mock(DeviceProbe.class), mock(com.ainvr.web.service.SnapshotArchiveService.class)))
                 .setControllerAdvice(new com.ainvr.web.api.GlobalExceptionHandler())
                 .build();
     }

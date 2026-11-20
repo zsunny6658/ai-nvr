@@ -871,14 +871,17 @@
         });
         if (on) { refreshCardSnaps(); }
     }
-    /** v2.3.0 导航未处理事件角标（侧栏 + 底部栏同步）。 */
+    /** v2.3.1 导航未处理事件角标（侧栏 + 底部栏同步）。 */
+    var lastUnhandledCount = 0;
     function updateEvBadge(n) {
+        lastUnhandledCount = n || 0;
         ['navEvBadge', 'navEvBadgeM'].forEach(function (id) {
             var b = $(id);
             if (!b) { return; }
             b.hidden = !n;
             b.textContent = n > 99 ? '99+' : String(n || '');
         });
+        trimApplyTitle(lastUnhandledCount);
     }
     /* ---------- v2.3.0 主题：深色默认，浅色记忆在本浏览器 ---------- */
     function currentTheme() {
@@ -1301,6 +1304,8 @@
             '<td class="acts">' +
             '<button class="btn tiny" data-ract="play" data-name="' + esc(r.name) + '">播放</button>' +
             '<a class="btn tiny" href="' + withToken('api/recordings/' + encodeURIComponent(r.name) + '?dl=1') + '" download>下载</a>' +
+            '<button class="btn tiny sdk-only" data-ract="fopen" data-name="' + esc(r.name) +
+                '" data-path="' + esc(r.path || '') + '">在文件管理打开</button>' +
             '<button class="btn tiny soft-danger" data-ract="del" data-name="' + esc(r.name) + '">删除</button>' +
             '</td></tr>';
     }
@@ -1349,6 +1354,10 @@
                 var act = btn.getAttribute('data-ract');
                 if (act === 'play') openPlayer(name);
                 else if (act === 'del') delRecording(name);
+                else if (act === 'fopen') {
+                    var p = btn.getAttribute('data-path');
+                    if (p) trimOpenFile(p);
+                }
             });
         });
         tb.querySelectorAll('.rec-group').forEach(function (tr) {
@@ -1596,6 +1605,8 @@
             // 未选择新目录前禁用保存
             $('setDirInput').value = '';
             $('btnSaveDir').disabled = true;
+            // v2.3.1 事件快照归档
+            renderSnapshotArchive(s);
             // 分段时长
             $('setSegmentInput').value = s.segmentSec;
             $('setSegmentHint').textContent = (s.segmentCustomized ? '当前为自定义值，默认 ' + s.defaultSegmentSec + ' 秒。' : '当前为默认值。')
@@ -2307,18 +2318,137 @@
         }
     }
 
+    /* ---------- v2.3.1 飞牛桌面 SDK 融合（@trimjs/web-app） ---------- */
+    /* SDK 由 vendor/trimapp-bridge.js 以 ESM module 挂到 window.TrimApp 并派发
+       trimapp:ready。独立浏览器访问时探测不到宿主（isStandaloneWeb=true），
+       全部 sdk-only 能力保持隐藏，行为与旧版一致。 */
+    var trimState = { probed: false, hostOk: false, app: null };
+    var trimCbs = [];
+
+    /** 宿主就绪回调：宿主可用时以 SDK 实例调用 cb，否则以 null 调用（一次性探测，结果缓存）。 */
+    function whenTrimHost(cb) {
+        if (trimState.probed) { cb(trimState.hostOk ? trimState.app : null); return; }
+        trimCbs.push(cb);
+        if (trimCbs.length > 1) return; // 首个调用者负责探测
+        function finish(ok, app) {
+            trimState.probed = true;
+            trimState.hostOk = ok;
+            trimState.app = app || null;
+            if (ok) { document.body.classList.add('sdk-host'); }
+            var cbs = trimCbs; trimCbs = [];
+            cbs.forEach(function (f) { f(ok ? trimState.app : null); });
+        }
+        function boot() {
+            var t;
+            try { t = new window.TrimApp(); } catch (e) { finish(false, null); return; }
+            var settled = false;
+            var timer = setTimeout(function () { if (!settled) { settled = true; finish(false, null); } }, 12000);
+            Promise.resolve(t.ready()).then(function () {
+                if (settled) return;
+                settled = true; clearTimeout(timer);
+                // isStandaloneWeb=false ⇒ 运行在飞牛桌面 iframe / 手机 App WebView 宿主内
+                finish(t.isStandaloneWeb === false, t);
+            }).catch(function () {
+                if (settled) return;
+                settled = true; clearTimeout(timer);
+                finish(false, null);
+            });
+        }
+        if (window.TrimApp) { boot(); return; }
+        var done = false;
+        window.addEventListener('trimapp:ready', function () {
+            if (done) return; done = true;
+            if (window.TrimApp) boot();
+            else finish(false, null);
+        }, { once: true });
+        // 桥接脚本缺失 / 加载失败兜底（正常部署 trimapp:ready 必然触发）
+        setTimeout(function () {
+            if (done || trimState.probed) return;
+            done = true;
+            finish(false, null);
+        }, 8000);
+    }
+
+    /** 飞牛系统文件选择器选目录；返回绝对路径或 null（取消 / 拒绝 / 无宿主）。 */
+    async function trimPickDir(title) {
+        var t = trimState.app;
+        if (!t) return null;
+        try {
+            var res = await t.pickUserFile({
+                directory: true,
+                multiple: false,
+                creatable: true,
+                title: title || '选择文件夹',
+                okText: '选择此目录',
+                sidebarGroup: ['myFiles', 'external', 'favorites', 'storage']
+            });
+            var arr = Array.isArray(res) ? res : (res && (res.data || res.paths));
+            if (Array.isArray(arr) && arr.length && typeof arr[0] === 'string' && arr[0]) {
+                return arr[0];
+            }
+        } catch (e) { /* 用户取消或宿主拒绝：按未选择处理 */ }
+        return null;
+    }
+
+    /** 在飞牛文件管理中打开路径（宿主不可用时 toast 提示）。 */
+    function trimOpenFile(path) {
+        var t = trimState.app;
+        if (!t || !path) return;
+        Promise.resolve(t.openFile(path)).catch(function (e) {
+            toast('在文件管理中打开失败：' + (e && e.message ? e.message : path), 'err');
+        });
+    }
+
+    /** 桌面标题跟随未处理事件数：宿主 setTitle + document.title 双保险（同文本去重）。 */
+    var lastTrimTitle = null;
+    function trimApplyTitle(unhandled) {
+        var text = unhandled > 0 ? 'aiNVR（' + unhandled + ' 未处理）' : 'aiNVR';
+        if (text === lastTrimTitle) return;
+        lastTrimTitle = text;
+        try { document.title = text; } catch (e) { /* ignore */ }
+        whenTrimHost(function (t) {
+            if (t) { Promise.resolve(t.setTitle(text)).catch(function () { /* ignore */ }); }
+        });
+    }
+
     /* ---------- 服务器目录选择弹窗 ---------- */
     var dirData = { current: null, parent: null, roots: [], entries: [] };
     var dirPicked = null;
+    /** v2.3.1 目录弹窗目标：'recording'（录像存储）| 'archive'（快照归档）。 */
+    var dirTarget = 'recording';
 
-    function openDirModal() {
+    function openDirModal(target) {
+        dirTarget = target === 'archive' ? 'archive' : 'recording';
         dirPicked = null;
+        $('dirTitle').textContent = dirTarget === 'archive' ? '选择快照归档目录（服务器）' : '选择录像存储目录（服务器）';
         $('dirConfirm').disabled = true;
         $('dirSelected').textContent = '未选择';
         $('dirModal').hidden = false;
-        // 从当前存储目录开始浏览，缺省从盘符/根开始
-        var start = (state.settings && state.settings.recordingDir) ? state.settings.recordingDir : '';
+        var archiveCfg = (state.settings && state.settings.snapshotArchive) || {};
+        var start = dirTarget === 'archive'
+            ? (archiveCfg.dir || '')
+            : ((state.settings && state.settings.recordingDir) || '');
+        // 飞牛宿主内提供系统文件选择器入口；独立浏览器保持隐藏（CSS sdk-only）
+        whenTrimHost(function (t) { $('dirSysPick').hidden = !t; });
         loadDir(start);
+    }
+
+    /** 飞牛系统文件选择器：选完目录后校验可写性并作为当前选择。 */
+    async function sysPickDir() {
+        var picked = await trimPickDir(dirTarget === 'archive' ? '选择快照归档目录' : '选择录像存储目录');
+        if (!picked) return;
+        var p = picked.replace(/\/+$/, '') || '/';
+        try {
+            var d = await api('api/settings/browse?path=' + encodeURIComponent(p));
+            var writable = d.currentWritable === true;
+            dirPicked = writable ? p : null;
+            $('dirSelected').textContent = writable ? p : (p + '（不可写，无法选择）');
+            $('dirConfirm').disabled = !writable;
+            if (!writable) toast('该目录对本应用不可写，请另选目录', 'err');
+        } catch (e) {
+            $('dirSelected').textContent = p + '（无法校验可写性）';
+            $('dirConfirm').disabled = true;
+        }
     }
 
     function closeDirModal() {
@@ -2440,9 +2570,61 @@
             toast('请选择一个可写目录', 'err');
             return;
         }
-        $('setDirInput').value = dirPicked;
-        $('btnSaveDir').disabled = false;
+        if (dirTarget === 'archive') {
+            $('setArchiveDirInput').value = dirPicked;
+            $('btnSaveArchiveDir').disabled = false;
+        } else {
+            $('setDirInput').value = dirPicked;
+            $('btnSaveDir').disabled = false;
+        }
         closeDirModal();
+    }
+
+    /* ---------- v2.3.1 事件快照归档设置 ---------- */
+    function renderSnapshotArchive(s) {
+        var a = (s && s.snapshotArchive) || {};
+        $('setSnapArchEnabled').checked = a.enabled === true;
+        $('setArchiveDirInput').value = a.dir || '';
+        $('btnSaveArchiveDir').disabled = true;
+        $('setArchiveMsg').textContent = (a.enabled === true && a.dir)
+            ? '归档中：' + a.dir : '未启用';
+    }
+
+    async function saveSnapshotArchive() {
+        var dir = $('setArchiveDirInput').value.trim();
+        var enabled = $('setSnapArchEnabled').checked;
+        if (enabled && !dir) {
+            toast('请先选择归档目录', 'err');
+            return;
+        }
+        try {
+            var s = await api('api/settings/snapshot-archive', {
+                method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled: enabled, dir: dir })
+            });
+            state.settings = s;
+            renderSnapshotArchive(s);
+            toast(enabled ? '快照归档已启用：' + dir : '快照归档已关闭', 'ok');
+        } catch (e) {
+            if (e.status === 401) { scheduleGateRelock(); return; }
+            $('setArchiveMsg').textContent = e.message || '保存失败';
+            toast('保存失败：' + (e.message || '未知错误'), 'err');
+        }
+    }
+
+    /** 保存前校验：目录能否创建 / 可写（后端 browse 端点返回 currentWritable）。 */
+    async function verifyArchiveDir() {
+        var dir = $('setArchiveDirInput').value.trim() ||
+            ((state.settings && state.settings.snapshotArchive && state.settings.snapshotArchive.dir) || '');
+        if (!dir) { toast('请先选择归档目录', 'err'); return; }
+        try {
+            var d = await api('api/settings/browse?path=' + encodeURIComponent(dir) + '&create=1');
+            if (d && d.currentWritable) { toast('目录可写：' + dir, 'ok'); return; }
+            toast('目录不可写（检查 fnOS 应用存储授权）：' + dir, 'err');
+        } catch (e) {
+            if (e.status === 401) { scheduleGateRelock(); return; }
+            toast('校验失败：' + (e.message || dir), 'err');
+        }
     }
 
     /* ---------- HLS 预览 ---------- */
@@ -3253,6 +3435,8 @@
                 '<div class="ev-actions">' +
                     (e.snapshotUrl ? '<button class="btn tiny soft" data-evact="snapshot" data-evid="' + e.id + '">查看快照</button>' : '') +
                     '<button class="btn tiny soft" data-evact="replay" data-evid="' + e.id + '">看回放</button>' +
+                    (e.type === 'person' || e.type === 'vehicle' || e.type === 'pet'
+                        ? '<button class="btn tiny soft sdk-only" data-evact="archive" data-evid="' + e.id + '">打开归档</button>' : '') +
                     '<button class="btn tiny soft" data-evact="handled" data-evid="' + e.id +
                         '" data-evval="' + (e.handled ? 'false' : 'true') + '">' +
                         (e.handled ? '取消处理' : '标记已处理') + '</button>' +
@@ -3306,6 +3490,18 @@
             });
         });
         updateEvBatchUi();
+    }
+
+    /** v2.3.1 在飞牛文件管理中打开该事件的归档快照（后端按事件反查归档路径）。 */
+    async function evOpenArchive(id) {
+        try {
+            var r = await api('api/events/' + id + '/archive-path');
+            if (r && r.ok && r.path) { trimOpenFile(r.path); return; }
+            toast('该事件尚未归档：归档开启后新产生的 AI 事件才会归档', 'err');
+        } catch (e) {
+            if (e.status === 401) { scheduleGateRelock(); return; }
+            toast('查询归档路径失败：' + e.message, 'err');
+        }
     }
 
     function updateEvBatchUi() {
@@ -4476,6 +4672,7 @@
             var act = b.getAttribute('data-evact');
             if (act === 'snapshot') openEvSnapshot(id);
             else if (act === 'replay') openEvReplay(id);
+            else if (act === 'archive') evOpenArchive(id);
             else if (act === 'handled') evSingle(id, 'handled', b.getAttribute('data-evval'));
             else if (act === 'del') evSingle(id, 'del');
         });
@@ -4572,12 +4769,16 @@
         });
 
         // 设置：存储路径 / 分段 / 端口
-        $('btnBrowseDir').addEventListener('click', openDirModal);
+        $('btnBrowseDir').addEventListener('click', function () { openDirModal('recording'); });
         $('btnSaveDir').addEventListener('click', function () { saveSettings(false); });
         $('btnResetDir').addEventListener('click', function () {
             if (confirm('确认恢复为默认存储目录？\n当前正在录制的分段会在封段后写入默认目录。')) saveSettings(true);
         });
         $('btnRefreshDir').addEventListener('click', loadSettings);
+        // v2.3.1 快照归档设置
+        $('btnBrowseArchiveDir').addEventListener('click', function () { openDirModal('archive'); });
+        $('btnSaveArchiveDir').addEventListener('click', saveSnapshotArchive);
+        $('btnTestArchiveDir').addEventListener('click', verifyArchiveDir);
         $('btnSaveSegment').addEventListener('click', saveSegment);
         $('btnSaveRtsp').addEventListener('click', saveRtsp);
         $('btnSaveRtspToken').addEventListener('click', saveRtspToken);
@@ -4716,6 +4917,7 @@
         $('dirUp').addEventListener('click', function () { if (dirData.parent) loadDir(dirData.parent); });
         $('dirReload').addEventListener('click', function () { loadDir(dirData.current); });
         $('dirGo').addEventListener('click', goManualDir);
+        $('dirSysPick').addEventListener('click', sysPickDir);
         $('dirManualPath').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); goManualDir(); } });
         $('dirModal').addEventListener('click', function (e) { if (e.target === this) closeDirModal(); });
 

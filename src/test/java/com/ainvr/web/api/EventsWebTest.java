@@ -34,7 +34,7 @@ class EventsWebTest {
     @BeforeEach
     void setUp() {
         store = new EventStore(dir);
-        mvc = MockMvcBuilders.standaloneSetup(new EventsController(store))
+        mvc = MockMvcBuilders.standaloneSetup(new EventsController(store, new com.ainvr.web.service.SnapshotArchiveService(new com.ainvr.store.AppSettingsStore(dir), store)))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
     }

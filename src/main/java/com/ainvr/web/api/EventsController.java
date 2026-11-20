@@ -4,6 +4,7 @@ import com.ainvr.store.EventStore;
 import com.ainvr.store.EventStore.AlarmEvent;
 import com.ainvr.store.EventStore.Filter;
 import com.ainvr.store.EventStore.Page;
+import com.ainvr.web.service.SnapshotArchiveService;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -54,9 +55,11 @@ public class EventsController {
     private static final int MAX_BATCH = 5000;
 
     private final EventStore store;
+    private final SnapshotArchiveService archiveService;
 
-    public EventsController(EventStore store) {
+    public EventsController(EventStore store, SnapshotArchiveService archiveService) {
         this.store = store;
+        this.archiveService = archiveService;
     }
 
     /** 倒序分页查询，支持设备 / 类型 / 已处理 / 日期 / 时间区间筛选。 */
@@ -108,6 +111,22 @@ public class EventsController {
     }
 
     public record HandledRequest(Boolean handled) {
+    }
+
+    /**
+     * v2.3.1 按事件反查归档快照的绝对路径（飞牛桌面内「在文件管理中打开」用）。
+     * 归档未启用 / 类型不命中 / 文件尚不存在时返回 404 语义的空 ok=false。
+     */
+    @GetMapping("/events/{id}/archive-path")
+    public Map<String, Object> archivePath(@PathVariable long id) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("ok", false);
+        m.put("path", "");
+        archiveService.archivedPathOf(id).ifPresent(p -> {
+            m.put("ok", true);
+            m.put("path", p.toString());
+        });
+        return m;
     }
 
     /** 标记已处理 / 取消处理。 */

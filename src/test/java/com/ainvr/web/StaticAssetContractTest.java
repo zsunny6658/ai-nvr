@@ -30,7 +30,19 @@ class StaticAssetContractTest {
 
         assertTrue(html.contains("btnPreviewBack"), "预览弹层缺少应用内返回按钮");
         assertTrue(html.contains("btnPlayerBack"), "回放弹层缺少应用内返回按钮");
-        assertTrue(html.contains("v=57"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
+        assertTrue(html.contains("v=58"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
+        // v2.3.1 飞牛桌面 SDK 融合 + 快照归档
+        assertTrue(html.contains("vendor/trimapp-bridge.js"), "缺少 @trimjs/web-app 桥接脚本");
+        assertTrue(html.contains("dirSysPick"), "目录弹窗缺少系统文件选择器按钮");
+        assertTrue(html.contains("setSnapArchEnabled"), "缺少快照归档开关");
+        assertTrue(html.contains("setArchiveDirInput"), "缺少归档目录输入");
+        assertTrue(js.contains("whenTrimHost"), "缺少 SDK 宿主探测");
+        assertTrue(js.contains("trimPickDir"), "缺少系统文件选择器调用");
+        assertTrue(js.contains("trimOpenFile"), "缺少在文件管理中打开调用");
+        assertTrue(js.contains("trimApplyTitle"), "缺少桌面标题跟随");
+        assertTrue(js.contains("evOpenArchive"), "缺少事件归档打开逻辑");
+        assertTrue(js.contains("api/settings/snapshot-archive"), "缺少快照归档设置端点调用");
+        assertTrue(js.contains("sdk-host"), "缺少宿主探测后的 sdk-only 显隐切换");
         // v2.3.0 监控台壳层：侧栏 + 底部导航双入口，主题与快照设置存在
         assertTrue(html.contains("class=\"sidenav\""), "缺少侧栏导航");
         assertTrue(html.contains("class=\"bottomnav\""), "缺少底部导航");

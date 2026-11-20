@@ -24,7 +24,7 @@ class SettingsBrowseTest {
     Path tmp;
 
     private MockMvc mvc() {
-        SettingsController controller = new SettingsController(null, null, null, null, null, null, null, null, null, null, null, null, null);
+        SettingsController controller = new SettingsController(null, null, null, null, null, null, null, null, null, null, null, null, null, null);
         return MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();

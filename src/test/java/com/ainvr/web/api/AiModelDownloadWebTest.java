@@ -77,7 +77,7 @@ class AiModelDownloadWebTest {
     private MockMvc mvc(AiDetectService svc, AppSettingsStore settings) {
         SettingsController controller = new SettingsController(
                 null, null, null, settings, null, null,
-                new ObjectMapper(), svc, null, null, null, null, null);
+                new ObjectMapper(), svc, null, null, null, null, null, null);
         return MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();

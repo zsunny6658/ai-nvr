@@ -297,6 +297,8 @@ public class RecordingService {
                     "name", f.getName(),
                     "size", f.length(),
                     "lastModified", f.lastModified(),
+                    // v2.3.1 绝对路径：飞牛桌面内供「在文件管理中打开」（openFile）
+                    "path", f.toPath().toAbsolutePath().toString(),
                     "recording", recording));
         }
         out.sort(Comparator.comparingLong((Map<String, Object> x) -> (long) x.get("lastModified")).reversed());

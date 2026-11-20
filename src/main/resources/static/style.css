@@ -950,3 +950,8 @@ body.authed .container { padding-bottom: calc(78px + env(safe-area-inset-bottom,
 }
 .ptz-tip.ok { color: #15803d; }
 .ptz-tip.err { color: #b91c1c; }
+
+/* ===== v2.3.1 飞牛桌面 SDK 融合 ===== */
+/* sdk-only 能力仅在探测到飞牛宿主（body.sdk-host）后显示；独立浏览器全量隐藏 */
+.sdk-only { display: none !important; }
+body.sdk-host .sdk-only { display: inline-block !important; }

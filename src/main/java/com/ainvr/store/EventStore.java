@@ -108,6 +108,9 @@ public class EventStore {
     /** v2.1.0 追加式监听列表（AI 精化等），与单槽 addListener 并存，仅在 add 路径触发。 */
     private final java.util.concurrent.CopyOnWriteArrayList<Consumer<AlarmEvent>> extraListeners =
             new java.util.concurrent.CopyOnWriteArrayList<>();
+    /** v2.3.1 AI 精化监听：motion → person/vehicle/pet 原位更新后触发（快照归档等下游用）。 */
+    private final java.util.concurrent.CopyOnWriteArrayList<Consumer<AlarmEvent>> refineListeners =
+            new java.util.concurrent.CopyOnWriteArrayList<>();
 
     public EventStore() {
         this(DataDir.get());
@@ -178,6 +181,17 @@ public class EventStore {
     public void addListener(Consumer<AlarmEvent> listener) {
         if (listener != null) {
             extraListeners.add(listener);
+        }
+    }
+
+    /**
+     * v2.3.1 追加一个 AI 精化监听：仅当 {@link #refine} 成功把事件类型从 motion
+     * 更新为 person / vehicle / pet 时触发。监听方必须自行异步化并吞掉异常，
+     * 且不得在回调内调用本类的写方法（当前持锁）。
+     */
+    public void addRefineListener(Consumer<AlarmEvent> listener) {
+        if (listener != null) {
+            refineListeners.add(listener);
         }
     }
 
@@ -281,6 +295,13 @@ public class EventStore {
         line.put("type", nullToEmpty(type));
         line.put("detections", detections == null ? List.of() : detections);
         append(line);
+        for (Consumer<AlarmEvent> l : refineListeners) {
+            try {
+                l.accept(updated);
+            } catch (RuntimeException e) {
+                log.warn("精化监听回调失败 id={}: {}", id, e.toString());
+            }
+        }
         return Optional.of(updated);
     }
 
@@ -707,6 +728,14 @@ public class EventStore {
         }
         Path p = snapshotsDir.resolve(rel).normalize();
         return p.startsWith(snapshotsDir) ? p : null;
+    }
+
+    /**
+     * v2.3.1 事件快照的绝对路径（供快照归档等下游复制）；rel 非法或越界返回 null。
+     * 只读访问，不做存在性检查。
+     */
+    public Path snapshotPath(String rel) {
+        return snapshotFile(rel);
     }
 
     private void deleteSnapshot(String rel) {

@@ -16,6 +16,7 @@ import com.ainvr.web.service.DeviceProbe;
 import com.ainvr.web.service.HlsService;
 import com.ainvr.web.service.RecordingService;
 import com.ainvr.web.service.ShareEventService;
+import com.ainvr.web.service.SnapshotArchiveService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -65,13 +66,15 @@ public class SettingsController {
     private final StreamHub streamHub;
     private final DeviceProbe deviceProbe;
     private final AiDetectService aiDetectService;
+    private final SnapshotArchiveService snapshotArchive;
 
     public SettingsController(RecordingService recordingService, RtspServer rtspServer,
                               NvrProperties props, AppSettingsStore settingsStore,
                               AccessKeyStore accessKeyStore, ShareBoardStore boardStore,
                               ObjectMapper mapper, AiDetectService aiDetectService,
                               HlsService hlsService, ShareEventService shareEventService,
-                              DeviceCatalog catalog, StreamHub streamHub, DeviceProbe deviceProbe) {
+                              DeviceCatalog catalog, StreamHub streamHub, DeviceProbe deviceProbe,
+                              SnapshotArchiveService snapshotArchive) {
         this.recordingService = recordingService;
         this.rtspServer = rtspServer;
         this.props = props;
@@ -85,6 +88,7 @@ public class SettingsController {
         this.streamHub = streamHub;
         this.deviceProbe = deviceProbe;
         this.aiDetectService = aiDetectService;
+        this.snapshotArchive = snapshotArchive;
     }
 
     /** 聚合返回全部设置（录像相关 + 实时 RTSP 端口）。 */
@@ -99,7 +103,38 @@ public class SettingsController {
         m.put("share", shareEventService.shareSettingsInfo());
         m.put("quality", qualityInfo());
         m.put("ai", aiDetectService.status());
+        m.put("snapshotArchive", settingsStore.snapshotArchive());
         return m;
+    }
+
+    /** v2.3.1 事件快照归档：开关 + 归档目录（目录为空视为关闭）。 */
+    @org.springframework.web.bind.annotation.PutMapping("/settings/snapshot-archive")
+    public Map<String, Object> updateSnapshotArchive(@RequestBody(required = false) SnapshotArchiveRequest req) {
+        if (req == null) {
+            throw ApiException.badRequest("缺少请求体");
+        }
+        String dir = req.dir() == null ? "" : req.dir().trim();
+        if (req.enabled() && dir.isEmpty()) {
+            throw ApiException.badRequest("请先选择归档目录");
+        }
+        if (req.enabled()) {
+            try {
+                Path d = Path.of(dir);
+                Files.createDirectories(d);
+                if (!Files.isWritable(d)) {
+                    throw ApiException.badRequest("归档目录不可写：" + dir);
+                }
+            } catch (java.nio.file.InvalidPathException e) {
+                throw ApiException.badRequest("归档目录路径不合法：" + dir);
+            } catch (IOException e) {
+                throw ApiException.badRequest("归档目录无法创建：" + e.getMessage());
+            }
+        }
+        settingsStore.saveSnapshotArchive(req.enabled(), dir);
+        return getSettings();
+    }
+
+    public record SnapshotArchiveRequest(boolean enabled, String dir) {
     }
 
     /** v2.1.0 本地 AI 检测设置：开关与置信度阈值（0.3～0.9）。 */
