@@ -31,7 +31,7 @@
         recRows: new Map(),
         // v1.2.13：按摄像头分组展示（折叠状态 / 各设备文件数）
         // v2.3.1：每组增量渲染（首次 50 行，点「加载更多」续 200 行），避免上千行 DOM 一次成型卡死主线程
-        recCollapsed: new Set(), recCounts: {}, recShown: new Map(), recListCurrent: [],
+        recCollapsed: new Set(), recExpanded: new Set(), recCounts: {}, recShown: new Map(), recListCurrent: [], recGroupCount: 1,
         // v1.2.8：事件告警页（选中集 / 已加载行 / 分页游标）
         evSelected: new Set(), evRows: [], evOffset: 0, evTotal: 0, evBusy: false,
         // v1.2.15：全量事件数 / 删除或清空操作的重入保护
@@ -1360,11 +1360,20 @@
     }
 
     /** v1.2.13 录像按摄像头分组：每组一个可折叠标题行（设备名 / 文件数 / 占用空间）。
-     *  v2.3.1 每组增量渲染：先出 50 行，底部「加载更多」续 200 行——上千个分段一次
-     *  全部渲染（每行 4 个按钮）会阻塞主线程数秒，是录像文件页卡顿的主因。 */
-    var REC_PAGE_FIRST = 50, REC_PAGE_MORE = 200;
+     *  v2.3.1 增量渲染：先出一批行，底部「加载更多」续拉——上千个分段一次全部渲染
+     *  （每行 4 个按钮）会阻塞主线程数秒，是录像文件页卡顿的主因。
+     *  v2.3.1 二轮优化：折叠组零渲染——默认只渲染分组标题（“全部”多摄像头视图下
+     *  默认全部收起），行只在组展开时才进 DOM；首屏行数 50→25、续拉 200→100。 */
+    var REC_PAGE_FIRST = 25, REC_PAGE_MORE = 100;
 
     function recShownOf(did) { return state.recShown.get(did) || REC_PAGE_FIRST; }
+
+    /** 分组是否折叠：显式收起 > 显式展开 > 默认（“全部”多摄像头视图收起，单摄像头筛选展开）。 */
+    function recGroupCollapsed(did, totalGroups) {
+        if (state.recCollapsed.has(did)) return true;
+        if (state.recExpanded.has(did)) return false;
+        return !$('recFilter').value && totalGroups > 1;
+    }
 
     function renderRecordings(list) {
         var tb = $('recList');
@@ -1390,9 +1399,10 @@
         }
         renderRecChips();
         var keys = cameraGroupKeys(Array.from(groups.keys()));
+        state.recGroupCount = keys.length;
         tb.innerHTML = keys.map(function (did) {
             var rows = groups.get(did);
-            var collapsed = state.recCollapsed.has(did);
+            var collapsed = recGroupCollapsed(did, keys.length);
             var bytes = rows.reduce(function (s, r) { return s + (r.size || 0); }, 0);
             var shown = recShownOf(did);
             var head = '<tr class="rec-group" data-recgroup="' + esc(did) + '"><td colspan="6">' +
@@ -1401,10 +1411,12 @@
                     '<span class="cam-group-name">' + esc(cameraName(did)) + '</span>' +
                     '<span class="cam-group-did">' + esc(did) + '</span>' +
                     '<span class="cam-group-count">' + rows.length + ' 个文件 · ' + fmtSize(bytes) +
-                    (rows.length > shown ? ' · 已显示 ' + Math.min(shown, rows.length) : '') + '</span>' +
+                    (!collapsed && rows.length > shown ? ' · 已显示 ' + Math.min(shown, rows.length) : '') +
+                    '</span>' +
                 '</button></td></tr>';
-            var body = rows.slice(0, shown).map(function (r) { return recRowHtml(r, collapsed); }).join('');
-            if (rows.length > shown) {
+            // v2.3.1 折叠组零渲染：收起的组完全不生成行 DOM，展开时才建
+            var body = collapsed ? '' : rows.slice(0, shown).map(function (r) { return recRowHtml(r, false); }).join('');
+            if (!collapsed && rows.length > shown) {
                 body += '<tr class="rec-more-row"><td colspan="6">' +
                     '<button type="button" class="btn tiny" data-rmore="' + esc(did) + '">加载更多（还有 ' +
                     (rows.length - shown) + ' 个）</button></td></tr>';
@@ -1433,15 +1445,12 @@
         tb.querySelectorAll('.rec-group').forEach(function (tr) {
             tr.querySelector('.cam-group-toggle').addEventListener('click', function () {
                 var did = tr.getAttribute('data-recgroup');
-                var nowCollapsed = !state.recCollapsed.has(did);
-                if (nowCollapsed) state.recCollapsed.add(did); else state.recCollapsed.delete(did);
-                this.querySelector('.cam-caret').textContent = nowCollapsed ? '▸' : '▾';
-                this.setAttribute('aria-expanded', String(!nowCollapsed));
-                tb.querySelectorAll('tr[data-recgroup-row]').forEach(function (row) {
-                    if (row.getAttribute('data-recgroup-row') === did) {
-                        row.classList.toggle('is-collapsed', nowCollapsed);
-                    }
-                });
+                // v2.3.1 折叠组零渲染：行 DOM 随折叠状态增删，直接整表重渲染；
+                // 勾选状态存于 recSelected，重渲染后自动还原
+                var nowCollapsed = !recGroupCollapsed(did, state.recGroupCount || 1);
+                if (nowCollapsed) { state.recCollapsed.add(did); state.recExpanded.delete(did); }
+                else { state.recCollapsed.delete(did); state.recExpanded.add(did); }
+                renderRecordings(state.recListCurrent);
             });
         });
         updateBatchUi();
@@ -4591,6 +4600,7 @@
         if (!pb.did) { $('tlBlocks').innerHTML = '<div class="tl-no">请先选择摄像头</div>'; return; }
         pb.dayStart = new Date(pb.dateStr + 'T00:00:00').getTime();
         pb.idx = -1; pb.curStart = 0;
+        pb.waitingNext = false; pb.swapping = false; // 换摄像头/日期：取消任何进行中的自动接续
         try {
             var data = await api('api/timeline/' + encodeURIComponent(pb.did) + '?date=' + encodeURIComponent(pb.dateStr));
             pb.segs = data.segments || [];
@@ -4757,7 +4767,7 @@
         var v = pbV();
         if (pb.idx >= 0 && v.src) {
             $('pbNow').textContent = hms(pb.curStart + (v.currentTime || 0) * 1000)
-                + (v.paused ? ' 已暂停' : ' 播放中');
+                + (pb.waitingNext ? ' · 接续下一段…' : v.paused ? ' 已暂停' : ' 播放中');
             var s = pb.segs[pb.idx];
             // v2.2.5 元信息显示真实起止时间点
             $('pbSeg').textContent = '分段 ' + (pb.idx + 1) + '/' + pb.segs.length + ' · '
@@ -4796,6 +4806,7 @@
         var pb = state.pb;
         if (i < 0 || i >= pb.segs.length) return;
         pb.swapping = false; // 手动换段：放弃任何进行中的自动交接
+        pb.waitingNext = false; // 同时取消末帧等待交接（waitThenSwap 轮询会自行退出）
         pb.idx = i;
         var s = pb.segs[i];
         pb.curStart = s.startMs;
@@ -4805,7 +4816,9 @@
         $('pbEmpty').hidden = true;
         v.src = withToken('api/recordings/' + encodeURIComponent(s.name));
         v.play().catch(function () {});
-        if (s.recording) {
+        // v2.3.1 录制段提示每次会话只弹一次：自动接续/循环进入录制段时不再反复打扰
+        if (s.recording && !pb.recToastShown) {
+            pb.recToastShown = true;
             toast('该段正在录制，播放已写入的部分（到当前进度为止）；看实时画面请用“实时预览”', '');
         }
         renderTimeline();
@@ -4826,7 +4839,10 @@
         if (pb.idx < 0 || pb.loop === 'seg') return;
         var v = pbV();
         if (!v.duration || !isFinite(v.duration)) return;
-        if ((v.duration - (v.currentTime || 0)) * 1000 > 8000) return;
+        // v2.3.1 预载起点再前移并按倍速折算：保留约 10 秒壁钟时间缓冲下一段
+        // （1x 时媒体剩余 10s 触发、2x 时 20s 触发），高倍速下也能缓冲到位，
+        // 避免“本段放完了下一段还没进来”的等待。
+        if ((v.duration - (v.currentTime || 0)) * 1000 > 10000 * (v.playbackRate || 1)) return;
         var ni = pb.idx + 1;
         if (ni >= pb.segs.length) ni = pb.loop === 'day' ? 0 : -1;
         if (ni < 0) return;
@@ -4867,6 +4883,7 @@
         var pb = state.pb;
         if (pb.swapping) return;
         pb.swapping = true;
+        pb.waitingNext = false; // 等待交接被 swapTo 接管（轮询检测到标记清除后自行退出）
         var cur = pbV(), idle = pbIdle(); // 先取旧活动元素 / 待命元素
         pb.activeB = !pb.activeB; // 交换活动/待命角色（pbV/pbIdle 据此取元素）
         cur.pause(); // pause 后最后一帧继续显示，作为交接期间的底图
@@ -4915,14 +4932,45 @@
                 return;
             }
         }
-        // v2.2.5 下一段已在待命元素缓冲就绪 → 直接交换显示（无加载）；否则走原加载路径兜底
+        // v2.2.5 下一段已在待命元素缓冲就绪 → 直接交换显示（无加载）；
+        // v2.3.1 未就绪时不再整段重载（黑屏根因），改为冻结当前末帧等待缓冲完成后无缝交接
         var idle = pbIdle();
         if (idle.dataset.srcName === pb.segs[ni].name && idle.readyState >= 2) {
             swapTo(ni);
             return;
         }
-        loadSeg(ni, 0);
+        waitThenSwap(ni);
         if (pb.zoom !== 24) { computeWin(true); renderTimeline(); }
+    }
+
+    /** v2.3.1 末帧等待交接：播到边界时下一段还没缓冲好——暂停当前元素冻结末帧作底图，
+     *  必要时补起待命元素的预载，轮询就绪后走 swapTo 无缝交接；期间时间轴显示
+     *  “接续下一段…”。手动换段（loadSeg）会取消等待，不会与自动交接抢元素。 */
+    function waitThenSwap(ni) {
+        var pb = state.pb;
+        if (pb.waitingNext) return;
+        pb.waitingNext = true;
+        var cur = pbV();
+        cur.pause(); // ended 后本就停了，显式 pause 确保末帧保留作过渡底图
+        var s = pb.segs[ni];
+        var idle = pbIdle();
+        if (idle.dataset.srcName !== s.name) {
+            idle.preload = 'auto';
+            idle.dataset.srcName = s.name;
+            idle.playbackRate = cur.playbackRate || 1;
+            idle.muted = cur.muted;
+            idle.src = withToken('api/recordings/' + encodeURIComponent(s.name));
+        }
+        updateMeta();
+        var poll = setInterval(function () {
+            if (!pb.waitingNext || pb.idx < 0) { clearInterval(poll); return; }
+            var idl = pbIdle();
+            if (idl.dataset.srcName === pb.segs[ni].name && idl.readyState >= 2) {
+                clearInterval(poll);
+                pb.waitingNext = false;
+                if (!pb.swapping) { swapTo(ni); }
+            }
+        }, 150);
     }
 
     function autoFollow() {

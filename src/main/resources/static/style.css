@@ -191,11 +191,13 @@ body:not(.authed) .sidenav { display: none; }
 }
 
 /* ============ 按钮 ============ */
-/* inline-flex：.btn 也用于 <label>（备份导入等 file 触发器），inline 会因行内盒高度塌陷导致与相邻按钮不等高 */
+/* inline-flex：.btn 也用于 <label>（备份导入等 file 触发器），inline 会因行内盒高度塌陷导致与相邻按钮不等高。
+   line-height 显式收敛：button 的 UA 默认行高与 label 继承的 body 行高不同，会让两个按钮高度差几像素 */
 .btn {
     display: inline-flex; align-items: center; justify-content: center;
     border: 1px solid var(--line-strong); background: transparent; color: var(--ink);
     padding: 8px 14px; border-radius: 8px; cursor: pointer; font-size: 13px;
+    line-height: 1.2; min-height: 36px;
     transition: all .15s; white-space: nowrap;
 }
 .btn:hover { border-color: var(--accent-line); color: var(--accent-ink); }

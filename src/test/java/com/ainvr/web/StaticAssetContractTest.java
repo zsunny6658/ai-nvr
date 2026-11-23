@@ -31,7 +31,7 @@ class StaticAssetContractTest {
 
         assertTrue(html.contains("btnPreviewBack"), "预览弹层缺少应用内返回按钮");
         assertTrue(html.contains("btnPlayerBack"), "回放弹层缺少应用内返回按钮");
-        assertTrue(html.contains("v=65"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
+        assertTrue(html.contains("v=66"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
         // v2.3.1 真机验证第五轮：主题快捷按钮两态 + 选目录自动授权 + 内置权限面板
         assertTrue(js.contains("trimAuthorizePath"), "缺少选目录自动授权逻辑");
         assertTrue(js.contains("authorizeUserFile"), "缺少用户空间授权调用");
@@ -67,6 +67,12 @@ class StaticAssetContractTest {
         assertTrue(html.contains("ev-more-actions"), "事件页缺少「更多操作」收纳");
         assertTrue(html.contains("set-card-wide"), "设置页缺少宽卡标记");
         assertTrue(js.contains("togglePbPlay"), "回放缺少自定义播放控制逻辑");
+        // v2.3.1 真机验证第六轮：回放末帧等待交接 + 预载前移 + 录制段提示一次性 + 折叠组零渲染
+        assertTrue(js.contains("waitThenSwap"), "回放缺少下一段未就绪时的末帧等待交接");
+        assertTrue(js.contains("10 * 1000 * (v.playbackRate || 1)") || js.contains("10000 * (v.playbackRate"), "预载起点应按倍速前移");
+        assertTrue(js.contains("recToastShown"), "录制段提示应每次会话只弹一次");
+        assertTrue(js.contains("recGroupCollapsed"), "录像列表应折叠组零渲染（行只在展开时进 DOM）");
+        assertTrue(css.contains("min-height: 36px"), "按钮应有统一最小高度（备份导入/导出等高）");
         // v2.3.1 飞牛桌面 SDK 融合 + 快照归档
         assertTrue(html.contains("vendor/trimapp-bridge.js"), "缺少 @trimjs/web-app 桥接脚本");
         assertTrue(html.contains("dirSysPick"), "目录弹窗缺少系统文件选择器按钮");
