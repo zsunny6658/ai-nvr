@@ -31,7 +31,7 @@ class StaticAssetContractTest {
 
         assertTrue(html.contains("btnPreviewBack"), "预览弹层缺少应用内返回按钮");
         assertTrue(html.contains("btnPlayerBack"), "回放弹层缺少应用内返回按钮");
-        assertTrue(html.contains("v=67"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
+        assertTrue(html.contains("v=68"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
         // v2.3.1 真机验证第五轮：主题快捷按钮两态 + 选目录自动授权 + 内置权限面板
         assertTrue(js.contains("trimAuthorizePath"), "缺少选目录自动授权逻辑");
         assertTrue(js.contains("authorizeUserFile"), "缺少用户空间授权调用");
@@ -76,6 +76,10 @@ class StaticAssetContractTest {
         // v2.3.1 解锁秒开：缓存优先 + 新鲜度按需刷新 + 锁定停轮询
         assertTrue(js.contains("lastLoads"), "解锁后应按数据新鲜度决定是否重拉（设备 60s/概览 30s）");
         assertTrue(js.contains("stopAppTimers"), "锁定后应停止主界面轮询（消灭 401 空转）");
+        // v2.3.1 回放续播新段 + 起始点落前一段
+        assertTrue(js.contains("refreshTimelineLive().then"), "播到尾端应先刷新时间轴再定论（新封段无缝续播）");
+        assertTrue(js.contains("cur.recording && cur.durMs > oldDur"), "录制段时长增长时应从断点续播");
+        assertTrue(js.contains("prev.durMs / 1000 - 30"), "进回放起始点应落在上一段末尾 30 秒处");
         // v2.3.1 飞牛桌面 SDK 融合 + 快照归档
         assertTrue(html.contains("vendor/trimapp-bridge.js"), "缺少 @trimjs/web-app 桥接脚本");
         assertTrue(html.contains("dirSysPick"), "目录弹窗缺少系统文件选择器按钮");

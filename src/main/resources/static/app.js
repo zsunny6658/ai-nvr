@@ -4637,9 +4637,15 @@
         computeWin(true);
         renderTimeline();
         if (autoLatest && pb.segs.length && pb.idx < 0) {
-            // 自动定位最后一段末尾附近；loadSeg 内部会自动起播
-            var last = pb.segs[pb.segs.length - 1];
-            loadSeg(pb.segs.length - 1, Math.max(0, last.durMs / 1000 - 15));
+            // v2.3.1 起始点再前移：进回放从「上一段末尾 30 秒」起播，跨过换段边界
+            // 无缝连续播到最新（原先只从最后一段末尾前 15 秒起，起点到不了前一段）；
+            // 只有一段时从段首起播。loadSeg 内部会自动起播。
+            if (pb.segs.length >= 2) {
+                var prev = pb.segs[pb.segs.length - 2];
+                loadSeg(pb.segs.length - 2, Math.max(0, prev.durMs / 1000 - 30));
+            } else {
+                loadSeg(0, 0);
+            }
         }
     }
 
@@ -4948,8 +4954,22 @@
             if (pb.loop === 'day' && pb.segs.length > 0) {
                 ni = 0;
             } else {
-                toast('已到当天最后一段', 'ok');
-                updateMeta();
+                // v2.3.1 播到尾端先静默刷新时间轴再定论：播放期间新封的段可能还没
+                // 进入时间轴（静默刷新 15 秒一轮），刷新后有新段就无缝续播；
+                // 当前段仍在录制且时长已增长时，从断点继续播放已写入部分。
+                var endedAt = pbV().currentTime || 0;
+                var oldDur = (pb.segs[pb.idx] || {}).durMs || 0;
+                refreshTimelineLive().then(function () {
+                    if (pb.idx < 0) { return; }
+                    if (pb.idx + 1 < pb.segs.length) { pbNextSeg(); return; }
+                    var cur = pb.segs[pb.idx];
+                    if (cur && cur.recording && cur.durMs > oldDur && endedAt > 0) {
+                        loadSeg(pb.idx, Math.max(0, endedAt - 0.5));
+                        return;
+                    }
+                    toast('已到当天最后一段', 'ok');
+                    updateMeta();
+                });
                 return;
             }
         }
