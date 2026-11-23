@@ -73,51 +73,27 @@ public class MiotSleepService {
         }
     }
 
-    /** 批量读全部主设备的休眠属性：一次云端请求携带所有参数，按顺序对齐结果。 */
+    /**
+     * 逐设备读全部主设备的休眠属性。
+     *
+     * <p>⚠️ 不做跨 did 批量：米家云 {@code /miotspec/prop/get} 对「一次请求携带多个设备
+     * 参数」的兼容性不可靠（多台真机上批量探测持续失败、休眠一直显示在线），而单设备
+     * 单请求已被预置位功能（MiotPresetService）真机验证有效。设备数一般 ≤4，每 90s
+     * 一轮、每轮每设备一个请求，云端开销可忽略。单设备失败不影响其他设备。</p>
+     */
     private void probeAll() {
         List<String> dids = catalog.all().stream()
                 // 虚拟副镜头（did#2）不是真实云端设备，跳过；其休眠状态跟随主镜头
                 .filter(d -> !DualLens.isSecondary(d.did()))
                 .map(d -> d.did())
                 .toList();
-        if (dids.isEmpty()) {
-            return;
-        }
-        List<Map<String, Object>> params = dids.stream()
-                .map(did -> Map.<String, Object>of(
-                        "did", did,
-                        "siid", propInt("ainvr.sleep.siid", 2),
-                        "piid", propInt("ainvr.sleep.piid", 1)))
-                .toList();
-        JsonNode items = call("/miotspec/prop/get", Map.of("params", params)).path("result");
-        if (!items.isArray()) {
-            return;
-        }
-        for (int i = 0; i < items.size() && i < dids.size(); i++) {
-            JsonNode item = items.get(i);
-            // 云端可能回显 did；缺失时按顺序对齐（prop/get 保证顺序）
-            String did = item.hasNonNull("did") && !item.path("did").asText().isBlank()
-                    ? item.path("did").asText() : dids.get(i);
-            int code = item.path("code").asInt(-1);
-            if (code != CODE_OK || !item.path("value").isBoolean()) {
-                // 失败可见化：每次失败码变化都记 INFO（此前静默 debug 导致探测失败无从得知，
-                // 界面永远显示「在线」——用户反馈「休眠侦测感觉不对」的主要嫌疑即在此）
-                Integer prev = failCodes.get(did);
-                if (prev == null || prev != code) {
-                    log.info("[{}] 休眠属性读取失败 code={}（-4006=固件不支持该属性；可尝试 -Dainvr.sleep.siid/-Dainvr.sleep.piid 覆盖）",
-                            did, code);
-                }
-                failCodes.put(did, code);
-                continue;
-            }
-            failCodes.remove(did);
-            boolean sleeping = !item.path("value").asBoolean();
-            Boolean prevSleep = sleepState.put(did, sleeping);
-            if (!Boolean.valueOf(sleeping).equals(prevSleep)) {
-                log.info("[{}] 休眠状态：{}（MIoT siid{}.{} value={}）", did,
-                        sleeping ? "休眠中" : "工作中",
-                        propInt("ainvr.sleep.siid", 2), propInt("ainvr.sleep.piid", 1),
-                        item.path("value").asBoolean());
+        for (String did : dids) {
+            try {
+                probeOne(did);
+            } catch (MiCloudUnauthorizedException e) {
+                throw e; // 交给 safeProbe 统一处理会话过期
+            } catch (Exception e) {
+                log.debug("[{}] 休眠探测单设备异常（忽略）：{}", did, e.toString());
             }
         }
     }
@@ -163,6 +139,11 @@ public class MiotSleepService {
     /** 该设备是否休眠：true=休眠中，false=工作中；null=尚未探测/不支持。副镜头跟随主镜头。 */
     public Boolean sleeping(String did) {
         return sleepState.get(DualLens.baseDid(did));
+    }
+
+    /** 最近一次属性读取失败码；null=最近一次成功或尚未探测（供界面自证探测状态）。 */
+    public Integer probeFailCode(String did) {
+        return failCodes.get(DualLens.baseDid(did));
     }
 
     /** 设置休眠状态（sleep=true 休眠 / false 唤醒），米家会话过期自动续期重试一次。 */

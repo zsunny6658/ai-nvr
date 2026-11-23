@@ -31,7 +31,7 @@ class StaticAssetContractTest {
 
         assertTrue(html.contains("btnPreviewBack"), "预览弹层缺少应用内返回按钮");
         assertTrue(html.contains("btnPlayerBack"), "回放弹层缺少应用内返回按钮");
-        assertTrue(html.contains("v=71"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
+        assertTrue(html.contains("v=72"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
         // v2.3.1 真机验证第五轮：主题快捷按钮两态 + 选目录自动授权 + 内置权限面板
         assertTrue(js.contains("trimAuthorizePath"), "缺少选目录自动授权逻辑");
         assertTrue(js.contains("authorizeUserFile"), "缺少用户空间授权调用");
@@ -50,7 +50,7 @@ class StaticAssetContractTest {
         assertTrue(js.contains("lanReachable"), "设备列表缺少局域网可达性字段");
         // v2.3.1 第三轮补丁：休眠判定以云端 MIoT 休眠属性为准，徽标可点击唤醒
         assertTrue(js.contains("sleeping === true"), "休眠徽标应依据云端 sleeping 属性");
-        assertTrue(js.contains("wakeCamera"), "缺少点击休眠徽标唤醒逻辑");
+        assertTrue(js.contains("toggleSleep"), "缺少点击休眠徽标唤醒 / 卡片休眠下发逻辑");
         assertTrue(js.contains("net sleep"), "缺少休眠徽标样式标记");
         assertTrue(js.contains("(v === 'light' || v === 'dark' || v === 'auto') ? v : 'auto'"), "主题默认应跟随系统");
         assertTrue(html.contains("value=\"auto\" checked"), "外观单选默认应为「跟随系统」");
@@ -79,6 +79,8 @@ class StaticAssetContractTest {
         assertTrue(!js.contains("data-act=\"pb\""), "摄像头卡片不应再有回放按钮（入口收敛）");
         // v2.3.1 解锁秒开：缓存优先 + 新鲜度按需刷新 + 锁定停轮询
         assertTrue(js.contains("lastLoads"), "解锁后应按数据新鲜度决定是否重拉（设备 60s/概览 30s）");
+        assertTrue(js.contains("setMiotProp"), "米家设备控制应有属性写入逻辑");
+        assertTrue(js.contains("toggleSleep") && !js.contains("wakeCamera"), "唤醒/休眠应统一为 toggleSleep");
         assertTrue(js.contains("stopAppTimers"), "锁定后应停止主界面轮询（消灭 401 空转）");
         // v2.3.1 回放续播新段 + 起始点落前一段
         assertTrue(js.contains("refreshTimelineLive().then"), "播到尾端应先刷新时间轴再定论（新封段无缝续播）");

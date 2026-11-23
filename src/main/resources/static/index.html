@@ -12,7 +12,7 @@
     <base href="./">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='4' fill='%230e1116'/%3E%3Ccircle cx='8' cy='8' r='3' fill='%2322d3ee'/%3E%3C/svg%3E">
     <title>aiNVR · AI 增强摄像头 NVR</title>
-    <link rel="stylesheet" href="style.css?v=71">
+    <link rel="stylesheet" href="style.css?v=72">
 </head>
 <body>
 
@@ -533,6 +533,83 @@
                         <code id="apiCurl" class="api-curl"></code>
                     </div>
                 </div>
+                <div class="set-card set-card-wide" data-sgroup="stream">
+                    <h3>米家设备控制</h3>
+                    <p class="muted small">把米家 App 里的常用摄像头设置接进本应用：经米家云 MIoT 规格读写，云端即时下发。各机型支持的属性不同，读取失败的项会标「不支持」；夜视模式的取值语义因机型略有差异（关闭 / 打开 / 自动）。</p>
+                    <label>选择摄像头</label>
+                    <div class="set-edit">
+                        <select id="miotDevSelect" class="select"></select>
+                        <button class="btn" id="btnMiotReload" type="button">读取</button>
+                    </div>
+                    <div id="miotPropForm" hidden>
+                        <label>夜视模式</label>
+                        <div class="set-edit">
+                            <select id="miotNightShot" class="select">
+                                <option value="0">关闭</option>
+                                <option value="1">打开</option>
+                                <option value="2">自动</option>
+                            </select>
+                            <button class="btn primary" data-miotset="nightShot" type="button">设置</button>
+                        </div>
+                        <label>画面翻转（180°）</label>
+                        <div class="set-edit">
+                            <select id="miotRollover" class="select">
+                                <option value="0">正常</option>
+                                <option value="180">翻转 180°</option>
+                            </select>
+                            <button class="btn primary" data-miotset="imageRollover" type="button">设置</button>
+                        </div>
+                        <label>时间水印（画面右上角时间戳）</label>
+                        <div class="set-edit">
+                            <select id="miotWatermark" class="select">
+                                <option value="true">开启</option>
+                                <option value="false">关闭</option>
+                            </select>
+                            <button class="btn primary" data-miotset="timeWatermark" type="button">设置</button>
+                        </div>
+                        <label>人形追踪（云台款：画面自动跟随人形）</label>
+                        <div class="set-edit">
+                            <select id="miotTracking" class="select">
+                                <option value="true">开启</option>
+                                <option value="false">关闭</option>
+                            </select>
+                            <button class="btn primary" data-miotset="humanTracking" type="button">设置</button>
+                        </div>
+                        <label>存储卡录制模式（摄像头本机 SD 卡）</label>
+                        <div class="set-edit">
+                            <select id="miotRecMode" class="select">
+                                <option value="0">不录制</option>
+                                <option value="1">录制移动画面</option>
+                                <option value="2">始终录制</option>
+                            </select>
+                            <button class="btn primary" data-miotset="recordingMode" type="button">设置</button>
+                        </div>
+                        <label>看家助手（移动侦测推送与灵敏度）</label>
+                        <div class="set-edit">
+                            <select id="miotGuard" class="select">
+                                <option value="true">开启</option>
+                                <option value="false">关闭</option>
+                            </select>
+                            <button class="btn primary" data-miotset="guardSwitch" type="button">设置</button>
+                        </div>
+                        <label>移动侦测灵敏度</label>
+                        <div class="set-edit">
+                            <select id="miotSens" class="select">
+                                <option value="0">低</option>
+                                <option value="1">中</option>
+                                <option value="2">高</option>
+                            </select>
+                            <button class="btn primary" data-miotset="guardSensitivity" type="button">设置</button>
+                        </div>
+                        <label>存储卡状态（只读）</label>
+                        <p class="muted small" id="miotSdInfo">—</p>
+                        <div class="set-actions">
+                            <button class="btn soft-danger" id="btnMiotReboot" type="button">重启摄像头</button>
+                        </div>
+                        <p class="muted small">重启经米家云端下发，设备约 30~60 秒恢复，期间预览与录像会中断。</p>
+                    </div>
+                    <p class="muted small" id="miotMsg"></p>
+                </div>
                 <div class="set-card" data-sgroup="stream">
                     <h3>RTSP 取流</h3>
                     <p class="muted small">供 VLC / NVR 等外部播放器直接拉流。端口修改后自动重绑定并重连取流；令牌用于拉流地址鉴权，播放地址需带 ?t=令牌。留空不变，输入 - 清除。</p>
@@ -988,8 +1065,8 @@
 <div id="toast" class="toast"></div>
 
 <script src="vendor/hls.min.js"></script>
-<script type="module" src="vendor/trimapp-bridge.js?v=71"></script>
-<script src="watchdog.js?v=71"></script>
-<script src="app.js?v=71"></script>
+<script type="module" src="vendor/trimapp-bridge.js?v=72"></script>
+<script src="watchdog.js?v=72"></script>
+<script src="app.js?v=72"></script>
 </body>
 </html>

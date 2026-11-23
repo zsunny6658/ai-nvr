@@ -789,16 +789,23 @@
         if (c.online && c.lanReachable === false) {
             return '<span class="net sleep"><span class="dot"></span>不可达</span>';
         }
+        if (c.online && c.sleeping == null && c.sleepProbeFail != null) {
+            // 自证：休眠探测失败（如 -4006 固件不支持该属性），悬停可见，不再无声降级
+            return '<span class="net online" title="休眠探测失败 code=' + esc(c.sleepProbeFail)
+                + '（固件可能不支持该属性，按在线显示）"><span class="dot"></span>在线</span>';
+        }
         return '<span class="net ' + (c.online ? 'online' : 'offline') + '"><span class="dot"></span>'
             + (c.online ? '在线' : '离线') + '</span>';
     }
 
-    /** v2.3.1 点击「休眠」徽标直接唤醒摄像头（云端下发，成功后刷新设备列表）。 */
-    async function wakeCamera(did) {
+    /** v2.3.1 唤醒 / 休眠摄像头（云端 MIoT 属性写，成功后实时探测同步徽标）。 */
+    async function toggleSleep(did, wake) {
+        var label = wake ? '唤醒' : '休眠';
         try {
-            await api('api/devices/' + encodeURIComponent(did) + '/sleep/1', { method: 'POST' });
-            toast('唤醒指令已下发，摄像头启动约需几秒', 'ok');
-            // 实时探测一次并把徽标同步到位（缓存值已是「工作中」），不等下一轮 5s 轮询
+            await api('api/devices/' + encodeURIComponent(did) + '/sleep/' + (wake ? '1' : '0'),
+                { method: 'POST' });
+            toast(label + '指令已下发' + (wake ? '，摄像头启动约需几秒' : ''), 'ok');
+            // 实时探测一次并把徽标同步到位，不等下一轮 5s 轮询
             try {
                 var p = await api('api/devices/' + encodeURIComponent(did) + '/sleep');
                 var base = String(did).split('#')[0];
@@ -810,7 +817,7 @@
             loadDevices(true);
         } catch (e) {
             if (e.status === 401) { scheduleGateRelock(); return; }
-            toast('唤醒失败：' + e.message, 'err');
+            toast(label + '失败：' + e.message, 'err');
         }
     }
 
@@ -839,6 +846,11 @@
             '</div>' +
             '<div class="cam-actions cam-actions-sub">' +
             recBtn +
+            // v2.3.1 应用内休眠设置：工作中可一键休眠（休眠中卡片徽标已有唤醒入口）；
+            // 副镜头（did 含 #）跟随主镜头不单独下发
+            (c.online && c.sleeping !== true && String(c.did).indexOf('#') < 0
+                ? '<button class="btn soft" data-act="sleep" data-did="' + esc(c.did)
+                    + '" title="让摄像头进入休眠（米家同款，云端下发）">休眠</button>' : '') +
             '<button class="btn soft probe-btn" data-act="probe" data-did="' + esc(c.did) + '">自检</button>' +
             '</div>' +
             // v1.2.14：米家式卡片底部 —— 最近几条画面变动事件快照（异步填充，不阻塞设备列表）
@@ -5764,10 +5776,117 @@
         if (name === 'storage') {
             whenTrimHost(function (t) { if (t) { refreshPermStatus(); } });
         }
+        // v2.3.1 进入实时画面分组时填充米家设备控制的摄像头下拉
+        if (name === 'stream') {
+            refreshMiotDevSelect();
+        }
         document.querySelectorAll('#settingsNav .settings-nav-item').forEach(function (b) {
             b.classList.toggle('active', b.getAttribute('data-sgroup') === name);
         });
         try { localStorage.setItem('ainvr_set_group', name); } catch (e2) { /* 存储不可用忽略 */ }
+    }
+
+    /* ---------- v2.3.1 设置页：米家设备控制（夜视/翻转/水印/追踪/录制模式/看家助手/存储卡/重启） ---------- */
+
+    /** 米家属性读取结果缓存（did → {key:{code,value,label}}），渲染与写回用。 */
+    var miotCache = {};
+
+    var MIOT_CONTROLS = [
+        ['nightShot', 'miotNightShot'],
+        ['imageRollover', 'miotRollover'],
+        ['timeWatermark', 'miotWatermark'],
+        ['humanTracking', 'miotTracking'],
+        ['recordingMode', 'miotRecMode'],
+        ['guardSwitch', 'miotGuard'],
+        ['guardSensitivity', 'miotSens']
+    ];
+
+    function refreshMiotDevSelect() {
+        var sel = $('miotDevSelect');
+        var prev = sel.value;
+        var mains = state.devices.filter(function (d) { return String(d.did).indexOf('#') < 0; });
+        sel.innerHTML = mains.map(function (d) {
+            return '<option value="' + esc(d.did) + '">' + esc(d.name) + '（' + esc(d.did) + '）</option>';
+        }).join('');
+        if (prev && mains.some(function (d) { return String(d.did) === prev; })) {
+            sel.value = prev;
+        }
+        if (!mains.length) {
+            $('miotPropForm').hidden = true;
+            $('miotMsg').textContent = '尚未发现摄像头';
+            return;
+        }
+        if (miotCache[sel.value]) { renderMiotProps(sel.value); }
+    }
+
+    async function loadMiotProps(did) {
+        if (!did) return;
+        $('miotMsg').textContent = '读取中…';
+        try {
+            var d = await api('api/devices/' + encodeURIComponent(did) + '/miot');
+            miotCache[did] = d.props || {};
+            renderMiotProps(did);
+        } catch (e) {
+            if (e.status === 401) { scheduleGateRelock(); return; }
+            $('miotMsg').textContent = '读取失败：' + e.message;
+        }
+    }
+
+    function renderMiotProps(did) {
+        var props = miotCache[did] || {};
+        var unsupported = [];
+        MIOT_CONTROLS.forEach(function (pair) {
+            var key = pair[0], selId = pair[1];
+            var sel = $(selId);
+            var item = props[key];
+            var setBtn = document.querySelector('[data-miotset="' + key + '"]');
+            var ok = item && item.code === 0 && item.value !== null && item.value !== undefined;
+            sel.disabled = !ok;
+            if (setBtn) setBtn.disabled = !ok;
+            if (ok) {
+                sel.value = String(item.value);
+            } else {
+                unsupported.push(item ? item.label || key : key);
+            }
+        });
+        $('miotPropForm').hidden = false;
+        // 存储卡只读信息
+        var sd = props.sdStatus, total = props.sdTotal, free = props.sdFree;
+        var sdText = '—';
+        if (sd && sd.code === 0 && sd.value !== null && sd.value !== undefined) {
+            var stMap = ['正常', '未插卡', '卡已满', '卡损坏', '格式化中', '已弹出', '修复中', '弹出中', '未初始化', '空间不足', '文件异常', '不兼容'];
+            sdText = stMap[Number(sd.value)] || ('状态 ' + sd.value);
+            if (total && total.code === 0 && free && free.code === 0
+                && total.value != null && free.value != null) {
+                sdText += ' · 剩余 ' + fmtSize(Number(free.value)) + ' / ' + fmtSize(Number(total.value));
+            }
+        } else {
+            sdText = '本机型不支持存储卡状态读取';
+        }
+        $('miotSdInfo').textContent = sdText;
+        $('miotMsg').textContent = unsupported.length
+            ? '本机型不支持的属性：' + unsupported.join('、')
+            : '全部属性读取成功';
+    }
+
+    async function setMiotProp(did, key) {
+        var selId = null;
+        MIOT_CONTROLS.forEach(function (pair) { if (pair[0] === key) selId = pair[1]; });
+        if (!selId) return;
+        var raw = $(selId).value;
+        var isBool = key === 'timeWatermark' || key === 'humanTracking' || key === 'guardSwitch';
+        var value = isBool ? raw === 'true' : Number(raw);
+        $('miotMsg').textContent = '设置中…';
+        try {
+            await api('api/devices/' + encodeURIComponent(did) + '/miot/' + encodeURIComponent(key),
+                { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ value: value }) });
+            toast('已下发', 'ok');
+            $('miotMsg').textContent = '已设置';
+        } catch (e) {
+            if (e.status === 401) { scheduleGateRelock(); return; }
+            toast('设置失败：' + e.message, 'err');
+            $('miotMsg').textContent = '设置失败：' + e.message;
+        }
     }
 
     document.querySelectorAll('.tab').forEach(function (t) {
@@ -5785,6 +5904,26 @@
         // v2.3.0 主题切换：侧栏快捷按钮 + 设置页单选；快捷按钮仅深/浅两态（跟随系统只在设置页）
         $('btnTheme').addEventListener('click', function () {
             applyTheme(currentTheme() === 'dark' ? 'light' : 'dark');
+        });
+
+        // v2.3.1 米家设备控制：选摄像头即读取，各属性改完点「设置」即时下发
+        $('miotDevSelect').addEventListener('change', function () { loadMiotProps(this.value); });
+        $('btnMiotReload').addEventListener('click', function () { loadMiotProps($('miotDevSelect').value); });
+        document.querySelectorAll('[data-miotset]').forEach(function (b) {
+            b.addEventListener('click', function () {
+                setMiotProp($('miotDevSelect').value, b.getAttribute('data-miotset'));
+            });
+        });
+        $('btnMiotReboot').addEventListener('click', function () {
+            var did = $('miotDevSelect').value;
+            var name = cameraName(did);
+            if (!confirm('确认重启「' + name + '」？设备约 30~60 秒恢复，期间预览与录像会中断。')) return;
+            api('api/devices/' + encodeURIComponent(did) + '/reboot', { method: 'POST' })
+                .then(function () { toast('重启指令已下发', 'ok'); $('miotMsg').textContent = '重启指令已下发，约 30~60 秒恢复'; })
+                .catch(function (e) {
+                    if (e.status === 401) { scheduleGateRelock(); return; }
+                    toast('重启失败：' + e.message, 'err');
+                });
         });
         document.querySelectorAll('input[name="uiTheme"]').forEach(function (r) {
             r.addEventListener('change', function () { if (r.checked) { applyTheme(r.value); } });
@@ -5829,7 +5968,8 @@
             else if (act === 'recstop') stopRecord(did);
             else if (act === 'probe') runProbe(did, false);
             else if (act === 'deepprobe') runProbe(did, true);
-            else if (act === 'wake') wakeCamera(did);
+            else if (act === 'wake') toggleSleep(did, true);
+            else if (act === 'sleep') toggleSleep(did, false);
             else if (act === 'probeclose') {
                 var box = b.closest('.cam-card').querySelector('.probe-box');
                 if (box) { box.remove(); }

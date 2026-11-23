@@ -7,12 +7,15 @@ import com.ainvr.web.config.NvrProperties;
 import com.ainvr.web.service.DeviceCatalog;
 import com.ainvr.web.service.DeviceProbe;
 import com.ainvr.web.service.HlsService;
+import com.ainvr.web.service.MiotPropsService;
 import com.ainvr.web.service.MiotSleepService;
 import com.ainvr.web.service.RecordingService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -35,11 +38,13 @@ public class DeviceController {
     private final RtspServer rtspServer;
     private final DeviceProbe deviceProbe;
     private final MiotSleepService sleepService;
+    private final MiotPropsService miotProps;
     private final HostResolver hostResolver = new HostResolver();
 
     public DeviceController(DeviceCatalog catalog, RecordingService recordingService,
                             HlsService hlsService, NvrProperties props, RtspServer rtspServer,
-                            DeviceProbe deviceProbe, MiotSleepService sleepService) {
+                            DeviceProbe deviceProbe, MiotSleepService sleepService,
+                            MiotPropsService miotProps) {
         this.catalog = catalog;
         this.recordingService = recordingService;
         this.hlsService = hlsService;
@@ -47,6 +52,7 @@ public class DeviceController {
         this.rtspServer = rtspServer;
         this.deviceProbe = deviceProbe;
         this.sleepService = sleepService;
+        this.miotProps = miotProps;
     }
 
     @GetMapping("/devices")
@@ -92,6 +98,8 @@ public class DeviceController {
         // 休眠中 CS2 唤醒监听仍会应答 LAN_SEARCH，可达性区分不出休眠，以云端属性为准；
         // true=休眠中（界面显示黄色「休眠」徽标，可点击唤醒），null=尚未探测/固件不支持。
         m.put("sleeping", sleepService.sleeping(c.did()));
+        // 探测自证：非 null 表示最近一次属性读取失败（-4006=固件不支持该属性），前端可展示
+        m.put("sleepProbeFail", sleepService.probeFailCode(c.did()));
         m.put("recording", recordingService.isRecording(c.did()));
         m.put("previewing", hlsService.isPreviewing(c.did()));
         String rtspUrl = "rtsp://" + host + ":" + rtspServer.getPort() + "/" + c.did();
@@ -121,5 +129,35 @@ public class DeviceController {
     @GetMapping("/devices/{did}/sleep")
     public Map<String, Object> probeSleep(@PathVariable String did) {
         return sleepService.probeOne(did);
+    }
+
+    /**
+     * 读取该摄像头全部米家可控属性（夜视/翻转/水印/人形追踪/录制模式/看家助手/存储卡）。
+     * 每项 {label, code, value}；code!=0 或 value=null 表示该固件不支持，界面按不支持渲染。
+     */
+    @GetMapping("/devices/{did}/miot")
+    public Map<String, Object> miotProps(@PathVariable String did) {
+        return Map.of("did", did, "props", miotProps.readAll(did));
+    }
+
+    /** 写单个米家属性（body: {"value": ...}，类型按属性定义：bool / uint8 / uint16）。 */
+    public record MiotPropRequest(Object value) {
+    }
+
+    @PutMapping("/devices/{did}/miot/{key}")
+    public Map<String, Object> setMiotProp(@PathVariable String did, @PathVariable String key,
+                                           @RequestBody MiotPropRequest req) {
+        if (req == null || req.value() == null) {
+            throw ApiException.badRequest("缺少 value");
+        }
+        miotProps.write(did, key, req.value());
+        return Map.of("ok", true);
+    }
+
+    /** 重启摄像头（米家 restart-device 动作，云端下发，设备约 30~60s 恢复）。 */
+    @PostMapping("/devices/{did}/reboot")
+    public Map<String, Object> reboot(@PathVariable String did) {
+        miotProps.reboot(did);
+        return Map.of("ok", true);
     }
 }
