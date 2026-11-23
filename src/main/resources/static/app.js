@@ -4,6 +4,7 @@
 
     var $ = function (id) { return document.getElementById(id); };
     var state = {
+        errLog: [], // v2.3.1 前端错误环形记录（上报 Issue 时随诊断报告带上）
         loggedIn: false,
         userId: null,
         region: null,
@@ -151,7 +152,14 @@
         if (tk && !opts.headers['Authorization']) {
             opts.headers['Authorization'] = 'Bearer ' + tk;
         }
-        var res = await fetch(path, opts);
+        var res;
+        try {
+            res = await fetch(path, opts);
+        } catch (netErr) {
+            // v2.3.1 网络类失败也进错误记录（诊断报告可见）
+            noteErr('网络异常 ' + path + '：' + netErr.message);
+            throw netErr;
+        }
         var ct = res.headers.get('content-type') || '';
         if (ct.indexOf('application/json') >= 0) {
             var data = await res.json();
@@ -164,12 +172,14 @@
                 // 门禁失效（服务重启 / 会话过期 / 未解锁）：自动回到设置或解锁页（门禁/登录接口除外）
                 // noRelock：探测类请求（版本、运行时长、自动解锁）失败不应把用户踢回锁屏页
                 if (res.status === 401 && data.code === 'ACCESS_LOCKED' && !opts.noRelock) { scheduleGateRelock(); }
+                noteErr(path + ' → HTTP ' + res.status + ' ' + msg);
                 throw err;
             }
             return data;
         }
         if (!res.ok) {
             if (res.status === 401 && !opts.noRelock) { scheduleGateRelock(); }
+            noteErr(path + ' → HTTP ' + res.status);
             throw new Error('请求失败 HTTP ' + res.status);
         }
         return res;
@@ -294,6 +304,17 @@
         }
     }
     window.addEventListener('popstate', onOverlayHistoryBack);
+    // v2.3.1 问题反馈：全局错误捕获进环形记录（最多 50 条），随诊断报告上报
+    window.addEventListener('error', function (e) {
+        if (e && (e.message || e.filename)) {
+            noteErr((e.filename ? e.filename.split('/').pop() + ':' : '')
+                + (e.lineno || '') + ' ' + (e.message || '')); 
+        }
+    });
+    window.addEventListener('unhandledrejection', function (e) {
+        var r = e && e.reason;
+        noteErr('Promise 未处理拒绝：' + (r && r.message ? r.message : String(r)));
+    });
     window.addEventListener('pageshow', function () {
         // 部分壳 App 从 bfcache 恢复文档：避免残留半开的弹层历史状态
         if (overlayHistoryDepth && $('previewModal').hidden && $('playerModal').hidden && $('gridModal').hidden) {
@@ -5177,6 +5198,102 @@
         }
     }
 
+    /* ---------- 问题反馈与诊断（v2.3.1） ---------- */
+    /** 记录一条前端错误（环形，最多 50 条，随诊断报告上报；已由 api()/全局捕获调用）。 */
+    function noteErr(msg) {
+        state.errLog.push({ t: Date.now(), msg: String(msg || '').slice(0, 200) });
+        if (state.errLog.length > 50) { state.errLog.shift(); }
+    }
+
+    function loadFeedback() {
+        api('api/diagnostics/summary').then(function (d) {
+            var up = d.uptimeMs ? Math.floor(d.uptimeMs / 3600000) + ' 小时 '
+                + Math.floor(d.uptimeMs % 3600000 / 60000) + ' 分钟' : '-';
+            $('fbSummary').textContent = 'v' + d.version + ' · ' + d.os + ' · Java ' + d.java
+                + ' · 已运行 ' + up + ' · ' + d.deviceCount + ' 台摄像头'
+                + (d.logAvailable ? ' · 日志可用' : ' · 无日志文件');
+            $('fbGiteeState').textContent = d.tokens.gitee ? '已配置 ✓' : '未配置';
+            $('fbGithubState').textContent = d.tokens.github ? '已配置 ✓' : '未配置';
+        }).catch(function (e) {
+            $('fbSummary').textContent = '诊断概览读取失败：' + e.message;
+        });
+    }
+
+    async function submitIssue(platform, btn) {
+        var old = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = '生成报告并上报…';
+        try {
+            var r = await api('api/diagnostics/issue', {
+                method: 'POST',
+                body: JSON.stringify({
+                    platform: platform,
+                    description: $('fbDesc').value || '',
+                    errors: state.errLog
+                })
+            });
+            if (r.error === 'no_token') {
+                await feedbackFallback(platform);
+                return;
+            }
+            $('fbStatus').innerHTML = '已上报到 ' + (platform === 'gitee' ? 'Gitee' : 'GitHub')
+                + '：<a href="' + esc(r.url) + '" target="_blank" rel="noopener">查看 Issue</a>'
+                + '（报告已自动脱敏）';
+            toast('上报成功', 'ok');
+        } catch (e) {
+            $('fbStatus').textContent = '上报失败：' + e.message;
+            toast('上报失败，可改用「复制诊断报告」手动反馈', 'err');
+        } finally {
+            btn.disabled = false;
+            btn.textContent = old;
+        }
+    }
+
+    /** 无令牌降级：拉取完整报告复制到剪贴板，再打开对应平台的 Issue 新建页。 */
+    async function feedbackFallback(platform) {
+        try {
+            var res = await api('api/diagnostics/export');
+            var text = await res.text();
+            copyText(text); // copyText 自带 toast
+            var pf = await api('api/diagnostics/prefill');
+            var url = pf[platform] || '';
+            window.open(url, '_blank');
+            $('fbStatus').textContent = '未配置上报令牌：完整报告已复制到剪贴板，已打开 Issue 新建页，'
+                + '粘贴到正文即可（也可先在下方配置令牌实现一键上报）';
+        } catch (e2) {
+            $('fbStatus').textContent = '降级上报失败：' + e2.message;
+        }
+    }
+
+    async function exportDiagnostics() {
+        try {
+            var res = await api('api/diagnostics/export');
+            var text = await res.text();
+            var blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+            var a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = 'ainvr-diagnostics-' + fileStamp() + '.txt';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(function () { URL.revokeObjectURL(a.href); }, 2000);
+            toast('诊断文件已导出', 'ok');
+        } catch (e) {
+            toast('导出失败：' + e.message, 'err');
+        }
+    }
+
+    function saveReportToken(platform, inputId, stateId) {
+        var token = $(inputId).value.trim();
+        api('api/diagnostics/tokens', { method: 'PUT', body: JSON.stringify({ platform: platform, token: token }) })
+            .then(function () {
+                $(inputId).value = '';
+                $(stateId).textContent = token ? '已配置 ✓' : '未配置';
+                toast(token ? '令牌已保存' : '令牌已清除', 'ok');
+            })
+            .catch(function (e) { toast('保存失败：' + e.message, 'err'); });
+    }
+
     /* ---------- 复制 ---------- */
     function copyText(text) {
         if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -5789,6 +5906,10 @@
         if (name === 'stream') {
             refreshMiotDevSelect();
         }
+        // v2.3.1 进入帮助与反馈分组时刷新诊断概览与令牌状态
+        if (name === 'feedback') {
+            loadFeedback();
+        }
         document.querySelectorAll('#settingsNav .settings-nav-item').forEach(function (b) {
             b.classList.toggle('active', b.getAttribute('data-sgroup') === name);
         });
@@ -5906,6 +6027,18 @@
         document.querySelectorAll('#settingsNav .settings-nav-item').forEach(function (b) {
             b.addEventListener('click', function () { showSettingsGroup(b.getAttribute('data-sgroup')); });
         });
+        // v2.3.1 帮助与反馈：诊断导出 / 双平台 Issue 上报 / 令牌保存
+        $('btnFbGitee').addEventListener('click', function () { submitIssue('gitee', this); });
+        $('btnFbGithub').addEventListener('click', function () { submitIssue('github', this); });
+        $('btnFbCopy').addEventListener('click', async function () {
+            try {
+                var res = await api('api/diagnostics/export');
+                copyText(await res.text());
+            } catch (e) { toast('复制失败：' + e.message, 'err'); }
+        });
+        $('btnFbExport').addEventListener('click', exportDiagnostics);
+        $('btnFbSaveGitee').addEventListener('click', function () { saveReportToken('gitee', 'setFbGiteeToken', 'fbGiteeState'); });
+        $('btnFbSaveGithub').addEventListener('click', function () { saveReportToken('github', 'setFbGithubToken', 'fbGithubState'); });
         try {
             showSettingsGroup(localStorage.getItem('ainvr_set_group') || 'storage');
         } catch (e) { showSettingsGroup('storage'); }

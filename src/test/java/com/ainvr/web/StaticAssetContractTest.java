@@ -31,7 +31,7 @@ class StaticAssetContractTest {
 
         assertTrue(html.contains("btnPreviewBack"), "预览弹层缺少应用内返回按钮");
         assertTrue(html.contains("btnPlayerBack"), "回放弹层缺少应用内返回按钮");
-        assertTrue(html.contains("v=73"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
+        assertTrue(html.contains("v=74"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
         // v2.3.1 真机验证第五轮：主题快捷按钮两态 + 选目录自动授权 + 内置权限面板
         assertTrue(js.contains("trimAuthorizePath"), "缺少选目录自动授权逻辑");
         assertTrue(js.contains("authorizeUserFile"), "缺少用户空间授权调用");
@@ -89,6 +89,14 @@ class StaticAssetContractTest {
         // v2.3.1 真机验证第七轮：每次进回放页都自动播放（不只首次），再次进入恢复播放
         assertTrue(js.contains("v.ended) { loadTimeline(true)"), "上次已播到末尾时应重新定位到最新段");
         assertTrue(js.contains("else { v.play().catch(function () {}); }"), "再次进入回放页应直接恢复播放");
+        // v2.3.1 帮助与反馈：诊断导出 + 双平台 Issue 上报（无令牌降级）
+        assertTrue(html.contains("data-sgroup=\"feedback\""), "设置页缺少「帮助与反馈」分组");
+        assertTrue(js.contains("noteErr") && js.contains("unhandledrejection"), "缺少前端错误环形记录");
+        assertTrue(js.contains("api/diagnostics/issue"), "缺少 Issue 上报调用");
+        assertTrue(js.contains("api/diagnostics/export"), "缺少诊断报告导出调用");
+        assertTrue(js.contains("feedbackFallback"), "缺少无令牌降级路径（复制报告+打开 Issue 页）");
+        assertTrue(html.contains("btnFbGitee") && html.contains("btnFbGithub"), "缺少双平台上报按钮");
+        assertTrue(html.contains("setFbGiteeToken") && html.contains("setFbGithubToken"), "缺少上报令牌输入框");
         // v2.3.1 入口收敛（docs/design/05 P1+P2）：录像文件唯一入口=卡片弹层，事件卡片入口强化
         assertTrue(html.contains("filesModal"), "录像文件应为弹层（从摄像头卡片进入）");
         assertTrue(html.contains("btnFilesAll"), "设置页应保留全部录像文件管理入口");

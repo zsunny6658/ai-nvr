@@ -22,7 +22,7 @@ class LogRotationTaskTest {
     private LogRotationTask taskFor(Path logFile) {
         return new LogRotationTask() {
             @Override
-            Path resolveLogFile() {
+            public Path resolveLogFile() {
                 return logFile;
             }
         };

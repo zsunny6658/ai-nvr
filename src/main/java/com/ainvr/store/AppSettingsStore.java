@@ -78,6 +78,8 @@ public class AppSettingsStore {
     /** v2.3.1 事件快照归档：{enabled: bool, dir: 绝对路径}。 */
     private static final String KEY_SNAPSHOT_ARCHIVE = "snapshotArchive";
     private static final String KEY_MQTT = "mqtt";
+    /** v2.3.1 Issue 上报令牌：{github: PAT, gitee: 私人令牌}；仅用于用户自己仓库的 issue 创建。 */
+    private static final String KEY_REPORT_TOKENS = "reportTokens";
     private static final TypeReference<LinkedHashMap<String, Object>> MAP_TYPE = new TypeReference<>() {};
 
     private final Path dir;
@@ -334,6 +336,49 @@ public class AppSettingsStore {
             m.put(KEY_PTZ_MODE, s);
         } else {
             m.remove(KEY_PTZ_MODE); // auto 作为默认值不落盘
+        }
+        persist(m);
+    }
+
+    // ===================== Issue 上报令牌（v2.3.1） =====================
+
+    /**
+     * 用户自填的 Issue 上报令牌（github=个人访问令牌 PAT / gitee=私人令牌）。
+     * 只在用户点「自动上报」时由服务端用于向对应平台创建 issue；未配置返回 null
+     * （前端自动降级为「复制报告 + 打开预填 Issue 页」）。GET 接口只返回「是否已配置」，
+     * 绝不回显令牌原文。
+     */
+    public String reportToken(String platform) {
+        Object v = all().get(KEY_REPORT_TOKENS);
+        if (!(v instanceof Map<?, ?> raw)) {
+            return null;
+        }
+        Object t = raw.get(platform);
+        if (t == null) {
+            return null;
+        }
+        String s = String.valueOf(t).trim();
+        return s.isEmpty() ? null : s;
+    }
+
+    /** 保存 / 清除（token 为空串或 null 时清除）上报令牌。 */
+    public synchronized void saveReportToken(String platform, String token) {
+        if (!"github".equals(platform) && !"gitee".equals(platform)) {
+            throw new IllegalArgumentException("platform 仅支持 github / gitee");
+        }
+        Map<String, Object> m = all();
+        Map<String, Object> sub = m.get(KEY_REPORT_TOKENS) instanceof Map<?, ?> r
+                ? new LinkedHashMap<>((Map<String, Object>) r) : new LinkedHashMap<>();
+        String t = token == null ? "" : token.trim();
+        if (t.isEmpty()) {
+            sub.remove(platform);
+        } else {
+            sub.put(platform, t);
+        }
+        if (sub.isEmpty()) {
+            m.remove(KEY_REPORT_TOKENS);
+        } else {
+            m.put(KEY_REPORT_TOKENS, sub);
         }
         persist(m);
     }

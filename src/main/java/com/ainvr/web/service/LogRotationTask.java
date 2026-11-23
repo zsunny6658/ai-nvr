@@ -74,7 +74,7 @@ public class LogRotationTask {
     }
 
     /** 解析启动脚本重定向的 app.log：优先显式配置，其次 <运行目录>/logs/app.log。 */
-    Path resolveLogFile() {
+    public Path resolveLogFile() {
         String override = System.getProperty("invr.log.file");
         if (override != null && !override.isBlank()) {
             return Paths.get(override.trim());

@@ -12,7 +12,7 @@
     <base href="./">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='4' fill='%230e1116'/%3E%3Ccircle cx='8' cy='8' r='3' fill='%2322d3ee'/%3E%3C/svg%3E">
     <title>aiNVR · AI 增强摄像头 NVR</title>
-    <link rel="stylesheet" href="style.css?v=73">
+    <link rel="stylesheet" href="style.css?v=74">
 </head>
 <body>
 
@@ -272,6 +272,7 @@
                     <button class="settings-nav-item" data-sgroup="share" type="button">共享看板</button>
                     <button class="settings-nav-item" data-sgroup="ha" type="button">智能联动</button>
                     <button class="settings-nav-item" data-sgroup="security" type="button">安全与系统</button>
+                    <button class="settings-nav-item" data-sgroup="feedback" type="button">帮助与反馈</button>
                     <button class="settings-nav-item" data-sgroup="appearance" type="button">外观</button>
                 </nav>
                 <div class="settings-grid settings-body">
@@ -731,6 +732,39 @@
             <p class="muted small">配置多宫格并生成免登录共享链接，可直接配置到 Android TV 或其他浏览器长时间展示；外部事件系统可通过 Webhook 驱动画面切换。</p>
             <div class="grid" id="boardGrid"></div>
             </div>
+                <div class="set-card set-card-wide" data-sgroup="feedback">
+                    <h3>问题反馈与诊断</h3>
+                    <p class="muted small">一键生成<b>脱敏</b>诊断报告（设备 DID、完整 IP、MAC、令牌类字段自动打码，
+                        <strong>永远不包含摄像头画面与录像内容</strong>），自动上报到 Gitee（国内优先）或 GitHub；
+                        未配置令牌时自动降级为「复制报告 + 打开 Issue 新建页」。前端 JS 错误与服务端日志尾部会随报告一并带上。</p>
+                    <p class="muted small" id="fbSummary">加载中…</p>
+                    <div class="set-edit">
+                        <textarea id="fbDesc" rows="3" placeholder="简单描述遇到的问题（如：回放到某分钟卡住 / 摄像头休眠状态显示不对 / 某设置保存后不生效）"
+                            style="width:100%;box-sizing:border-box;"></textarea>
+                    </div>
+                    <div class="set-edit">
+                        <button class="btn primary" id="btnFbGitee" type="button">上报到 Gitee</button>
+                        <button class="btn" id="btnFbGithub" type="button">上报到 GitHub</button>
+                        <button class="btn soft" id="btnFbCopy" type="button">复制诊断报告</button>
+                        <button class="btn soft" id="btnFbExport" type="button">导出诊断文件</button>
+                    </div>
+                    <p class="muted small" id="fbStatus"></p>
+                    <div class="set-divider"></div>
+                    <h3>上报令牌（可选）</h3>
+                    <p class="muted small">一键上报需要你自己的仓库令牌，仅保存在本机设置、保存后不回显：
+                        Gitee 私人令牌（gitee.com → 设置 → 私人令牌，勾选 issues 权限）或
+                        GitHub PAT（勾选 issues 权限）。不配置也能通过降级路径反馈。</p>
+                    <div class="set-edit">
+                        <input type="password" id="setFbGiteeToken" placeholder="Gitee 私人令牌" autocomplete="off">
+                        <button class="btn" id="btnFbSaveGitee" type="button">保存 Gitee 令牌</button>
+                        <span class="muted small" id="fbGiteeState"></span>
+                    </div>
+                    <div class="set-edit">
+                        <input type="password" id="setFbGithubToken" placeholder="GitHub 个人访问令牌" autocomplete="off">
+                        <button class="btn" id="btnFbSaveGithub" type="button">保存 GitHub 令牌</button>
+                        <span class="muted small" id="fbGithubState"></span>
+                    </div>
+                </div>
                 <div class="set-card set-card-wide" data-sgroup="appearance">
                     <h3>界面主题</h3>
                     <p class="muted small">默认「跟随系统」：飞牛桌面内跟随桌面外观，独立浏览器跟随系统深浅色偏好；也可手动指定深色（视频画面观感最佳）或浅色（日间高亮环境）。切换立即生效并记忆在本浏览器，不占用服务端存储。</p>
@@ -1065,8 +1099,8 @@
 <div id="toast" class="toast"></div>
 
 <script src="vendor/hls.min.js"></script>
-<script type="module" src="vendor/trimapp-bridge.js?v=73"></script>
-<script src="watchdog.js?v=73"></script>
-<script src="app.js?v=73"></script>
+<script type="module" src="vendor/trimapp-bridge.js?v=74"></script>
+<script src="watchdog.js?v=74"></script>
+<script src="app.js?v=74"></script>
 </body>
 </html>

@@ -55,6 +55,11 @@ public class AboutController {
         return m;
     }
 
+    /** 供诊断服务复用（Issue 上报报告头需要版本号）。 */
+    public String currentVersion() {
+        return resolveVersion();
+    }
+
     private String resolveVersion() {
         for (File manifest : manifestCandidates()) {
             try {
