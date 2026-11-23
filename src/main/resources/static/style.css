@@ -1016,3 +1016,22 @@ body.authed .container { padding-bottom: calc(78px + env(safe-area-inset-bottom,
 /* sdk-only 能力仅在探测到飞牛宿主（body.sdk-host）后显示；独立浏览器全量隐藏 */
 .sdk-only { display: none !important; }
 body.sdk-host .sdk-only { display: inline-block !important; }
+
+/* ===== v2.3.1 帮助与反馈 ===== */
+.fb-info {
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
+    padding: 8px 12px; font-size: 12px; color: var(--muted); line-height: 1.7;
+    margin: 4px 0 8px;
+}
+.fb-desc {
+    width: 100%; box-sizing: border-box; min-height: 64px; resize: vertical;
+    border: 1px solid var(--line-strong); border-radius: 8px;
+    background: var(--panel-2); color: var(--ink);
+    padding: 8px 10px; font: inherit; font-size: 13px; margin: 4px 0 8px;
+}
+.fb-desc:focus { outline: none; border-color: var(--accent, #4a8fe7); }
+.fb-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0 4px; }
+.fb-token-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+.fb-token-row input { flex: 1 1 200px; min-width: 0; }
+.fb-state { white-space: nowrap; }
+.fb-up-new { color: #f59e0b; font-weight: 600; }

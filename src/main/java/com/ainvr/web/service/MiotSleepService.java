@@ -119,8 +119,8 @@ public class MiotSleepService {
                 "did", base,
                 "siid", propInt("ainvr.sleep.siid", 2),
                 "piid", propInt("ainvr.sleep.piid", 1));
-        JsonNode item = call("/miotspec/prop/get", Map.of("params", List.of(param)))
-                .path("result").path(0);
+        JsonNode resp = call("/miotspec/prop/get", Map.of("params", List.of(param)));
+        JsonNode item = resp.path("result").path(0);
         int code = item.path("code").asInt(-1);
         Map<String, Object> out = new java.util.LinkedHashMap<>();
         out.put("did", base);
@@ -145,7 +145,12 @@ public class MiotSleepService {
         } else {
             Integer fc = failCodes.put(base, code);
             if (fc == null || fc != code) {
-                log.info("[{}] 休眠实时探测失败 code={}", base, code);
+                // 失败时带原始响应（截断）：result 为空（code=-1）时能看出云端到底回了什么
+                String raw = resp.toString();
+                if (raw.length() > 300) {
+                    raw = raw.substring(0, 300) + "…";
+                }
+                log.info("[{}] 休眠实时探测失败 code={} resp={}", base, code, raw);
             }
             out.put("value", null);
             out.put("sleeping", sleepState.get(base)); // 探测失败回退最近缓存值（可能为 null）

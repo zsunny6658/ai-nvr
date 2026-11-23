@@ -12,7 +12,7 @@
     <base href="./">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='4' fill='%230e1116'/%3E%3Ccircle cx='8' cy='8' r='3' fill='%2322d3ee'/%3E%3C/svg%3E">
     <title>aiNVR · AI 增强摄像头 NVR</title>
-    <link rel="stylesheet" href="style.css?v=74">
+    <link rel="stylesheet" href="style.css?v=75">
 </head>
 <body>
 
@@ -733,36 +733,41 @@
             <div class="grid" id="boardGrid"></div>
             </div>
                 <div class="set-card set-card-wide" data-sgroup="feedback">
-                    <h3>问题反馈与诊断</h3>
-                    <p class="muted small">一键生成<b>脱敏</b>诊断报告（设备 DID、完整 IP、MAC、令牌类字段自动打码，
-                        <strong>永远不包含摄像头画面与录像内容</strong>），自动上报到 Gitee（国内优先）或 GitHub；
-                        未配置令牌时自动降级为「复制报告 + 打开 Issue 新建页」。前端 JS 错误与服务端日志尾部会随报告一并带上。</p>
-                    <p class="muted small" id="fbSummary">加载中…</p>
+                    <h3>版本更新</h3>
+                    <p class="muted small" id="fbUpdate">检测中…</p>
                     <div class="set-edit">
-                        <textarea id="fbDesc" rows="3" placeholder="简单描述遇到的问题（如：回放到某分钟卡住 / 摄像头休眠状态显示不对 / 某设置保存后不生效）"
-                            style="width:100%;box-sizing:border-box;"></textarea>
+                        <button class="btn" id="btnFbCheckUpdate" type="button">检查更新</button>
+                        <span class="muted small">结果缓存 30 分钟，点按钮立即重查</span>
                     </div>
-                    <div class="set-edit">
+                    <div class="set-divider"></div>
+                    <h3>问题反馈与诊断</h3>
+                    <div class="fb-info" id="fbSummary">加载中…</div>
+                    <textarea id="fbDesc" class="fb-desc" rows="3"
+                        placeholder="简单描述遇到的问题（如：回放到某分钟卡住 / 摄像头休眠状态显示不对 / 某设置保存后不生效）"></textarea>
+                    <div class="fb-actions">
                         <button class="btn primary" id="btnFbGitee" type="button">上报到 Gitee</button>
                         <button class="btn" id="btnFbGithub" type="button">上报到 GitHub</button>
                         <button class="btn soft" id="btnFbCopy" type="button">复制诊断报告</button>
                         <button class="btn soft" id="btnFbExport" type="button">导出诊断文件</button>
                     </div>
                     <p class="muted small" id="fbStatus"></p>
+                    <p class="muted small">报告自动脱敏（设备 ID / 局域网 IP / MAC / 令牌全部打码），
+                        <strong>永远不包含摄像头画面与录像内容</strong>；前端 JS 错误与服务端日志尾部会随报告带上。
+                        未配置令牌时自动降级为「复制报告 + 打开 Issue 新建页」。</p>
                     <div class="set-divider"></div>
                     <h3>上报令牌（可选）</h3>
                     <p class="muted small">一键上报需要你自己的仓库令牌，仅保存在本机设置、保存后不回显：
                         Gitee 私人令牌（gitee.com → 设置 → 私人令牌，勾选 issues 权限）或
                         GitHub PAT（勾选 issues 权限）。不配置也能通过降级路径反馈。</p>
-                    <div class="set-edit">
+                    <div class="fb-token-row">
                         <input type="password" id="setFbGiteeToken" placeholder="Gitee 私人令牌" autocomplete="off">
-                        <button class="btn" id="btnFbSaveGitee" type="button">保存 Gitee 令牌</button>
-                        <span class="muted small" id="fbGiteeState"></span>
+                        <button class="btn" id="btnFbSaveGitee" type="button">保存</button>
+                        <span class="muted small fb-state" id="fbGiteeState"></span>
                     </div>
-                    <div class="set-edit">
+                    <div class="fb-token-row">
                         <input type="password" id="setFbGithubToken" placeholder="GitHub 个人访问令牌" autocomplete="off">
-                        <button class="btn" id="btnFbSaveGithub" type="button">保存 GitHub 令牌</button>
-                        <span class="muted small" id="fbGithubState"></span>
+                        <button class="btn" id="btnFbSaveGithub" type="button">保存</button>
+                        <span class="muted small fb-state" id="fbGithubState"></span>
                     </div>
                 </div>
                 <div class="set-card set-card-wide" data-sgroup="appearance">
@@ -1099,8 +1104,8 @@
 <div id="toast" class="toast"></div>
 
 <script src="vendor/hls.min.js"></script>
-<script type="module" src="vendor/trimapp-bridge.js?v=74"></script>
-<script src="watchdog.js?v=74"></script>
-<script src="app.js?v=74"></script>
+<script type="module" src="vendor/trimapp-bridge.js?v=75"></script>
+<script src="watchdog.js?v=75"></script>
+<script src="app.js?v=75"></script>
 </body>
 </html>

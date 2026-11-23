@@ -73,6 +73,17 @@ class DiagnosticsServiceTest {
     }
 
     @Test
+    void versionCompare() {
+        // 更新检测的版本号数值化比较：逐段比、短段补 0、忽略非数字后缀
+        assertTrue(DiagnosticsService.isNewer("v2.4.0", "v2.3.1"));
+        assertTrue(DiagnosticsService.isNewer("2.3.2", "2.3.1"));
+        assertTrue(DiagnosticsService.isNewer("v2.4.10", "v2.4.9"), "数值比较不是字典序");
+        assertFalse(DiagnosticsService.isNewer("v2.3.1", "v2.3.1"));
+        assertFalse(DiagnosticsService.isNewer("v2.3.0", "v2.3.1"));
+        assertFalse(DiagnosticsService.isNewer(null, "v2.3.1"));
+    }
+
+    @Test
     void reportContainsMaskedOverview() {
         // buildReport 依赖 DeviceCatalog/AboutController 等 Bean，这里只验证脱敏静态行为
         String log = "INFO CameraStream - [1072813513] 上游已连接（cs2+udp / chuangmi.camera.039a01）目标 192.168.31.191:32108";

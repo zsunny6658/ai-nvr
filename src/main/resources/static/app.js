@@ -5217,6 +5217,31 @@
         }).catch(function (e) {
             $('fbSummary').textContent = '诊断概览读取失败：' + e.message;
         });
+        loadUpdateStatus(false);
+    }
+
+    function loadUpdateStatus(refresh) {
+        $('fbUpdate').textContent = '检测中…';
+        api('api/diagnostics/update-check' + (refresh ? '?refresh=true' : '')).then(function (d) {
+            renderUpdate(d);
+        }).catch(function (e) {
+            $('fbUpdate').textContent = '更新检测失败：' + e.message;
+        });
+    }
+
+    function renderUpdate(d) {
+        var el = $('fbUpdate');
+        if (!d.latest) {
+            el.textContent = '更新检测失败（无法访问 Gitee/GitHub）' + (d.error ? '：' + d.error : '');
+            return;
+        }
+        if (d.hasUpdate) {
+            el.innerHTML = '<span class="fb-up-new">发现新版本 ' + esc(d.latest) + '</span>'
+                + '（当前 v' + esc(d.current) + '，来源 ' + esc(d.source) + '）：'
+                + '<a href="' + esc(d.url) + '" target="_blank" rel="noopener">前往下载</a>';
+        } else {
+            el.textContent = '已是最新版本 v' + d.current + (d.source ? '（与远端 ' + esc(d.source) + ' 一致）' : '');
+        }
     }
 
     async function submitIssue(platform, btn) {
@@ -6039,6 +6064,7 @@
         $('btnFbExport').addEventListener('click', exportDiagnostics);
         $('btnFbSaveGitee').addEventListener('click', function () { saveReportToken('gitee', 'setFbGiteeToken', 'fbGiteeState'); });
         $('btnFbSaveGithub').addEventListener('click', function () { saveReportToken('github', 'setFbGithubToken', 'fbGithubState'); });
+        $('btnFbCheckUpdate').addEventListener('click', function () { loadUpdateStatus(true); });
         try {
             showSettingsGroup(localStorage.getItem('ainvr_set_group') || 'storage');
         } catch (e) { showSettingsGroup('storage'); }

@@ -92,10 +92,21 @@ public final class CameraStream {
         this.sleepGate = gate;
     }
 
-    /** 该摄像头当前是否处于休眠（闸门未注入或探测未知时视为不休眠，不拦截）。 */
+    /** 该摄像头当前是否处于休眠（闸门未注入或探测未知时视为不休眠，不拦截）。
+     *  v2.3.1 热修复：sleeping() 返回可空 Boolean，经 Predicate 方法引用拆箱时
+     *  探测未知（null）会 NPE 把取流线程打死（快照/多宫格全部失效的根因）——
+     *  闸门任何异常一律降级为「不拦截」，绝不阻断正常取流。 */
     private boolean isSleeping() {
         java.util.function.Predicate<String> g = sleepGate;
-        return g != null && Boolean.TRUE.equals(g.test(did));
+        if (g == null) {
+            return false;
+        }
+        try {
+            return Boolean.TRUE.equals(g.test(did));
+        } catch (RuntimeException e) {
+            log.debug("[{}] 休眠闸门调用异常（按不休眠处理）：{}", did, e.toString());
+            return false;
+        }
     }
 
     public String did() {

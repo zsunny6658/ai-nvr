@@ -11,7 +11,6 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -45,8 +44,10 @@ public class DiagnosticsController {
     @GetMapping("/api/diagnostics/export")
     public ResponseEntity<String> export() {
         String report = diagnostics.buildReport(null, null);
+        // 注意：不能用 DateTimeFormatter.ofPattern("yyyy...") 直接格式化 Instant——
+        // Instant 不支持 YearOfEra 字段（UnsupportedTemporalTypeException），必须用 LocalDateTime
         String name = "ainvr-diagnostics-"
-                + DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").format(Instant.now())
+                + DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").format(java.time.LocalDateTime.now())
                 + ".txt";
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + name + "\"")
@@ -76,6 +77,13 @@ public class DiagnosticsController {
     @GetMapping("/api/diagnostics/prefill")
     public Map<String, Object> prefill() {
         return diagnostics.prefillUrls();
+    }
+
+    /** 版本更新检测（Gitee 优先/GitHub 兜底，服务端缓存 30 分钟；refresh=true 强制刷新）。 */
+    @GetMapping("/api/diagnostics/update-check")
+    public Map<String, Object> updateCheck(@org.springframework.web.bind.annotation.RequestParam(
+            defaultValue = "false") boolean refresh) {
+        return diagnostics.updateCheck(refresh);
     }
 
     /** 上报令牌配置状态（布尔值，不回显原文）。 */

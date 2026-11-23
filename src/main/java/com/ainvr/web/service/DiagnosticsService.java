@@ -319,6 +319,110 @@ public class DiagnosticsService {
         }
     }
 
+    // ===================== 版本更新检测（v2.3.1） =====================
+
+    private volatile Map<String, Object> updateCache;
+    private volatile long updateCacheAt;
+
+    /**
+     * 检查新版本：Gitee 优先（国内网络可达），GitHub 兜底；均为公开仓库匿名接口，
+     * 不需要任何令牌。结果缓存 30 分钟（refresh=true 强制绕过）。
+     */
+    public Map<String, Object> updateCheck(boolean refresh) {
+        long now = System.currentTimeMillis();
+        Map<String, Object> cached = updateCache;
+        if (!refresh && cached != null && now - updateCacheAt < 30 * 60_000L) {
+            return cached;
+        }
+        String current = about.currentVersion();
+        String latest = null;
+        String url = null;
+        String source = null;
+        String err = null;
+        // Gitee：公开仓库 releases/latest 匿名可读；失败（限流/网络）换 GitHub
+        try {
+            JsonNode n = httpGetJson("https://gitee.com/api/v5/repos/" + GITEE_REPO + "/releases/latest");
+            latest = n.path("tag_name").asText(null);
+            url = n.path("html_url").asText(null);
+            source = "gitee";
+        } catch (Exception e) {
+            err = e.getClass().getSimpleName();
+        }
+        if (latest == null || latest.isBlank()) {
+            try {
+                JsonNode n = httpGetJson("https://api.github.com/repos/" + GITHUB_REPO + "/releases/latest");
+                latest = n.path("tag_name").asText(null);
+                url = n.path("html_url").asText(null);
+                source = "github";
+                err = null;
+            } catch (Exception e2) {
+                err = err == null ? e2.getClass().getSimpleName() : err + "/" + e2.getClass().getSimpleName();
+            }
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("current", current);
+        out.put("latest", latest);
+        out.put("url", url);
+        out.put("source", source);
+        out.put("hasUpdate", latest != null && isNewer(latest, current));
+        out.put("error", err);
+        out.put("checkedAt", now);
+        updateCache = out;
+        updateCacheAt = now;
+        return out;
+    }
+
+    /** 匿名 GET JSON（8s 超时；GitHub 需 UA，Gitee 带上也无害）。 */
+    private JsonNode httpGetJson(String api) throws Exception {
+        var req = java.net.http.HttpRequest.newBuilder(URI.create(api))
+                .timeout(Duration.ofSeconds(8))
+                .header("Accept", "application/json")
+                .header("User-Agent", "aiNVR/" + about.currentVersion())
+                .GET()
+                .build();
+        var resp = java.net.http.HttpClient.newHttpClient()
+                .send(req, java.net.http.HttpResponse.BodyHandlers.ofString());
+        if (resp.statusCode() / 100 != 2) {
+            throw new IllegalStateException("HTTP " + resp.statusCode());
+        }
+        return mapper.readTree(resp.body());
+    }
+
+    /** 版本号数值化比较（v2.3.1 vs v2.4.10 等）：逐段比大小，段数不足按 0 补齐。 */
+    static boolean isNewer(String latest, String current) {
+        int[] a = parseVer(latest);
+        int[] b = parseVer(current);
+        for (int i = 0; i < Math.max(a.length, b.length); i++) {
+            int x = i < a.length ? a[i] : 0;
+            int y = i < b.length ? b[i] : 0;
+            if (x != y) {
+                return x > y;
+            }
+        }
+        return false;
+    }
+
+    private static int[] parseVer(String v) {
+        if (v == null) {
+            return new int[0];
+        }
+        String s = v.trim().replaceFirst("(?i)^v", "");
+        String[] parts = s.split("[.\\-+]");
+        List<Integer> nums = new ArrayList<>();
+        for (String p : parts) {
+            if (p.matches("\\d+")) {
+                nums.add(Integer.parseInt(p));
+            } else if (!nums.isEmpty()) {
+                break; // 遇到非数字段（如 beta/rc/日期后缀）停止
+            }
+        }
+        int[] out = new int[nums.size()];
+        for (int i = 0; i < out.length; i++) {
+            out[i] = nums.get(i);
+        }
+        return out;
+    }
+
     /** 前端「复制报告 + 手动提 Issue」降级路径用的预填链接。 */
     public Map<String, Object> prefillUrls() {
         Map<String, Object> m = new LinkedHashMap<>();

@@ -31,7 +31,7 @@ class StaticAssetContractTest {
 
         assertTrue(html.contains("btnPreviewBack"), "预览弹层缺少应用内返回按钮");
         assertTrue(html.contains("btnPlayerBack"), "回放弹层缺少应用内返回按钮");
-        assertTrue(html.contains("v=74"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
+        assertTrue(html.contains("v=75"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
         // v2.3.1 真机验证第五轮：主题快捷按钮两态 + 选目录自动授权 + 内置权限面板
         assertTrue(js.contains("trimAuthorizePath"), "缺少选目录自动授权逻辑");
         assertTrue(js.contains("authorizeUserFile"), "缺少用户空间授权调用");
@@ -97,6 +97,10 @@ class StaticAssetContractTest {
         assertTrue(js.contains("feedbackFallback"), "缺少无令牌降级路径（复制报告+打开 Issue 页）");
         assertTrue(html.contains("btnFbGitee") && html.contains("btnFbGithub"), "缺少双平台上报按钮");
         assertTrue(html.contains("setFbGiteeToken") && html.contains("setFbGithubToken"), "缺少上报令牌输入框");
+        // v2.3.1 真机验证第八轮：休眠闸门 NPE 热修复 + 更新检测 + 反馈卡美化
+        assertTrue(js.contains("async function exportDiagnostics"), "诊断导出应使用 blob 下载（带鉴权头）");
+        assertTrue(html.contains("btnFbCheckUpdate"), "缺少检查更新按钮");
+        assertTrue(js.contains("api/diagnostics/update-check"), "缺少版本更新检测调用");
         // v2.3.1 入口收敛（docs/design/05 P1+P2）：录像文件唯一入口=卡片弹层，事件卡片入口强化
         assertTrue(html.contains("filesModal"), "录像文件应为弹层（从摄像头卡片进入）");
         assertTrue(html.contains("btnFilesAll"), "设置页应保留全部录像文件管理入口");
