@@ -31,7 +31,7 @@ class StaticAssetContractTest {
 
         assertTrue(html.contains("btnPreviewBack"), "预览弹层缺少应用内返回按钮");
         assertTrue(html.contains("btnPlayerBack"), "回放弹层缺少应用内返回按钮");
-        assertTrue(html.contains("v=76"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
+        assertTrue(html.contains("v=77"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
         // v2.3.1 真机验证第五轮：主题快捷按钮两态 + 选目录自动授权 + 内置权限面板
         assertTrue(js.contains("trimAuthorizePath"), "缺少选目录自动授权逻辑");
         assertTrue(js.contains("authorizeUserFile"), "缺少用户空间授权调用");
@@ -58,6 +58,11 @@ class StaticAssetContractTest {
         assertTrue(js.contains("d.sleeping = resp.sleeping"), "下发后应直接用 POST 返回状态渲染，不得立即探测覆盖");
         assertTrue(!js.contains("d.sleeping = p.sleeping"), "下发后不应再用实时探测旧值覆盖状态");
         assertTrue(js.contains("(sleeping ? 'wake' : 'sleep')"), "次行按钮应按休眠态切换 wake/sleep 动作");
+        // v2.3.1 真机验证第十轮续：5s 轮询不得盲改休眠徽标 + 休眠中徽标/快照降级
+        assertTrue(js.contains("net.outerHTML = html"), "轮询应经 onlineBadge 重生成徽标，不得盲写在线/离线");
+        assertTrue(js.contains("data-sleeping"), "卡片应带休眠态标记供轮询检测整卡重渲染");
+        assertTrue(js.contains("badge off\">休眠中"), "休眠中应显示「休眠中」徽标而非预览中/录像中");
+        assertTrue(js.contains("dev.sleeping === true) { img.hidden = false; return; }"), "休眠中应跳过快照轮询保留最近画面");
         assertTrue(js.contains("(v === 'light' || v === 'dark' || v === 'auto') ? v : 'auto'"), "主题默认应跟随系统");
         assertTrue(html.contains("value=\"auto\" checked"), "外观单选默认应为「跟随系统」");
         // v2.3.1 真机验证第三轮：固定编号排序 + 预览不再全屏 + A-law 修复

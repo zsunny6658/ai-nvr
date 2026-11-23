@@ -46,6 +46,7 @@ public class MiotSleepService {
     private final DeviceCatalog catalog;
     private final SessionHolder sessionHolder;
     private final com.ainvr.hub.StreamHub streamHub;
+    private final RecordingService recordingService;
     /** 主设备 did → 是否休眠（true=休眠中）。缺省表示尚未探测或固件不支持。 */
     private final ConcurrentHashMap<String, Boolean> sleepState = new ConcurrentHashMap<>();
     /** 主设备 did → 最近一次属性读取失败码（成功后移除）。用于失败可见化，避免静默降级成「一直在线」。 */
@@ -62,10 +63,11 @@ public class MiotSleepService {
     private final ScheduledExecutorService scheduler;
 
     public MiotSleepService(DeviceCatalog catalog, SessionHolder sessionHolder,
-                            com.ainvr.hub.StreamHub streamHub) {
+                            com.ainvr.hub.StreamHub streamHub, RecordingService recordingService) {
         this.catalog = catalog;
         this.sessionHolder = sessionHolder;
         this.streamHub = streamHub;
+        this.recordingService = recordingService;
         // v2.3.1 休眠闸门：休眠中的摄像头不拨上游流（否则会被局域网可达性探测的
         // wakeup 不断清零退避，形成 15 秒一轮的重连风暴）
         streamHub.setSleepGate(this::sleeping);
@@ -113,6 +115,22 @@ public class MiotSleepService {
         }
     }
 
+    /**
+     * 兼容两种响应形态：真机实测单设备 prop/get 返回<b>顶层数组</b>
+     * {@code [{"did":..,"siid":2,"piid":1,"value":false,"code":0}]}，
+     * 批量形态返回 {@code {"result":[...]}}。此前只解析 result 包裹形态，
+     * 导致单设备探测永远 code=-1、休眠从未自动探明。
+     */
+    static JsonNode extractPropItem(JsonNode resp) {
+        if (resp == null) {
+            return com.fasterxml.jackson.databind.node.MissingNode.getInstance();
+        }
+        if (resp.isArray() && !resp.isEmpty()) {
+            return resp.get(0);
+        }
+        return resp.path("result").path(0);
+    }
+
     /** 立即异步触发一轮全量探测（设备列表强制刷新后调用，保证解锁/刷新后休眠徽标新鲜）。 */
     public void kick() {
         scheduler.execute(this::safeProbe);
@@ -129,7 +147,7 @@ public class MiotSleepService {
                 "siid", propInt("ainvr.sleep.siid", 2),
                 "piid", propInt("ainvr.sleep.piid", 1));
         JsonNode resp = call("/miotspec/prop/get", Map.of("params", List.of(param)));
-        JsonNode item = resp.path("result").path(0);
+        JsonNode item = extractPropItem(resp);
         int code = item.path("code").asInt(-1);
         Map<String, Object> out = new java.util.LinkedHashMap<>();
         out.put("did", base);
@@ -174,7 +192,10 @@ public class MiotSleepService {
                 log.info("[{}] 休眠探测：摄像头{}（MIoT on={}）{}", base,
                         sleeping ? "进入休眠，已暂停取流" : "工作中",
                         value, prev == null ? "（首次探明）" : "（状态变化）");
-                if (prev != null && !sleeping) {
+                if (sleeping) {
+                    // 探明休眠（含首次）：休眠中无帧可录，自动停掉残留录像
+                    stopRecordingQuietly(base);
+                } else if (prev != null) {
                     // 休眠→工作：立即唤醒取流（打断闸门挂起与退避等待）
                     streamHub.wakeup(base, "休眠解除", true);
                 }
@@ -227,10 +248,25 @@ public class MiotSleepService {
         if (prev == null || prev != sleep) {
             log.info("[{}] 已{}摄像头（MIoT {}.{}）", base, sleep ? "休眠" : "唤醒",
                     propInt("ainvr.sleep.siid", 2), propInt("ainvr.sleep.piid", 1));
-            if (!sleep) {
+            if (sleep) {
+                // 手动休眠：休眠中无帧可录，停掉残留录像
+                stopRecordingQuietly(base);
+            } else {
                 // 手动唤醒：立即恢复取流（打断休眠闸门挂起）
                 streamHub.wakeup(base, "手动唤醒", true);
             }
+        }
+    }
+
+    /** 休眠时停掉该设备的残留录像（休眠中无帧可录，录像状态只会误导界面）。 */
+    private void stopRecordingQuietly(String base) {
+        try {
+            if (recordingService.isRecording(base)) {
+                recordingService.stop(base);
+                log.info("[{}] 摄像头休眠，已停止录像", base);
+            }
+        } catch (Exception e) {
+            log.debug("[{}] 停止录像异常（忽略）：{}", base, e.toString());
         }
     }
 

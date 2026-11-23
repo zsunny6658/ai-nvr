@@ -793,6 +793,8 @@
     }
 
     function statusBadges(c) {
+        // v2.3.1 休眠中无帧可预览/录像：快照轮询与帧源已跳过，徽标如实显示休眠
+        if (c.online && c.sleeping === true) { return '<span class="badge off">休眠中</span>'; }
         if (c.previewing) return '<span class="badge live">预览中</span>' +
             (c.recording ? '<span class="badge rec">录像中</span>' : '');
         if (c.recording) return '<span class="badge rec">录像中</span>';
@@ -849,7 +851,8 @@
         // v2.3.1 米家式休眠交互：休眠中卡顶快照区整体变为「点击唤醒」入口，
         // hover 显示播放覆盖层（唤醒后可再进预览；下方按钮行也有预览入口）
         var sleeping = c.online && c.sleeping === true && String(c.did).indexOf('#') < 0;
-        return '<div class="cam-card' + (c.online ? '' : ' offline') + '" data-did="' + esc(c.did) + '">' +
+        return '<div class="cam-card' + (c.online ? '' : ' offline') + '" data-did="' + esc(c.did)
+            + '" data-sleeping="' + (sleeping ? '1' : '') + '">' +
             // v2.3.0 视频优先卡：顶部最近快照，点击进入实时预览（休眠时点击唤醒）
             '<button type="button" class="cam-media' + (sleeping ? ' cam-media-sleep' : '') + '" data-act="'
             + (sleeping ? 'wake' : 'preview') + '" data-did="' + esc(c.did) + '"' +
@@ -971,6 +974,8 @@
             var dev = null;
             state.devices.forEach(function (c) { if (String(c.did) === String(did)) { dev = c; } });
             if (!dev || !dev.online) { img.hidden = true; return; }
+            // v2.3.1 休眠中不再轮询快照（无新帧且避免为休眠摄像头反复建流订阅），保留最近画面
+            if (dev.sleeping === true) { img.hidden = false; return; }
             img.hidden = false;
             img.onerror = function () { img.hidden = true; };
             img.src = withToken('api/snapshot/' + encodeURIComponent(did) + '?t=' + Date.now());
@@ -1100,6 +1105,9 @@
         state.devices.forEach(function (c) {
             var card = grid.querySelector('.cam-card[data-did="' + CSS.escape(c.did) + '"]');
             if (!card) { renderDevices(); return; }
+            // v2.3.1 休眠态变化走整卡重渲染：卡顶唤醒入口 / 次行休眠切换按钮 / 徽标联动
+            var slpNow = (c.online && c.sleeping === true && String(c.did).indexOf('#') < 0) ? '1' : '';
+            if (card.getAttribute('data-sleeping') !== slpNow) { renderDevices(); return; }
             card.querySelector('.badges').innerHTML = statusBadges(c);
             applyOnline(card, c);
             var btn = card.querySelector('button[data-act="recstart"],button[data-act="recstop"]');
@@ -1116,12 +1124,14 @@
     /** 同步在线徽标、卡片置灰与“实时预览”按钮禁用（离线不影响停止录像）。 */
     function applyOnline(card, c) {
         card.classList.toggle('offline', !c.online);
+        // v2.3.1 用 onlineBadge 重新生成徽标：休眠态是「休眠」唤醒按钮，
+        // 此前这里盲写成「在线/离线」，每 5s 轮询就把休眠徽标冲掉（状态跳在线根因）
         var net = card.querySelector('.net');
         if (net) {
-            net.className = 'net ' + (c.online ? 'online' : 'offline');
-            net.innerHTML = '<span class="dot"></span>' + (c.online ? '在线' : '离线');
+            var html = onlineBadge(c);
+            if (net.outerHTML !== html) { net.outerHTML = html; }
         }
-        // v2.3.0 卡顶快照与操作区都是预览入口，一并启停
+        // v2.3.0 卡顶快照与操作区都是预览入口，一并启停（休眠中卡顶是唤醒入口，跳过）
         card.querySelectorAll('button[data-act="preview"]').forEach(function (pb) {
             pb.disabled = !c.online;
             pb.title = c.online ? '点击进入实时预览' : '设备离线，暂不可用';
