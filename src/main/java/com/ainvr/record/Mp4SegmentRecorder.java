@@ -1,13 +1,20 @@
 package com.ainvr.record;
 
+import org.bytedeco.ffmpeg.avcodec.AVCodec;
+import org.bytedeco.ffmpeg.avcodec.AVCodecContext;
 import org.bytedeco.ffmpeg.avcodec.AVPacket;
 import org.bytedeco.ffmpeg.avformat.AVFormatContext;
 import org.bytedeco.ffmpeg.avformat.AVIOContext;
 import org.bytedeco.ffmpeg.avformat.AVOutputFormat;
 import org.bytedeco.ffmpeg.avformat.AVStream;
+import org.bytedeco.ffmpeg.avutil.AVAudioFifo;
+import org.bytedeco.ffmpeg.avutil.AVChannelLayout;
 import org.bytedeco.ffmpeg.avutil.AVDictionary;
+import org.bytedeco.ffmpeg.avutil.AVFrame;
 import org.bytedeco.ffmpeg.avutil.AVRational;
 import org.bytedeco.javacpp.BytePointer;
+import org.bytedeco.javacpp.FloatPointer;
+import org.bytedeco.javacpp.PointerPointer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -21,6 +28,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import static org.bytedeco.ffmpeg.global.avcodec.AV_CODEC_ID_AAC;
 import static org.bytedeco.ffmpeg.global.avcodec.AV_CODEC_ID_H264;
 import static org.bytedeco.ffmpeg.global.avcodec.AV_CODEC_ID_HEVC;
 import static org.bytedeco.ffmpeg.global.avcodec.AV_CODEC_ID_OPUS;
@@ -30,6 +38,16 @@ import static org.bytedeco.ffmpeg.global.avcodec.av_packet_free;
 import static org.bytedeco.ffmpeg.global.avcodec.av_packet_rescale_ts;
 import static org.bytedeco.ffmpeg.global.avcodec.av_packet_unref;
 import static org.bytedeco.ffmpeg.global.avcodec.av_packet_alloc;
+import static org.bytedeco.ffmpeg.global.avcodec.avcodec_alloc_context3;
+import static org.bytedeco.ffmpeg.global.avcodec.avcodec_find_decoder;
+import static org.bytedeco.ffmpeg.global.avcodec.avcodec_find_encoder;
+import static org.bytedeco.ffmpeg.global.avcodec.avcodec_free_context;
+import static org.bytedeco.ffmpeg.global.avcodec.avcodec_open2;
+import static org.bytedeco.ffmpeg.global.avcodec.avcodec_parameters_from_context;
+import static org.bytedeco.ffmpeg.global.avcodec.avcodec_receive_frame;
+import static org.bytedeco.ffmpeg.global.avcodec.avcodec_receive_packet;
+import static org.bytedeco.ffmpeg.global.avcodec.avcodec_send_frame;
+import static org.bytedeco.ffmpeg.global.avcodec.avcodec_send_packet;
 import static org.bytedeco.ffmpeg.global.avformat.AVIO_FLAG_WRITE;
 import static org.bytedeco.ffmpeg.global.avformat.av_interleaved_write_frame;
 import static org.bytedeco.ffmpeg.global.avformat.av_write_trailer;
@@ -44,6 +62,16 @@ import static org.bytedeco.ffmpeg.global.avutil.AVMEDIA_TYPE_VIDEO;
 import static org.bytedeco.ffmpeg.global.avutil.AV_LOG_ERROR;
 import static org.bytedeco.ffmpeg.global.avutil.AV_PIX_FMT_YUV420P;
 import static org.bytedeco.ffmpeg.global.avutil.AV_SAMPLE_FMT_FLTP;
+import static org.bytedeco.ffmpeg.global.avutil.av_audio_fifo_alloc;
+import static org.bytedeco.ffmpeg.global.avutil.av_audio_fifo_free;
+import static org.bytedeco.ffmpeg.global.avutil.av_audio_fifo_read;
+import static org.bytedeco.ffmpeg.global.avutil.av_audio_fifo_size;
+import static org.bytedeco.ffmpeg.global.avutil.av_audio_fifo_write;
+import static org.bytedeco.ffmpeg.global.avutil.av_channel_layout_default;
+import static org.bytedeco.ffmpeg.global.avutil.av_frame_alloc;
+import static org.bytedeco.ffmpeg.global.avutil.av_frame_free;
+import static org.bytedeco.ffmpeg.global.avutil.av_frame_get_buffer;
+import static org.bytedeco.ffmpeg.global.avutil.av_frame_unref;
 import static org.bytedeco.ffmpeg.global.avutil.av_log_set_level;
 import static org.bytedeco.ffmpeg.global.avutil.av_mallocz;
 import static org.bytedeco.ffmpeg.global.avutil.av_dict_set;
@@ -113,6 +141,23 @@ public final class Mp4SegmentRecorder {
     private AVPacket audioPkt;
     private long segmentStartMs = -1;
     private long lastVideoRelMs = -1;
+
+    // ---------------- AAC 音轨（v2.3.1）：Opus 解码 → PCM FIFO → AAC 编码 ----------------
+    // 浏览器原生 <video> 不支持 MP4+Opus 音轨（Chrome/Edge 无声），转 AAC 后全平台可听。
+    // 编码器/解码器任一初始化失败自动回退 Opus 原样封装（旧路径），不影响录像可用性。
+    private static final int AAC_SAMPLE_RATE = 48_000;
+    private static final int AAC_BITRATE = 64_000;
+    /** 时间戳映射：{绝对样本序号起点, 设备毫秒}。AAC 包按首样本查表得 pts，保持与视频同源（devTs）对齐。 */
+    private final java.util.ArrayDeque<long[]> audioSpans = new java.util.ArrayDeque<>();
+    private long audioSampleFed;    // 已解码进 FIFO 的绝对样本数
+    private long audioSampleUsed;   // 已编码消耗的绝对样本数
+    /** true=AAC 转码启用；false=回退 Opus 原样封装。系统属性 ainvr.record.audio=opus 可强制关闭。 */
+    private boolean audioAac;
+    private AVCodecContext opusDec;   // 录像线程私有，跨段复用
+    private AVFrame decFrame;
+    private AVCodecContext aacEnc;    // 每段一个（extradata 随段写入 MP4 header）
+    private AVFrame aacFrame;         // 编码输入帧（frame_size 样本，fltp 平面）
+    private AVAudioFifo aacFifo;
 
     public Mp4SegmentRecorder(String did, File outDir, long segmentSeconds,
                               boolean h265, int audioChannels) throws IOException {
@@ -213,6 +258,15 @@ public final class Mp4SegmentRecorder {
         av_log_set_level(AV_LOG_ERROR);
         videoPkt = av_packet_alloc();
         audioPkt = av_packet_alloc();
+        boolean forceOpus = "opus".equalsIgnoreCase(System.getProperty("ainvr.record.audio", "aac").trim());
+        if (forceOpus) {
+            log.info("[{}] 音轨按配置强制 Opus 原样封装（ainvr.record.audio=opus）", did);
+        } else {
+            audioAac = initOpusDecoder();
+            if (!audioAac) {
+                log.warn("[{}] Opus 解码器初始化失败，音轨回退 Opus 原样封装", did);
+            }
+        }
 
         try {
             while (true) {
@@ -230,6 +284,7 @@ public final class Mp4SegmentRecorder {
             log.error("[{}] MP4 录像线程异常：{}", did, t.toString(), t);
         } finally {
             closeSegment();
+            freeAudioChain();
             av_packet_unref(videoPkt);
             av_packet_unref(audioPkt);
             av_packet_free(videoPkt);
@@ -248,11 +303,9 @@ public final class Mp4SegmentRecorder {
         byte[] cfg = hevc ? buildHevcConfigRecord(annexB) : buildAvcConfigRecord(annexB);
         if (cfg != null) {
             pendingConfig = cfg;
-            if (hevc) {
-                int[] dim = parseHevcDimensionsFromAu(annexB);
-                if (dim != null) {
-                    pendingDim = dim;
-                }
+            int[] dim = hevc ? parseHevcDimensionsFromAu(annexB) : parseAvcDimensionsFromAu(annexB);
+            if (dim != null) {
+                pendingDim = dim;
             }
         }
         java.io.ByteArrayOutputStream avcc = new java.io.ByteArrayOutputStream(annexB.length);
@@ -335,6 +388,98 @@ public final class Mp4SegmentRecorder {
     }
 
     private void writeAudio(AudioFrame f) {
+        if (audioAac) {
+            writeAudioAac(f);
+        } else {
+            writeOpusPacket(f);
+        }
+    }
+
+    /** AAC 路径：记录时间戳映射 → 解码进 FIFO → 够 1024 样本即编码写出。 */
+    private void writeAudioAac(AudioFrame f) {
+        try {
+            audioSpans.addLast(new long[] { audioSampleFed, f.outMs });
+            av_new_packet(audioPkt, f.data.length);
+            audioPkt.data().put(f.data, 0, f.data.length);
+            int rc = avcodec_send_packet(opusDec, audioPkt);
+            av_packet_unref(audioPkt);
+            if (rc < 0) {
+                return; // 坏包丢弃：样本没进 FIFO，对应 span 查表时会被自然越过
+            }
+            while (avcodec_receive_frame(opusDec, decFrame) == 0) {
+                int got = decFrame.nb_samples();
+                if (got > 0) {
+                    // libopus 解码输出 s16 交错单平面 → 转 fltp 平面进 FIFO
+                    writeS16ToFifo(decFrame.data(0), got);
+                    audioSampleFed += got;
+                }
+                av_frame_unref(decFrame);
+            }
+            drainAac(false);
+        } catch (Throwable t) {
+            // 音频链路任何异常都不允许拖垮录像线程：丢本帧
+            log.debug("[{}] AAC 音频帧处理异常（丢弃）：{}", did, t.toString());
+        }
+    }
+
+    /** 从 FIFO 取 frame_size 样本编码写出；flush=true 时先刷出编码器残余（封段时）。 */
+    private void drainAac(boolean flush) {
+        if (aacEnc == null || aacFifo == null) {
+            return;
+        }
+        while (av_audio_fifo_size(aacFifo) >= aacEnc.frame_size()) {
+            if (av_audio_fifo_read(aacFifo, aacFrame.data(), aacEnc.frame_size()) < aacEnc.frame_size()) {
+                break;
+            }
+            encodeAacFrame();
+        }
+        if (flush) {
+            avcodec_send_frame(aacEnc, null);
+            while (avcodec_receive_packet(aacEnc, audioPkt) == 0) {
+                writeAacPacket(audioPkt);
+            }
+        }
+    }
+
+    private void encodeAacFrame() {
+        aacFrame.pts(audioSampleUsed);
+        avcodec_send_frame(aacEnc, aacFrame);
+        while (avcodec_receive_packet(aacEnc, audioPkt) == 0) {
+            writeAacPacket(audioPkt);
+        }
+    }
+
+    /** AAC 包写出：按首样本查时间戳映射得到设备毫秒系 pts（与视频同源对齐）。 */
+    private void writeAacPacket(AVPacket pkt) {
+        int n = pkt.duration() > 0 ? (int) pkt.duration() : aacEnc.frame_size();
+        long outMs = spanMs(audioSampleUsed);
+        audioSampleUsed += n;
+        long relMs = Math.max(0, outMs - segmentStartMs);
+        pkt.pts(relMs * 48L);
+        pkt.dts(relMs * 48L);
+        pkt.duration(n);
+        pkt.flags(AV_PKT_FLAG_KEY);
+        pkt.stream_index(outAudio.index());
+        av_packet_rescale_ts(pkt, TB_OPUS, outAudio.time_base());
+        int rc = av_interleaved_write_frame(outCtx, pkt);
+        if (rc < 0) {
+            log.debug("[{}] 写 AAC 帧失败 rc={}", did, rc);
+        }
+        av_packet_unref(pkt);
+    }
+
+    /** 查绝对样本序号 idx 对应的设备毫秒（span 头部已完全消耗则弹出）。 */
+    private long spanMs(long idx) {
+        while (audioSpans.size() > 1
+                && audioSpans.peekFirst()[0] + OPUS_FRAME_SAMPLES <= idx) {
+            audioSpans.pollFirst();
+        }
+        long[] head = audioSpans.isEmpty() ? new long[] { 0, segmentStartMs } : audioSpans.peekFirst();
+        return head[1] + Math.max(0, idx - head[0]) * 1000L / OPUS_SAMPLE_RATE;
+    }
+
+    /** 旧路径：Opus 原样封装（浏览器可能无声，作为编码失败/强制配置时的兜底）。 */
+    private void writeOpusPacket(AudioFrame f) {
         av_new_packet(audioPkt, f.data.length);
         audioPkt.data().put(f.data, 0, f.data.length);
         // 每段时间戳从 0 开始
@@ -350,6 +495,120 @@ public final class Mp4SegmentRecorder {
             log.warn("[{}] 写音频帧失败 rc={}", did, rc);
         }
         av_packet_unref(audioPkt);
+    }
+
+    // ---------------- AAC 链路初始化 / 释放 ----------------
+
+    /** 初始化 Opus 解码器（输出 s16 交错 PCM，48kHz）。失败返回 false（整体回退 Opus 原样封装）。 */
+    private boolean initOpusDecoder() {
+        AVCodec codec = avcodec_find_decoder(AV_CODEC_ID_OPUS);
+        if (codec == null) {
+            return false;
+        }
+        opusDec = avcodec_alloc_context3(codec);
+        AVChannelLayout layout = new AVChannelLayout();
+        av_channel_layout_default(layout, audioChannels);
+        opusDec.ch_layout(layout);
+        opusDec.sample_rate(OPUS_SAMPLE_RATE);
+        byte[] head = opusHead(audioChannels, OPUS_SAMPLE_RATE);
+        BytePointer p = new BytePointer(av_mallocz(head.length)).capacity(head.length);
+        p.position(0).put(head, 0, head.length);
+        opusDec.extradata(p);
+        opusDec.extradata_size(head.length);
+        if (avcodec_open2(opusDec, codec, (AVDictionary) null) < 0) {
+            avcodec_free_context(opusDec);
+            opusDec = null;
+            return false;
+        }
+        decFrame = av_frame_alloc();
+        return decFrame != null;
+    }
+
+    /** 初始化 AAC 编码器与段级资源（FIFO / 输入帧）。失败时释放半成品并返回 false。 */
+    private boolean initAacEncoder() {
+        AVCodec codec = avcodec_find_encoder(AV_CODEC_ID_AAC);
+        if (codec == null) {
+            return false;
+        }
+        aacEnc = avcodec_alloc_context3(codec);
+        AVChannelLayout layout = new AVChannelLayout();
+        av_channel_layout_default(layout, audioChannels);
+        aacEnc.ch_layout(layout);
+        aacEnc.sample_rate(AAC_SAMPLE_RATE);
+        aacEnc.sample_fmt(AV_SAMPLE_FMT_FLTP);
+        aacEnc.bit_rate((long) AAC_BITRATE * audioChannels);
+        if (avcodec_open2(aacEnc, codec, (AVDictionary) null) < 0) {
+            freeSegmentAudio();
+            return false;
+        }
+        aacFrame = av_frame_alloc();
+        aacFrame.format(AV_SAMPLE_FMT_FLTP);
+        aacFrame.ch_layout(layout);
+        aacFrame.sample_rate(AAC_SAMPLE_RATE);
+        aacFrame.nb_samples(aacEnc.frame_size());
+        if (av_frame_get_buffer(aacFrame, 0) < 0) {
+            freeSegmentAudio();
+            return false;
+        }
+        aacFifo = av_audio_fifo_alloc(AV_SAMPLE_FMT_FLTP, audioChannels, (int) (aacEnc.frame_size() * 8L));
+        if (aacFifo == null) {
+            freeSegmentAudio();
+            return false;
+        }
+        return true;
+    }
+
+    /** 释放段级 AAC 资源（编码器 / 输入帧 / FIFO）。封段时调用，跨段重建。 */
+    private void freeSegmentAudio() {
+        if (aacEnc != null) {
+            avcodec_free_context(aacEnc);
+            aacEnc = null;
+        }
+        if (aacFrame != null) {
+            av_frame_free(aacFrame);
+            aacFrame = null;
+        }
+        if (aacFifo != null) {
+            av_audio_fifo_free(aacFifo);
+            aacFifo = null;
+        }
+    }
+
+    /** 录像线程结束：释放段级资源 + Opus 解码器 + 时间戳映射表。 */
+    private void freeAudioChain() {
+        freeSegmentAudio();
+        if (opusDec != null) {
+            avcodec_free_context(opusDec);
+            opusDec = null;
+        }
+        if (decFrame != null) {
+            av_frame_free(decFrame);
+            decFrame = null;
+        }
+        audioSpans.clear();
+    }
+
+    /** 解码输出的 s16 交错 PCM → 转成 fltp 平面写入 FIFO（AAC 编码要求平面浮点）。 */
+    private void writeS16ToFifo(BytePointer pcm, int samples) {
+        int ch = audioChannels;
+        FloatPointer[] planes = new FloatPointer[ch];
+        for (int c = 0; c < ch; c++) {
+            planes[c] = new FloatPointer(samples);
+        }
+        for (int i = 0; i < samples; i++) {
+            for (int c = 0; c < ch; c++) {
+                planes[c].put(i, pcm.getShort((i * ch + c) * 2L) / 32768f);
+            }
+        }
+        PointerPointer pp = new PointerPointer(ch);
+        for (int c = 0; c < ch; c++) {
+            pp.put(c, planes[c]);
+        }
+        av_audio_fifo_write(aacFifo, pp, samples);
+        for (int c = 0; c < ch; c++) {
+            planes[c].deallocate();
+        }
+        pp.deallocate();
     }
 
     private void openSegment(long startMs, byte[] config) throws IOException {
@@ -386,19 +645,33 @@ public final class Mp4SegmentRecorder {
         outAudio = avformat_new_stream(outCtx, (org.bytedeco.ffmpeg.avcodec.AVCodec) null);
         var cp = outAudio.codecpar();
         cp.codec_type(AVMEDIA_TYPE_AUDIO);
-        cp.codec_id(AV_CODEC_ID_OPUS);
-        cp.format(AV_SAMPLE_FMT_FLTP);
-        cp.sample_rate(OPUS_SAMPLE_RATE);
-        cp.channels(audioChannels);
-        cp.frame_size(OPUS_FRAME_SAMPLES); // 每包固定 1920 样本（40ms@48k）
-        byte[] head = opusHead(audioChannels, OPUS_SAMPLE_RATE);
-        // extradata 必须由 av_malloc 分配，交给 ffmpeg 所有权（free_context 时 av_free）；
-        // 直接给 JavaCPP BytePointer 会用错误分配器释放导致 avformat_free_context 卡死/堆损坏。
-        opusExtradataRef = new BytePointer(av_mallocz(head.length)).capacity(head.length);
-        opusExtradataRef.position(0).put(head, 0, head.length);
-        cp.extradata(opusExtradataRef);
-        cp.extradata_size(head.length);
-        outAudio.time_base(TB_OPUS);
+        if (audioAac) {
+            audioAac = initAacEncoder();
+            if (audioAac) {
+                // AAC 轨：编码器参数（含 ASC extradata）整体拷入流，浏览器原生可播
+                avcodec_parameters_from_context(cp, aacEnc);
+                outAudio.time_base(TB_OPUS);
+                log.info("[{}] 音轨 AAC 转码启用（{}ch {}Hz {}bps）", did,
+                        audioChannels, AAC_SAMPLE_RATE, AAC_BITRATE);
+            } else {
+                log.warn("[{}] AAC 编码器初始化失败，本录像回退 Opus 原样封装", did);
+            }
+        }
+        if (!audioAac) {
+            cp.codec_id(AV_CODEC_ID_OPUS);
+            cp.format(AV_SAMPLE_FMT_FLTP);
+            cp.sample_rate(OPUS_SAMPLE_RATE);
+            cp.channels(audioChannels);
+            cp.frame_size(OPUS_FRAME_SAMPLES); // 每包固定 1920 样本（40ms@48k）
+            byte[] head = opusHead(audioChannels, OPUS_SAMPLE_RATE);
+            // extradata 必须由 av_malloc 分配，交给 ffmpeg 所有权（free_context 时 av_free）；
+            // 直接给 JavaCPP BytePointer 会用错误分配器释放导致 avformat_free_context 卡死/堆损坏。
+            opusExtradataRef = new BytePointer(av_mallocz(head.length)).capacity(head.length);
+            opusExtradataRef.position(0).put(head, 0, head.length);
+            cp.extradata(opusExtradataRef);
+            cp.extradata_size(head.length);
+            outAudio.time_base(TB_OPUS);
+        }
 
         outPb = new AVIOContext(null);
         if (avio_open(outPb, file.getAbsolutePath(), AVIO_FLAG_WRITE) < 0) {
@@ -431,6 +704,13 @@ public final class Mp4SegmentRecorder {
         }
         // 先清除“录制中”标记：从此刻起该文件已是完成段（trailer 写入期间也不应再标记为录制中）。
         currentSegmentName = null;
+        try {
+            // 刷出编码器残余样本（不足 frame_size 的尾帧），保证段尾音频完整
+            drainAac(true);
+        } catch (Throwable t) {
+            log.warn("[{}] 刷出 AAC 尾帧异常：{}", did, t.toString());
+        }
+        freeSegmentAudio();
         try {
             int trc = av_write_trailer(outCtx);
             if (trc < 0) {
@@ -633,6 +913,80 @@ public final class Mp4SegmentRecorder {
         return null;
     }
 
+    /** 从含 SPS 的 H.264 Annex-B 访问单元解析分辨率 [width,height]，失败返回 null。 */
+    static int[] parseAvcDimensionsFromAu(byte[] annexb) {
+        for (byte[] nal : splitNals(annexb)) {
+            if (nal.length > 0 && (nal[0] & 0x1F) == 7) {
+                return parseAvcDimensions(nal);
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 解析 H.264 SPS NAL（含 1 字节 NAL 头）得到图像宽高。覆盖 baseline/main/high 常见 profile，
+     * 含画面裁剪修正；解析失败（不认识的结构 / 越界）返回 null，此时保持宽高 0。
+     */
+    static int[] parseAvcDimensions(byte[] spsNal) {
+        try {
+            byte[] rb = removeEmulationPrevention(spsNal);
+            BitReader r = new BitReader(rb, 8); // 跳过 1 字节 NAL header
+            int profile = r.bits(8);
+            r.bits(8); // constraint flags + reserved
+            r.bits(8); // level_idc
+            r.ue();    // seq_parameter_set_id
+            int chromaFormatIdc = 1;
+            if (profile == 100 || profile == 110 || profile == 122 || profile == 244 || profile == 44
+                    || profile == 83 || profile == 86 || profile == 118 || profile == 128
+                    || profile == 138 || profile == 139 || profile == 134 || profile == 135) {
+                chromaFormatIdc = r.ue(); // chroma_format_idc
+                if (chromaFormatIdc == 3) {
+                    r.bits(1); // separate_colour_plane_flag
+                }
+            }
+            r.ue();    // log2_max_frame_num_minus4
+            int pocType = r.ue();
+            if (pocType == 0) {
+                r.ue(); // log2_max_pic_order_cnt_lsb_minus4
+            } else if (pocType == 1) {
+                boolean deltaZero = r.bit() != 0; // delta_pic_order_always_zero_flag
+                if (!deltaZero) {
+                    r.se(); // offset_for_non_ref_pic
+                    r.se(); // offset_for_top_to_bottom_field
+                    int n = r.ue(); // num_ref_frames_in_pic_order_cnt_cycle
+                    for (int i = 0; i < n; i++) {
+                        r.se();
+                    }
+                }
+            }
+            r.ue();    // max_num_ref_frames
+            r.bit();   // gaps_in_frame_num_value_allowed_flag
+            int widthMbs = r.ue() + 1;  // pic_width_in_mbs_minus1
+            int heightMap = r.ue() + 1; // pic_height_in_map_units_minus1
+            boolean frameMbsOnly = r.bit() != 0;
+            if (!frameMbsOnly) {
+                r.bit(); // mb_adaptive_frame_field_flag
+            }
+            r.bit();   // direct_8x8_inference_flag
+            boolean crop = r.bit() != 0;
+            int width = widthMbs * 16;
+            int height = (frameMbsOnly ? 1 : 2) * heightMap * 16;
+            if (crop) {
+                int cropLeft = r.ue();
+                int cropRight = r.ue();
+                int cropTop = r.ue();
+                int cropBottom = r.ue();
+                int unitX = chromaFormatIdc == 0 ? 1 : (chromaFormatIdc == 1 ? 2 : 1);
+                int unitY = unitX * (frameMbsOnly ? 1 : 2);
+                width -= unitX * (cropLeft + cropRight);
+                height -= unitY * (cropTop + cropBottom);
+            }
+            return width > 0 && height > 0 ? new int[] {width, height} : null;
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
     /** 解析 H.265 SPS NAL（含 2 字节 NAL 头）得到图像宽高；仅实现 max_sub_layers=0 的常见情形。 */
     static int[] parseHevcDimensions(byte[] spsNal) {
         try {
@@ -724,6 +1078,11 @@ public final class Mp4SegmentRecorder {
                 }
             }
             return (1 << zeros) - 1 + bits(zeros);
+        }
+
+        int se() {
+            int k = ue();
+            return (k & 1) == 0 ? -(k >> 1) : (k + 1) >> 1;
         }
     }
 }

@@ -31,7 +31,7 @@ class StaticAssetContractTest {
 
         assertTrue(html.contains("btnPreviewBack"), "预览弹层缺少应用内返回按钮");
         assertTrue(html.contains("btnPlayerBack"), "回放弹层缺少应用内返回按钮");
-        assertTrue(html.contains("v=69"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
+        assertTrue(html.contains("v=70"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
         // v2.3.1 真机验证第五轮：主题快捷按钮两态 + 选目录自动授权 + 内置权限面板
         assertTrue(js.contains("trimAuthorizePath"), "缺少选目录自动授权逻辑");
         assertTrue(js.contains("authorizeUserFile"), "缺少用户空间授权调用");
@@ -73,6 +73,10 @@ class StaticAssetContractTest {
         assertTrue(js.contains("recToastShown"), "录制段提示应每次会话只弹一次");
         assertTrue(js.contains("recGroupCollapsed"), "录像列表应折叠组零渲染（行只在展开时进 DOM）");
         assertTrue(css.contains("min-height: 36px"), "按钮应有统一最小高度（备份导入/导出等高）");
+        // v2.3.1 入口收敛第二轮：卡片去掉「回放」按钮；录像列表 15s 缓存秒开
+        assertTrue(!html.contains("pbPaneFiles"), "回放页不应再保留录像文件二级窗格切换");
+        assertTrue(js.contains("recCache"), "录像文件弹层应有 15s 客户端缓存（秒开）");
+        assertTrue(!js.contains("data-act=\"pb\""), "摄像头卡片不应再有回放按钮（入口收敛）");
         // v2.3.1 解锁秒开：缓存优先 + 新鲜度按需刷新 + 锁定停轮询
         assertTrue(js.contains("lastLoads"), "解锁后应按数据新鲜度决定是否重拉（设备 60s/概览 30s）");
         assertTrue(js.contains("stopAppTimers"), "锁定后应停止主界面轮询（消灭 401 空转）");
@@ -86,7 +90,7 @@ class StaticAssetContractTest {
         assertTrue(html.contains("recLockChip"), "文件弹层应显示「仅看」锁定胶囊");
         assertTrue(html.contains("evLockChip"), "事件页应有「仅看」锁定胶囊");
         assertTrue(js.contains("openFilesModal"), "缺少文件弹层打开逻辑");
-        assertTrue(js.contains("gotoCamPlayback"), "卡片缺少回放直达逻辑");
+        assertTrue(!js.contains("gotoCamPlayback"), "卡片回放按钮已移除（入口收敛），不应再保留回放直达函数");
         assertTrue(js.contains("updateEvLockChip"), "缺少事件锁定胶囊同步逻辑");
         assertTrue(css.contains(".files-locked"), "锁定态应隐藏摄像头筛选（files-locked）");
         assertTrue(css.contains(".lock-chip"), "缺少锁定胶囊样式");

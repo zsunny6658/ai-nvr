@@ -47,6 +47,8 @@ public class MiotSleepService {
     private final SessionHolder sessionHolder;
     /** 主设备 did → 是否休眠（true=休眠中）。缺省表示尚未探测或固件不支持。 */
     private final ConcurrentHashMap<String, Boolean> sleepState = new ConcurrentHashMap<>();
+    /** 主设备 did → 最近一次属性读取失败码（成功后移除）。用于失败可见化，避免静默降级成「一直在线」。 */
+    private final ConcurrentHashMap<String, Integer> failCodes = new ConcurrentHashMap<>();
     private final ScheduledExecutorService scheduler;
 
     public MiotSleepService(DeviceCatalog catalog, SessionHolder sessionHolder) {
@@ -96,11 +98,66 @@ public class MiotSleepService {
             // 云端可能回显 did；缺失时按顺序对齐（prop/get 保证顺序）
             String did = item.hasNonNull("did") && !item.path("did").asText().isBlank()
                     ? item.path("did").asText() : dids.get(i);
-            if (item.path("code").asInt(-1) != CODE_OK || !item.path("value").isBoolean()) {
+            int code = item.path("code").asInt(-1);
+            if (code != CODE_OK || !item.path("value").isBoolean()) {
+                // 失败可见化：每次失败码变化都记 INFO（此前静默 debug 导致探测失败无从得知，
+                // 界面永远显示「在线」——用户反馈「休眠侦测感觉不对」的主要嫌疑即在此）
+                Integer prev = failCodes.get(did);
+                if (prev == null || prev != code) {
+                    log.info("[{}] 休眠属性读取失败 code={}（-4006=固件不支持该属性；可尝试 -Dainvr.sleep.siid/-Dainvr.sleep.piid 覆盖）",
+                            did, code);
+                }
+                failCodes.put(did, code);
                 continue;
             }
-            sleepState.put(did, !item.path("value").asBoolean());
+            failCodes.remove(did);
+            boolean sleeping = !item.path("value").asBoolean();
+            Boolean prevSleep = sleepState.put(did, sleeping);
+            if (!Boolean.valueOf(sleeping).equals(prevSleep)) {
+                log.info("[{}] 休眠状态：{}（MIoT siid{}.{} value={}）", did,
+                        sleeping ? "休眠中" : "工作中",
+                        propInt("ainvr.sleep.siid", 2), propInt("ainvr.sleep.piid", 1),
+                        item.path("value").asBoolean());
+            }
         }
+    }
+
+    /** 立即异步触发一轮全量探测（设备列表强制刷新后调用，保证解锁/刷新后休眠徽标新鲜）。 */
+    public void kick() {
+        scheduler.execute(this::safeProbe);
+    }
+
+    /**
+     * 实时单设备探测（GET /api/devices/{did}/sleep 验证用）：绕过 90s 轮询缓存直接读云端属性，
+     * 返回 {did, code, value(可空), sleeping(可空=null 时回退缓存值)}。成功结果同步进缓存。
+     */
+    public Map<String, Object> probeOne(String did) {
+        String base = DualLens.baseDid(did);
+        Map<String, Object> param = Map.of(
+                "did", base,
+                "siid", propInt("ainvr.sleep.siid", 2),
+                "piid", propInt("ainvr.sleep.piid", 1));
+        JsonNode item = call("/miotspec/prop/get", Map.of("params", List.of(param)))
+                .path("result").path(0);
+        int code = item.path("code").asInt(-1);
+        Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("did", base);
+        out.put("code", code);
+        if (code == CODE_OK && item.path("value").isBoolean()) {
+            boolean value = item.path("value").asBoolean();
+            failCodes.remove(base);
+            sleepState.put(base, !value);
+            out.put("value", value);
+            out.put("sleeping", !value);
+        } else {
+            Integer fc = failCodes.put(base, code);
+            if (fc == null || fc != code) {
+                log.info("[{}] 休眠实时探测失败 code={}", base, code);
+            }
+            out.put("value", null);
+            out.put("sleeping", sleepState.get(base)); // 探测失败回退最近缓存值（可能为 null）
+        }
+        return out;
     }
 
     /** 该设备是否休眠：true=休眠中，false=工作中；null=尚未探测/不支持。副镜头跟随主镜头。 */

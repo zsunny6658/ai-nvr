@@ -54,6 +54,11 @@ public class DeviceController {
                                        HttpServletRequest request) {
         List<CameraDevice> devices = (refresh || catalog.all().isEmpty())
                 ? catalog.refresh() : catalog.all();
+        // 强制刷新（解锁进页面 / 手动刷新按钮）时同步触发一轮即时休眠探测，
+        // 避免 90s 轮询间隙里休眠徽标停留在陈旧状态
+        if (refresh) {
+            sleepService.kick();
+        }
         String host = request.getServerName();
         List<Map<String, Object>> list = devices.stream()
                 .map(c -> toMap(c, host))
@@ -106,5 +111,15 @@ public class DeviceController {
     public Map<String, Object> setSleep(@PathVariable String did, @PathVariable boolean wake) {
         sleepService.setSleep(did, !wake);
         return Map.of("ok", true, "sleeping", !wake);
+    }
+
+    /**
+     * 实时休眠探测（验证用）：绕过 90s 轮询缓存直接读云端 MIoT 属性。
+     * 返回 {did, code, value, sleeping}；code!=0 或 value=null 表示固件不支持该属性
+     * （-4006）或读取失败，sleeping 为最近缓存值（可能为 null=未知，界面按在线显示）。
+     */
+    @GetMapping("/devices/{did}/sleep")
+    public Map<String, Object> probeSleep(@PathVariable String did) {
+        return sleepService.probeOne(did);
     }
 }

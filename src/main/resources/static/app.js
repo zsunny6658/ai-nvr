@@ -789,6 +789,15 @@
         try {
             await api('api/devices/' + encodeURIComponent(did) + '/sleep/1', { method: 'POST' });
             toast('唤醒指令已下发，摄像头启动约需几秒', 'ok');
+            // 实时探测一次并把徽标同步到位（缓存值已是「工作中」），不等下一轮 5s 轮询
+            try {
+                var p = await api('api/devices/' + encodeURIComponent(did) + '/sleep');
+                var base = String(did).split('#')[0];
+                state.devices.forEach(function (d) {
+                    if (d.did === did || String(d.did).split('#')[0] === base) d.sleeping = p.sleeping;
+                });
+                renderDevices();
+            } catch (e2) { /* 探测失败不打扰，交给轮询 */ }
             loadDevices(true);
         } catch (e) {
             if (e.status === 401) { scheduleGateRelock(); return; }
@@ -816,8 +825,7 @@
             '</div><div class="badges">' + statusBadges(c) + '</div></div>' +
             '<div class="cam-actions">' +
             '<button class="btn primary" data-act="preview" data-did="' + esc(c.did) + '"' + offlineDis + '>实时预览</button>' +
-            // v2.3.1 入口收敛：回放与录像文件以摄像头卡片为一级入口（设计 docs/design/05）
-            '<button class="btn soft" data-act="pb" data-did="' + esc(c.did) + '">回放</button>' +
+            // v2.3.1 入口收敛：录像文件以摄像头卡片为一级入口；回放入口保留在底部导航 tab
             '<button class="btn soft" data-act="files" data-did="' + esc(c.did) + '">录像文件</button>' +
             '</div>' +
             '<div class="cam-actions cam-actions-sub">' +
@@ -982,16 +990,7 @@
         if (tab) tab.click();
     }
 
-    /** v2.3.1 卡片「回放」：直接打开该摄像头今天的回放并从上一段末尾自动起播。 */
-    function gotoCamPlayback(did) {
-        var pb = state.pb;
-        state.pbPending = null;
-        pb.did = String(did);
-        pb.dateStr = localDateStr(new Date());
-        pb.inited = true; // 自己拉时间轴，避免 enterPlayback 首次进入重复 loadTimeline
-        gotoTab('playback');
-        loadTimeline(true);
-    }
+    /** v2.3.1 事件页「看回放」：定位待办由 applyPbPending 消费；卡片回放按钮已移除（回放入口收敛到导航 tab）。 */
 
     /* ---------- v2.3.1 录像文件弹层（唯一入口=摄像头卡片；设置页提供全部摄像头管理） ---------- */
     function openFilesModal(did) {
@@ -1387,7 +1386,7 @@
                 method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
             });
             toast('录像已开始', 'ok');
-            loadDevices(false); loadRecordings();
+            loadDevices(false); loadRecordings(true);
         } catch (e) { toast(e.message, 'err'); }
     }
     async function stopRecord(did) {
@@ -1398,27 +1397,40 @@
         } catch (e) { toast(e.message, 'err'); }
     }
 
-    async function loadRecordings() {
+    /** 录像列表 15s 客户端缓存：弹层反复开关 / 锁定切换时秒开，刷新按钮与批量操作后强制拉取。 */
+    var recCache = { key: null, at: 0, data: null };
+
+    async function loadRecordings(force) {
         var filter = $('recFilter').value || '';
+        if (!force && recCache.data && recCache.key === filter && Date.now() - recCache.at < 15000) {
+            applyRecList(recCache.data);
+            return;
+        }
         var url = 'api/recordings' + (filter ? '?did=' + encodeURIComponent(filter) : '');
         try {
             // 确保设备名已加载，录像列表才能显示“名称（DID）”而非裸 DID
             if (!state.devices.length) { try { await loadDevices(false); } catch (e2) { /* 忽略，退回显示 DID */ } }
+            $('recList').innerHTML = '<tr><td colspan="6" class="empty">加载中…</td></tr>';
             var list = await api(url);
-            state.recListCurrent = list || [];
-            state.recRows = new Map(state.recListCurrent.map(function (r) {
-                return [r.name, { size: r.size || 0, recording: !!r.recording }];
-            }));
-            // 刷新后剔除已被删除 / 已不在当前筛选结果里的勾选，避免误删看不见的文件
-            Array.from(state.recSelected).forEach(function (n) {
-                if (!state.recRows.has(n)) state.recSelected.delete(n);
-            });
-            renderRecordings(list);
+            recCache = { key: filter, at: Date.now(), data: list || [] };
+            applyRecList(recCache.data);
         } catch (e) {
             $('recList').innerHTML = '<tr><td colspan="6" class="empty">加载失败：' + esc(e.message) + '</td></tr>';
             state.recRows = new Map();
             updateBatchUi();
         }
+    }
+
+    function applyRecList(list) {
+        state.recListCurrent = list || [];
+        state.recRows = new Map(state.recListCurrent.map(function (r) {
+            return [r.name, { size: r.size || 0, recording: !!r.recording }];
+        }));
+        // 刷新后剔除已被删除 / 已不在当前筛选结果里的勾选，避免误删看不见的文件
+        Array.from(state.recSelected).forEach(function (n) {
+            if (!state.recRows.has(n)) state.recSelected.delete(n);
+        });
+        renderRecordings(list);
     }
     /** v1.2.13 摄像头快捷标签：与 recFilter 下拉联动，点击即按该摄像头筛选。 */
     function renderRecChips() {
@@ -1624,7 +1636,7 @@
         } catch (e) {
             toast('批量删除失败：' + e.message, 'err');
         } finally {
-            await loadRecordings();
+            await loadRecordings(true);
             btn.disabled = false;
             updateBatchUi();
         }
@@ -1698,7 +1710,7 @@
         if (!confirm('确认删除录像文件？\n' + name)) return;
         try {
             await api('api/recordings/' + encodeURIComponent(name), { method: 'DELETE' });
-            toast('已删除', 'ok'); loadRecordings();
+            toast('已删除', 'ok'); loadRecordings(true);
         } catch (e) { toast(e.message, 'err'); }
     }
 
@@ -5179,11 +5191,11 @@
         $('btnRefresh').addEventListener('click', function () {
             loadDevices(true); loadRecordings(); loadCamEvents();
         });
-        $('btnRecRefresh').addEventListener('click', loadRecordings);
+        $('btnRecRefresh').addEventListener('click', function () { loadRecordings(true); });
         $('recFilter').addEventListener('change', function () {
             // 换筛选条件后清空勾选，避免删到当前列表里看不见的文件
             state.recSelected.clear();
-            loadRecordings();
+            loadRecordings(true);
         });
 
         // v1.2.2 录像批量操作：表头全选、行勾选、批量删除 / 打包下载
@@ -5815,7 +5827,6 @@
             }
             else if (act === 'evsnap') openEvSnapshot(Number(b.getAttribute('data-evid')));
             else if (act === 'evmore') gotoCamEvents(did);
-            else if (act === 'pb') gotoCamPlayback(did);
             else if (act === 'files') openFilesModal(did);
         });
 

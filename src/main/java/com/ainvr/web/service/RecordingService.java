@@ -61,6 +61,11 @@ public class RecordingService {
     private static final DateTimeFormatter NAME_TIME = DateTimeFormatter.ofPattern("HHmmss");
     /** 相邻分段起点间隔不超过该值（毫秒）视为同一次连续录像，用于推断中间段时长。 */
     private static final long MERGE_GAP_MS = 300_000L;
+    /** v2.3.1 列表缓存 TTL：弹层反复开关 / 批量操作后刷新等短间隔重复请求不再重扫磁盘。 */
+    private static final long LIST_CACHE_MS = 3_000L;
+    /** 列表缓存：key=didFilter（"*" 表示全部）。删除 / 目录切换时立即失效。 */
+    private volatile List<Map<String, Object>> listCache;
+    private volatile String listCacheKey;
 
     private final NvrProperties props;
     private final StreamHub hub;
@@ -271,8 +276,25 @@ public class RecordingService {
         active.clear();
     }
 
-    /** 枚举录像分段文件（仅根目录下的 mp4，HLS 缓存子目录不计）。 */
+    /** 枚举录像分段文件（仅根目录下的 mp4，HLS 缓存子目录不计）。结果缓存 {@value #LIST_CACHE_MS}ms。 */
     public List<Map<String, Object>> list(String didFilter) throws IOException {
+        String key = (didFilter == null || didFilter.isBlank()) ? "*" : didFilter;
+        List<Map<String, Object>> cached = listCache;
+        if (cached != null && key.equals(listCacheKey)) {
+            return cached;
+        }
+        List<Map<String, Object>> out = scanList(didFilter);
+        listCache = out;
+        listCacheKey = key;
+        return out;
+    }
+
+    private void invalidateListCache() {
+        listCache = null;
+        listCacheKey = null;
+    }
+
+    private List<Map<String, Object>> scanList(String didFilter) {
         File[] files = rootDir.listFiles((d, name) ->
                 name.endsWith(".mp4") && FILE_PATTERN.matcher(name).matches());
         List<Map<String, Object>> out = new ArrayList<>();
@@ -408,6 +430,7 @@ public class RecordingService {
         } catch (IOException e) {
             throw ApiException.badRequest("删除失败：" + e.getMessage());
         }
+        invalidateListCache();
     }
 
     // ===================== 批量操作（v1.2.2） =====================
@@ -493,6 +516,7 @@ public class RecordingService {
         }
         log.info("批量删除录像：成功 {} 个、跳过录制中 {} 个、失败 {} 个",
                 deleted.size(), skipped.size(), failed.size());
+        invalidateListCache();
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("deleted", deleted);
         out.put("skipped", skipped);
@@ -636,6 +660,7 @@ public class RecordingService {
         List<String> running = detachAll();
         // 切换根目录并持久化（先确保目录可用，再落盘，避免保存一个不可用路径）
         this.rootDir = abs;
+        invalidateListCache();
         ensureDir(abs);
         settingsStore.saveRecordingDir(reset ? null : abs.getAbsolutePath());
         log.info("录像存储目录已切换为：{}（{} 路录像将在新目录继续）", abs.getAbsolutePath(), running.size());

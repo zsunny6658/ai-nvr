@@ -215,6 +215,13 @@
                     <version>${ffmpeg.version}</version>
                     <classifier>linux-x86_64</classifier>
                 </dependency>
+                <!-- macOS（Apple Silicon）：本机测试/调试用（如 AAC 音轨端到端测试需本地加载 ffmpeg native） -->
+                <dependency>
+                    <groupId>org.bytedeco</groupId>
+                    <artifactId>ffmpeg</artifactId>
+                    <version>${ffmpeg.version}</version>
+                    <classifier>macosx-arm64</classifier>
+                </dependency>
             </dependencies>
         </profile>
         <profile>
