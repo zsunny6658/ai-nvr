@@ -188,6 +188,8 @@ body:not(.authed) .sidenav { display: none; }
 @media (max-width: 640px) {
     .sidenav { display: none !important; }
     .shell { width: 100%; }
+    /* 底部导航是 fixed 悬浮层，滚动内容末尾的页脚会被盖住：给页脚下让位 */
+    .app-footer { padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px)); }
 }
 
 /* ============ 按钮 ============ */
