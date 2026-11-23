@@ -31,7 +31,7 @@ class StaticAssetContractTest {
 
         assertTrue(html.contains("btnPreviewBack"), "预览弹层缺少应用内返回按钮");
         assertTrue(html.contains("btnPlayerBack"), "回放弹层缺少应用内返回按钮");
-        assertTrue(html.contains("v=68"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
+        assertTrue(html.contains("v=69"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
         // v2.3.1 真机验证第五轮：主题快捷按钮两态 + 选目录自动授权 + 内置权限面板
         assertTrue(js.contains("trimAuthorizePath"), "缺少选目录自动授权逻辑");
         assertTrue(js.contains("authorizeUserFile"), "缺少用户空间授权调用");
@@ -80,6 +80,19 @@ class StaticAssetContractTest {
         assertTrue(js.contains("refreshTimelineLive().then"), "播到尾端应先刷新时间轴再定论（新封段无缝续播）");
         assertTrue(js.contains("cur.recording && cur.durMs > oldDur"), "录制段时长增长时应从断点续播");
         assertTrue(js.contains("prev.durMs / 1000 - 30"), "进回放起始点应落在上一段末尾 30 秒处");
+        // v2.3.1 入口收敛（docs/design/05 P1+P2）：录像文件唯一入口=卡片弹层，事件卡片入口强化
+        assertTrue(html.contains("filesModal"), "录像文件应为弹层（从摄像头卡片进入）");
+        assertTrue(html.contains("btnFilesAll"), "设置页应保留全部录像文件管理入口");
+        assertTrue(html.contains("recLockChip"), "文件弹层应显示「仅看」锁定胶囊");
+        assertTrue(html.contains("evLockChip"), "事件页应有「仅看」锁定胶囊");
+        assertTrue(js.contains("openFilesModal"), "缺少文件弹层打开逻辑");
+        assertTrue(js.contains("gotoCamPlayback"), "卡片缺少回放直达逻辑");
+        assertTrue(js.contains("updateEvLockChip"), "缺少事件锁定胶囊同步逻辑");
+        assertTrue(css.contains(".files-locked"), "锁定态应隐藏摄像头筛选（files-locked）");
+        assertTrue(css.contains(".lock-chip"), "缺少锁定胶囊样式");
+        assertTrue(css.contains(".cam-actions-sub"), "摄像头卡片应为双行操作区");
+        assertFalse(html.contains("pbPaneFiles"), "回放页不应再保留「录像文件」二级窗格");
+        assertFalse(js.contains("setPbPane"), "回放页二级窗格切换逻辑应已移除");
         // v2.3.1 飞牛桌面 SDK 融合 + 快照归档
         assertTrue(html.contains("vendor/trimapp-bridge.js"), "缺少 @trimjs/web-app 桥接脚本");
         assertTrue(html.contains("dirSysPick"), "目录弹窗缺少系统文件选择器按钮");

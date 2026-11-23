@@ -393,6 +393,26 @@ button.net.sleep:hover { filter: brightness(1.15); }
 .modal-x { border: none; background: none; font-size: 24px; line-height: 1; cursor: pointer; color: var(--muted); }
 .modal-x:hover { color: var(--ink); }
 .modal-foot { padding: 12px 18px 16px; border-top: 1px solid var(--line); }
+
+/* ============ 录像文件弹层 + 「仅看」锁定胶囊（v2.3.1 入口收敛） ============ */
+.files-modal { padding-bottom: 0; }
+.files-modal .files-head { display: flex; align-items: center; gap: 10px; }
+.files-modal .modal-head h3 { margin: 0; font-size: 16px; }
+.files-modal .files-toolbar { display: flex; gap: 8px; align-items: center; padding: 12px 18px 0; }
+.files-modal .files-toolbar .select { max-width: 220px; }
+.files-modal .cam-chips { padding: 10px 18px 0; }
+.files-modal .table-wrap { margin: 12px 18px 18px; max-height: 58vh; overflow: auto; }
+/* 锁定单摄像头（卡片入口）：隐藏摄像头筛选与快捷标签，只留锁定胶囊 */
+.files-modal.files-locked #recFilter { display: none; }
+.files-modal.files-locked .cam-chips { display: none; }
+.lock-chip { display: inline-flex; align-items: center; border: 1px solid var(--accent-line);
+    background: var(--panel-2); color: var(--accent-ink); border-radius: 999px;
+    padding: 2px 12px; font-size: 12px; font-weight: 500; cursor: pointer; line-height: 1.6; }
+.lock-chip:hover { background: var(--accent-line); color: #fff; }
+/* 摄像头卡片双行操作区：主行 预览/回放/录像文件，次行 录像开关/自检 */
+.cam-actions { display: flex; gap: 8px; margin-top: 10px; padding: 0 14px 8px; }
+.cam-actions-sub { padding: 0 14px 12px; margin-top: 0; }
+.cam-actions .btn { flex: 1; }
 .rtsp-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .rtsp-line code { background: var(--panel-2); padding: 4px 8px; border-radius: 6px; font-size: 12px; flex: 1; min-width: 200px; word-break: break-all; }
 .link-box { margin-top: 12px; padding: 10px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--panel-2); }

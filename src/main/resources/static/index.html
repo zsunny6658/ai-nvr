@@ -12,7 +12,7 @@
     <base href="./">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='4' fill='%230e1116'/%3E%3Ccircle cx='8' cy='8' r='3' fill='%2322d3ee'/%3E%3C/svg%3E">
     <title>aiNVR · AI 增强摄像头 NVR</title>
-    <link rel="stylesheet" href="style.css?v=68">
+    <link rel="stylesheet" href="style.css?v=69">
 </head>
 <body>
 
@@ -146,7 +146,7 @@
         <!-- v1.2.8 事件告警：运动侦测 / 自动录像事件，支持筛选、批量处理与快照查看 -->
         <div id="tab-events" hidden>
             <div class="section-head">
-                <h2>事件告警</h2>
+                <h2>事件告警 <button type="button" class="lock-chip" id="evLockChip" hidden title="点击清除，查看全部摄像头"></button></h2>
                 <div><button class="btn soft" id="btnEvRefresh" type="button">&#8635; 刷新</button></div>
             </div>
             <div class="ev-stats" id="evStats">-</div>
@@ -198,10 +198,6 @@
         </div>
 
         <div id="tab-playback" hidden>
-            <div class="pb-pane-bar">
-                <button class="btn tiny pb-pane active" id="pbPaneTimeline" type="button">时间轴回放</button>
-                <button class="btn tiny pb-pane" id="pbPaneFiles" type="button">录像文件</button>
-            </div>
             <div id="pbTimelinePane">
             <div class="section-head">
                 <h2>录像回放</h2>
@@ -259,37 +255,6 @@
                 </div>
             </div>
             </div>
-        <div id="tab-recordings" hidden>
-            <div class="section-head">
-                <h2>录像文件</h2>
-                <div>
-                    <select id="recFilter" class="select"></select>
-                    <button class="btn soft" id="btnRecRefresh">刷新</button>
-                </div>
-            </div>
-            <!-- v1.2.13 按摄像头分组：快捷标签（与上方下拉联动） -->
-            <div class="cam-chips" id="recChips"></div>
-            <!-- v1.2.2 批量操作：勾选文件后统一打包下载 / 删除 -->
-            <div class="rec-toolbar">
-                <span class="rec-selinfo" id="recSelInfo">勾选文件后可批量打包下载或删除</span>
-                <div class="rec-toolbar-actions">
-                    <button class="btn tiny soft" id="btnRecBatchZip" disabled>打包下载</button>
-                    <button class="btn tiny soft-danger" id="btnRecBatchDel" disabled>批量删除</button>
-                    <button class="btn tiny" id="btnRecClearSel" hidden>取消选择</button>
-                </div>
-            </div>
-            <div class="table-wrap">
-                <table class="rec-table">
-                    <thead>
-                    <tr>
-                        <th class="rec-check"><input type="checkbox" id="recSelAll" title="全选本页" aria-label="全选本页"></th>
-                        <th>文件名</th><th>摄像头</th><th>大小</th><th>时间</th><th>操作</th>
-                    </tr>
-                    </thead>
-                    <tbody id="recList"></tbody>
-                </table>
-            </div>
-        </div>
         </div>
 
         <!-- 设置 -->
@@ -348,6 +313,12 @@
                     </div>
                     <div id="setArchiveMsg" class="muted small"></div>
                     <p class="muted small">目录布局：<code>归档目录/yyyy-MM-dd/摄像头名/时分秒-事件id-类型.jpg</code>。仅对开启归档<strong>之后</strong>新产生的 AI 事件生效，历史事件不回溯归档。<br>查看入口：①「事件告警」页按类型筛出 AI 人形 / 车辆 / 宠物事件，点事件卡上的<strong>「打开归档」</strong>直达对应文件；②飞牛文件管理中直接浏览归档目录。</p>
+                    <hr class="set-hr">
+                    <h3>全部录像文件管理</h3>
+                    <p class="muted small">跨摄像头查看 / 批量打包下载 / 批量删除。日常看某个摄像头的录像请从<strong>首页摄像头卡片 → 录像文件</strong>进入。</p>
+                    <div class="set-actions">
+                        <button class="btn" id="btnFilesAll" type="button">打开全部录像文件</button>
+                    </div>
                 </div>
                 <div class="set-card set-card-wide" data-sgroup="ha">
                     <h3>Home Assistant（MQTT）</h3>
@@ -862,6 +833,45 @@
     </div>
 </div>
 
+<!-- 录像文件模态：唯一入口 = 摄像头卡片（锁定单摄像头）；设置页提供全部摄像头管理入口 -->
+<div class="modal-mask" id="filesModal" hidden>
+    <div class="modal modal-lg files-modal">
+        <div class="modal-head">
+            <div class="files-head">
+                <h3>录像文件</h3>
+                <button type="button" class="lock-chip" id="recLockChip" hidden title="点击清除锁定，查看全部摄像头"></button>
+            </div>
+            <button class="modal-x" id="filesClose" type="button" aria-label="关闭录像文件">×</button>
+        </div>
+        <div class="files-toolbar">
+            <select id="recFilter" class="select" aria-label="设备"></select>
+            <button class="btn soft" id="btnRecRefresh">刷新</button>
+        </div>
+        <!-- v1.2.13 按摄像头分组：快捷标签（与上方下拉联动；锁定单摄像头时隐藏） -->
+        <div class="cam-chips" id="recChips"></div>
+        <!-- v1.2.2 批量操作：勾选文件后统一打包下载 / 删除 -->
+        <div class="rec-toolbar">
+            <span class="rec-selinfo" id="recSelInfo">勾选文件后可批量打包下载或删除</span>
+            <div class="rec-toolbar-actions">
+                <button class="btn tiny soft" id="btnRecBatchZip" disabled>打包下载</button>
+                <button class="btn tiny soft-danger" id="btnRecBatchDel" disabled>批量删除</button>
+                <button class="btn tiny" id="btnRecClearSel" hidden>取消选择</button>
+            </div>
+        </div>
+        <div class="table-wrap">
+            <table class="rec-table">
+                <thead>
+                <tr>
+                    <th class="rec-check"><input type="checkbox" id="recSelAll" title="全选本页" aria-label="全选本页"></th>
+                    <th>文件名</th><th>摄像头</th><th>大小</th><th>时间</th><th>操作</th>
+                </tr>
+                </thead>
+                <tbody id="recList"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
 <!-- 服务器目录选择模态 -->
 <div class="modal-mask" id="dirModal" hidden>
     <div class="modal modal-dir">
@@ -978,8 +988,8 @@
 <div id="toast" class="toast"></div>
 
 <script src="vendor/hls.min.js"></script>
-<script type="module" src="vendor/trimapp-bridge.js?v=68"></script>
-<script src="watchdog.js?v=68"></script>
-<script src="app.js?v=68"></script>
+<script type="module" src="vendor/trimapp-bridge.js?v=69"></script>
+<script src="watchdog.js?v=69"></script>
+<script src="app.js?v=69"></script>
 </body>
 </html>

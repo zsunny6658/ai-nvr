@@ -33,6 +33,7 @@
         // v2.3.1：每组增量渲染（首次 50 行，点「加载更多」续 200 行），避免上千行 DOM 一次成型卡死主线程
         recCollapsed: new Set(), recExpanded: new Set(), recCounts: {}, recShown: new Map(), recListCurrent: [], recGroupCount: 1,
         lastLoads: { devicesFull: 0, dashboard: 0, boards: 0, about: 0 },
+        filesLockedDid: '', // v2.3.1 文件弹层锁定摄像头（''=全部视图，仅设置页入口）
         // v1.2.8：事件告警页（选中集 / 已加载行 / 分页游标）
         evSelected: new Set(), evRows: [], evOffset: 0, evTotal: 0, evBusy: false,
         // v1.2.15：全量事件数 / 删除或清空操作的重入保护
@@ -288,6 +289,8 @@
             loadDevices(false);
         } else if (kind === 'player' && !$('playerModal').hidden) {
             stopPlayerOnly();
+        } else if (kind === 'files' && !$('filesModal').hidden) {
+            closeFilesModalQuiet();
         }
     }
     window.addEventListener('popstate', onOverlayHistoryBack);
@@ -314,6 +317,7 @@
         if (!$('gridModal').hidden) stopGridOnly();
         if (!$('previewModal').hidden) stopPreviewOnly();
         if (!$('playerModal').hidden) stopPlayerOnly();
+        if (!$('filesModal').hidden) closeFilesModalQuiet();
         // 门禁回锁 / 切换视图时同步复位弹层历史，避免留下「按返回没反应」的死条目
         if (overlayHistoryDepth) dropOverlayHistoryQuiet();
         pausePb();
@@ -812,6 +816,11 @@
             '</div><div class="badges">' + statusBadges(c) + '</div></div>' +
             '<div class="cam-actions">' +
             '<button class="btn primary" data-act="preview" data-did="' + esc(c.did) + '"' + offlineDis + '>实时预览</button>' +
+            // v2.3.1 入口收敛：回放与录像文件以摄像头卡片为一级入口（设计 docs/design/05）
+            '<button class="btn soft" data-act="pb" data-did="' + esc(c.did) + '">回放</button>' +
+            '<button class="btn soft" data-act="files" data-did="' + esc(c.did) + '">录像文件</button>' +
+            '</div>' +
+            '<div class="cam-actions cam-actions-sub">' +
             recBtn +
             '<button class="btn soft probe-btn" data-act="probe" data-did="' + esc(c.did) + '">自检</button>' +
             '</div>' +
@@ -971,6 +980,73 @@
         state.evPendingDid = String(did);
         var tab = document.querySelector('.tab[data-tab="events"]');
         if (tab) tab.click();
+    }
+
+    /** v2.3.1 卡片「回放」：直接打开该摄像头今天的回放并从上一段末尾自动起播。 */
+    function gotoCamPlayback(did) {
+        var pb = state.pb;
+        state.pbPending = null;
+        pb.did = String(did);
+        pb.dateStr = localDateStr(new Date());
+        pb.inited = true; // 自己拉时间轴，避免 enterPlayback 首次进入重复 loadTimeline
+        gotoTab('playback');
+        loadTimeline(true);
+    }
+
+    /* ---------- v2.3.1 录像文件弹层（唯一入口=摄像头卡片；设置页提供全部摄像头管理） ---------- */
+    function openFilesModal(did) {
+        var locked = did != null && did !== '';
+        $('filesModal').hidden = false;
+        $('filesModal').classList.toggle('files-locked', locked);
+        var sel = $('recFilter');
+        var chip = $('recLockChip');
+        if (locked) {
+            var v = String(did);
+            var has = Array.prototype.some.call(sel.options, function (o) { return o.value === v; });
+            if (!has) {
+                var opt = document.createElement('option');
+                opt.value = v;
+                opt.textContent = cameraName(v);
+                sel.appendChild(opt);
+            }
+            sel.value = v;
+            chip.textContent = '仅看：' + cameraName(v) + ' ✕';
+            chip.hidden = false;
+            state.recSelected.clear(); // 换锁定对象后清空勾选，避免误删看不见的文件
+        } else {
+            chip.hidden = true;
+            sel.value = '';
+        }
+        state.filesLockedDid = locked ? String(did) : '';
+        loadRecordings();
+        enterOverlayHistory('files');
+    }
+    /** 关闭文件弹层（应用内触发：需要退掉弹层历史条目）。 */
+    function closeFilesModal() {
+        if ($('filesModal').hidden) return;
+        $('filesModal').hidden = true;
+        state.filesLockedDid = '';
+        state.recSelected.clear();
+        leaveOverlayHistory();
+    }
+    /** popstate / 门禁回锁路径：历史已处理，只关界面。 */
+    function closeFilesModalQuiet() {
+        $('filesModal').hidden = true;
+        state.filesLockedDid = '';
+        state.recSelected.clear();
+    }
+
+    /** v2.3.1 事件页「仅看」胶囊：从卡片进入 / 下拉筛选后显示，点击一键回全部。 */
+    function updateEvLockChip() {
+        var chip = $('evLockChip');
+        if (!chip) return;
+        var did = $('evFilterDid').value || '';
+        if (did) {
+            chip.textContent = '仅看：' + cameraName(did) + ' ✕';
+            chip.hidden = false;
+        } else {
+            chip.hidden = true;
+        }
     }
 
     /** 轮询只更新状态徽标、在线态与录像按钮，不重建卡片（避免按钮闪烁 / 点击中断）。 */
@@ -3774,6 +3850,7 @@
         bindCamChips('evChips', function (did) {
             if (($('evFilterDid').value || '') === did) return;
             selectCamFilter('evFilterDid', did);
+            updateEvLockChip();
             loadEvents(true);
         });
     }
@@ -4515,12 +4592,20 @@
 
     /* ---------- 录像回放 ---------- */
     function openPlayer(name) {
+        // 从录像文件弹层点「播放」：关闭弹层并复用已压的弹层历史条目（换类型），
+        // 不再叠加新条目——避免「播放→返回」出现一层按不掉的死记录
+        if (!$('filesModal').hidden) {
+            closeFilesModalQuiet();
+            if (overlayHistoryDepth) { switchOverlayKind('player'); }
+            else { enterOverlayHistory('player'); }
+        } else {
+            enterOverlayHistory('player');
+        }
         $('playerTitle').textContent = '录像回放 · ' + name;
         $('playerModal').hidden = false;
         var v = $('playerVideo');
         v.src = withToken('api/recordings/' + encodeURIComponent(name));
         v.play().catch(function () {});
-        enterOverlayHistory('player');
     }
     function stopPlayerOnly() {
         $('playerModal').hidden = true;
@@ -5134,10 +5219,19 @@
             $('evFilterType').value = '';
             $('evFilterHandled').value = '';
             $('evFilterDate').value = '';
+            updateEvLockChip();
+            loadEvents(true);
+        });
+        $('evLockChip').addEventListener('click', function () {
+            $('evFilterDid').value = '';
+            updateEvLockChip();
             loadEvents(true);
         });
         ['evFilterDid', 'evFilterType', 'evFilterHandled', 'evFilterDate'].forEach(function (id) {
-            $(id).addEventListener('change', function () { loadEvents(true); });
+            $(id).addEventListener('change', function () {
+                if (id === 'evFilterDid') { updateEvLockChip(); }
+                loadEvents(true);
+            });
         });
         $('evSelAll').addEventListener('change', function (e) {
             state.evRows.forEach(function (r) {
@@ -5622,13 +5716,13 @@
                 sel.value = state.evPendingDid;
                 state.evPendingDid = '';
             }
+            updateEvLockChip();
             loadEvents(true);
         }
         if (name === 'playback') {
             enterPlayback();
             // v1.2.19：事件页「看回放」带来的定位待办（摄像头 + 日期 + 时刻）
             applyPbPending();
-            setPbPane(state.pbPane || 'timeline');
         } else {
             pausePb(); stopPbLive();
         }
@@ -5636,19 +5730,6 @@
             // v2.3.1 切页卡顿优化：30 秒内重复进入设置页不再全量重拉（设置页接口多、
             // 重复渲染开销大）；保存操作后各分组会自行刷新，需要强制最新时用页内刷新按钮
             if (Date.now() - (state.settingsLoadedAt || 0) > 30000) { loadSettings(); loadBoards(); }
-        }
-    }
-
-    /** 回放页二级窗格：timeline=时间轴回放（原录像回放内容），files=录像文件列表。 */
-    function setPbPane(pane) {
-        state.pbPane = pane;
-        $('pbTimelinePane').hidden = pane !== 'timeline';
-        $('tab-recordings').hidden = pane !== 'files';
-        $('pbPaneTimeline').classList.toggle('active', pane === 'timeline');
-        $('pbPaneFiles').classList.toggle('active', pane === 'files');
-        if (pane === 'files') {
-            pausePb(); stopPbLive();
-            loadRecordings();
         }
     }
 
@@ -5701,9 +5782,20 @@
             });
         }
 
-        // v2.0.1 回放页内二级切换：时间轴回放 / 录像文件
-        $('pbPaneTimeline').addEventListener('click', function () { setPbPane('timeline'); });
-        $('pbPaneFiles').addEventListener('click', function () { setPbPane('files'); });
+        // v2.3.1 录像文件弹层：卡片「录像文件」锁定单摄像头；设置页入口看全部；× 关闭
+        $('filesClose').addEventListener('click', closeFilesModal);
+        $('recLockChip').addEventListener('click', function () {
+            $('recFilter').value = '';
+            $('filesModal').classList.remove('files-locked');
+            $('recLockChip').hidden = true;
+            state.filesLockedDid = '';
+            state.recSelected.clear();
+            loadRecordings();
+        });
+        $('btnFilesAll').addEventListener('click', function () { openFilesModal(null); });
+        $('filesModal').addEventListener('click', function (e) {
+            if (e.target === this) { closeFilesModal(); }
+        });
 
         // 设备卡片按钮：一次性事件委托（轮询只改属性、不重建按钮，监听持续有效）
         $('deviceGrid').addEventListener('click', function (e) {
@@ -5723,6 +5815,8 @@
             }
             else if (act === 'evsnap') openEvSnapshot(Number(b.getAttribute('data-evid')));
             else if (act === 'evmore') gotoCamEvents(did);
+            else if (act === 'pb') gotoCamPlayback(did);
+            else if (act === 'files') openFilesModal(did);
         });
 
         // 首页卡片缩略图：快照文件已清理/损坏时降级成占位块，不显示破图
