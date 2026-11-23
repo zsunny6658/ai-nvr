@@ -99,9 +99,34 @@ public class DeviceCatalog {
             var renewed = sessionHolder.renew();
             fresh = new DeviceDiscovery(new MiCloudApi(renewed)).listCameras();
         }
-        devices = expandDualLens(fresh);
+        // v2.3.1 热修：落盘前统一排序——此前仅 all() 读侧排序，refresh=true 的调用方
+        // （解锁进页 / 手动刷新 / 休眠下发后的 loadDevices(true)）拿到的是发现顺序，
+        // 云端每次返回顺序不稳定 → 前端卡片顺序来回跳
+        devices = sortedSnapshot(expandDualLens(fresh));
         notifyTransitions(previous, fresh);
-        return fresh;
+        return devices;
+    }
+
+    /** 设备展示顺序：手动排序（deviceOrder）优先，其次中文名 Collator + did，确定且稳定。 */
+    private List<CameraDevice> sortedSnapshot(List<CameraDevice> list) {
+        if (list.size() < 2) {
+            return list;
+        }
+        Map<String, Integer> order = settings.deviceOrder();
+        if (order.isEmpty()) {
+            Collator collator = Collator.getInstance(Locale.CHINA);
+            return list.stream()
+                    .sorted(Comparator.comparing(CameraDevice::name, collator)
+                            .thenComparing(CameraDevice::did))
+                    .toList();
+        }
+        return list.stream()
+                .sorted(Comparator
+                        .comparingInt((CameraDevice c) ->
+                                order.getOrDefault(DualLens.baseDid(c.did()), Integer.MAX_VALUE))
+                        .thenComparingInt(c -> c.did().endsWith(DualLens.SUFFIX) ? 1 : 0)
+                        .thenComparing(CameraDevice::did))
+                .toList();
     }
 
     /**
@@ -165,21 +190,7 @@ public class DeviceCatalog {
         if (snapshot.size() < 2) {
             return snapshot;
         }
-        Map<String, Integer> order = settings.deviceOrder();
-        if (order.isEmpty()) {
-            Collator collator = Collator.getInstance(Locale.CHINA);
-            return snapshot.stream()
-                    .sorted(Comparator.comparing(CameraDevice::name, collator)
-                            .thenComparing(CameraDevice::did))
-                    .toList();
-        }
-        return snapshot.stream()
-                .sorted(Comparator
-                        .comparingInt((CameraDevice c) ->
-                                order.getOrDefault(DualLens.baseDid(c.did()), Integer.MAX_VALUE))
-                        .thenComparingInt(c -> c.did().endsWith(DualLens.SUFFIX) ? 1 : 0)
-                        .thenComparing(CameraDevice::did))
-                .toList();
+        return sortedSnapshot(snapshot);
     }
 
     public Optional<CameraDevice> find(String did) {

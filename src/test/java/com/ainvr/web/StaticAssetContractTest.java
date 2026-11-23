@@ -31,7 +31,7 @@ class StaticAssetContractTest {
 
         assertTrue(html.contains("btnPreviewBack"), "预览弹层缺少应用内返回按钮");
         assertTrue(html.contains("btnPlayerBack"), "回放弹层缺少应用内返回按钮");
-        assertTrue(html.contains("v=79"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
+        assertTrue(html.contains("v=80"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
         // v2.3.1 真机验证第五轮：主题快捷按钮两态 + 选目录自动授权 + 内置权限面板
         assertTrue(js.contains("trimAuthorizePath"), "缺少选目录自动授权逻辑");
         assertTrue(js.contains("authorizeUserFile"), "缺少用户空间授权调用");
@@ -63,6 +63,9 @@ class StaticAssetContractTest {
         assertTrue(js.contains("data-sleeping"), "卡片应带休眠态标记供轮询检测整卡重渲染");
         assertTrue(js.contains("badge off\">休眠中"), "休眠中应显示「休眠中」徽标而非预览中/录像中");
         assertTrue(js.contains("dev.sleeping === true) { img.hidden = false; return; }"), "休眠中应跳过快照轮询保留最近画面");
+        assertTrue(js.contains("rate === 16000"), "对讲 16k 主路径应与兜底插值互斥（无声回归锁）");
+        assertTrue(js.contains("cam-sleep-art") && js.contains("休眠中 · 点击唤醒"), "休眠卡应显示月亮占位图而非快照");
+        assertTrue(js.contains("pv.controls = false"), "触屏端应禁用预览原生控件（误触全屏回归锁）");
         // v2.3.1 真机验证第十一轮续：对讲音质修复 + 全屏悬浮控制
         assertTrue(js.contains("new Ctx({ sampleRate: 16000 })"), "对讲应请求 16kHz 采集上下文（浏览器抗混叠重采样）");
         assertTrue(js.contains("pool.shift() + pool[0]) * 0.5"), "16k→8k 应相邻平均（Nyquist 零点抗混叠）而非纯线性插值");

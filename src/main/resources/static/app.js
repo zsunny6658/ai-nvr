@@ -857,8 +857,18 @@
             '<button type="button" class="cam-media' + (sleeping ? ' cam-media-sleep' : '') + '" data-act="'
             + (sleeping ? 'wake' : 'preview') + '" data-did="' + esc(c.did) + '"' +
             (c.online ? '' : ' disabled') + ' title="' + (sleeping ? '休眠中 · 点击唤醒' : '点击进入实时预览') + '">' +
-            '<img class="cam-media-img" data-snap-did="' + esc(c.did) + '" alt="最近画面" loading="lazy" hidden>' +
-            '<span class="cam-media-hint">' + (c.online ? '快照加载中…' : '') + '</span>' +
+            // v2.3.1 休眠卡不加载快照（休眠中无新画面，最近快照也已过时）：
+            // 显示月亮占位图，点击或 hover 播放按钮均可唤醒
+            (sleeping
+                ? '<span class="cam-sleep-art" aria-hidden="true">'
+                    + '<svg viewBox="0 0 64 64" width="54" height="54" fill="none">'
+                    + '<circle cx="14" cy="14" r="1.6" fill="#e6edf3" opacity=".75"/>'
+                    + '<circle cx="24" cy="7" r="1" fill="#e6edf3" opacity=".5"/>'
+                    + '<circle cx="8" cy="26" r="1" fill="#e6edf3" opacity=".5"/>'
+                    + '<path d="M43 13a19 19 0 1 0 10.5 24.5A16.5 16.5 0 0 1 43 13z" fill="#c9d3de" opacity=".9"/>'
+                    + '</svg><span>休眠中 · 点击唤醒</span></span>'
+                : '<img class="cam-media-img" data-snap-did="' + esc(c.did) + '" alt="最近画面" loading="lazy" hidden>' +
+                  '<span class="cam-media-hint">' + (c.online ? '快照加载中…' : '') + '</span>') +
             (sleeping ? '<span class="cam-sleep-play" aria-hidden="true"><span class="tri"></span></span>' : '') +
             '</button>' +
             '<div class="cam-top"><div>' +
@@ -3821,29 +3831,30 @@
             talk.node.onaudioprocess = function (e) {
                 if (!talk.active || !talk.ws || talk.ws.readyState !== 1) { return; }
                 var input = e.inputBuffer.getChannelData(0);
-                // v2.3.1 杂音修复 ②：16k→8k 用相邻两样本平均（[0.5,0.5] FIR，
-                // 在 8k Nyquist 处恰有零点）抑制抽取混叠；再做一阶 DC 高通去隆隆声
                 var pool = talk.pool;
                 for (var i = 0; i < input.length; i++) { pool.push(input[i]); }
                 var out = [];
-                while (pool.length >= 2) {
-                    var s = (pool.shift() + pool[0]) * 0.5;
-                    talk.dc += (s - talk.dc) * 0.01;
-                    out.push(s - talk.dc);
-                }
                 var rate = ctx.sampleRate || 16000;
-                var step = rate / 8000;
-                if (step !== 1) {
-                    // 兜底：上下文不支持 16kHz（如旧 iOS），退化为带窗线性插值抽取
-                    var acc = pool.slice(), pos = talk.accPos, down = [];
+                if (rate === 16000) {
+                    // v2.3.1 无声热修：主路径 2:1 成对平均（[0.5,0.5] FIR，在 8k Nyquist
+                    // 处有零点）——此前 rate/8000=2 误入兜底插值分支，而 pool 已被本分支
+                    // 消费光，兜底再从空池插值恒得空 → 一个字节都没发出去
+                    while (pool.length >= 2) {
+                        var s16 = (pool.shift() + pool[0]) * 0.5;
+                        talk.dc += (s16 - talk.dc) * 0.01;
+                        out.push(s16 - talk.dc);
+                    }
+                } else {
+                    // 兜底：上下文不支持 16kHz（如旧 iOS），带窗线性插值抽取到 8kHz
+                    var step = rate / 8000;
+                    var acc = pool, pos = talk.accPos;
                     while (pos + 1 < acc.length) {
                         var i0 = Math.floor(pos), f = pos - i0;
-                        down.push(acc[i0] * (1 - f) + acc[i0 + 1] * f);
+                        out.push(acc[i0] * (1 - f) + acc[i0 + 1] * f);
                         pos += step;
                     }
                     talk.pool = acc.slice(Math.floor(pos));
                     talk.accPos = pos - Math.floor(pos);
-                    out = down;
                 }
                 if (!out.length) { return; }
                 if (talk.linearPcm) {
@@ -6356,6 +6367,12 @@
         var pv = $('previewVideo');
         pv.addEventListener('playing', function () { $('previewLoading').hidden = true; });
         pv.addEventListener('loadeddata', function () { $('previewLoading').hidden = true; });
+        // v2.3.1 热修：触屏端禁用预览原生控件——手机浏览器（含 X5/QQ 内核）点按视频
+        // 即弹原生控制条，误触全屏键/手势即整页接管全屏，「随便点一下就全屏」；
+        // 实时预览是直播流，原生控件的进度条无意义，全屏统一走顶栏按钮/悬浮层
+        if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) {
+            pv.controls = false;
+        }
     }
 
     /* ---------- 初始化 ---------- */
