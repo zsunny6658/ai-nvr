@@ -36,6 +36,18 @@ class MiotSleepServiceParseTest {
     }
 
     @Test
+    void numericValuePropItemIsAcceptedForPropsService() throws Exception {
+        // v2.3.1 第十六轮：米家设备控制页（MiotPropsService.readAll）复用同一解析器；
+        // 此前它只解析 result 包裹形态，真机顶层数组下所有属性永远 code=-1、
+        // 界面全部显示「不支持」。这里用属性类数值响应锁住解析行为。
+        var resp = M.readTree(
+                "[{\"did\":\"1149849923\",\"siid\":2,\"piid\":11,\"value\":2,\"code\":0,\"updateTime\":1795424018}]");
+        var item = MiotSleepService.extractPropItem(resp);
+        assertEquals(0, item.path("code").asInt(-1));
+        assertEquals(2, item.path("value").asInt());
+    }
+
+    @Test
     void emptyOrMissingFallsBackToMissingNode() throws Exception {
         assertEquals(-1, MiotSleepService.extractPropItem(M.readTree("[]")).path("code").asInt(-1));
         assertEquals(-1, MiotSleepService.extractPropItem(M.readTree("{}")).path("code").asInt(-1));

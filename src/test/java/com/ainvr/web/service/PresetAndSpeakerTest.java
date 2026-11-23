@@ -58,8 +58,7 @@ class PresetAndSpeakerTest {
         assertEquals(MissCommands.CODEC_PCM, MissCommands.speakerCodecFor("isa.camera.hlc6"));
         assertTrue(MissCommands.speakerLinearPcm("isa.camera.hlc6"));
         assertFalse(MissCommands.speakerLinearPcm("chuangmi.camera.029a02"));
-        // 72ac1 需要 OPUS 上行，暂不支持
-        assertFalse(MissCommands.speakerSupported("chuangmi.camera.72ac1"));
-        assertTrue(MissCommands.speakerSupported("chuangmi.camera.029a02"));
+        // v2.3.1 第十六轮：72ac1 走 OPUS（浏览器 WebCodecs 编码），不再整体拒绝
+        assertEquals(MissCommands.CODEC_OPUS, MissCommands.speakerCodecFor("chuangmi.camera.72ac1"));
     }
 }

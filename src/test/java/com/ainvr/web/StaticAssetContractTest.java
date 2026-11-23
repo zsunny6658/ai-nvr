@@ -31,7 +31,7 @@ class StaticAssetContractTest {
 
         assertTrue(html.contains("btnPreviewBack"), "预览弹层缺少应用内返回按钮");
         assertTrue(html.contains("btnPlayerBack"), "回放弹层缺少应用内返回按钮");
-        assertTrue(html.contains("v=81"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
+        assertTrue(html.contains("v=82"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
         // v2.3.1 真机验证第五轮：主题快捷按钮两态 + 选目录自动授权 + 内置权限面板
         assertTrue(js.contains("trimAuthorizePath"), "缺少选目录自动授权逻辑");
         assertTrue(js.contains("authorizeUserFile"), "缺少用户空间授权调用");
@@ -79,20 +79,34 @@ class StaticAssetContractTest {
                 "统计卡应可点击直达对应页面");
         assertTrue(html.contains("id=\"devFilter\"") && html.contains("data-filter=\"sleeping\""),
                 "应有摄像头筛选 chips（含休眠中）");
+        assertTrue(html.contains("data-filter=\"awake\"") && js.contains("f === 'awake'"),
+                "筛选应包含「未休眠」选项（与休眠对应）");
         assertTrue(js.contains("function deviceMatchesFilter"), "缺少筛选匹配函数");
         assertTrue(js.contains("updateFilterChips()"), "筛选 chips 计数应随刷新更新");
         assertTrue(css.contains(".dev-filter") && css.contains(".chip.active"), "缺少筛选 chips 样式");
         assertTrue(css.contains(".stat-link"), "统计卡应有点击态样式");
+        assertTrue(css.contains(".stat-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));"),
+                "统计卡应为 4 列等宽布局（6 列留空两格问题）");
         assertTrue(css.contains("flex-wrap: wrap; padding: 6px;"),
                 "手机设置导航应换行展示全部分组（横向滑动藏菜单问题）");
         assertTrue(css.contains(".app-footer { padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px)); }"),
                 "移动端页脚下让位规则必须位于文件末尾（此前被 .app-footer 简写覆盖）");
         assertTrue(js.contains("cam-sleep-art") && js.contains("休眠中 · 点击唤醒"), "休眠卡应显示月亮占位图而非快照");
-        assertTrue(js.contains("pv.controls = false"), "触屏端应禁用预览原生控件（误触全屏回归锁）");
+        assertTrue(js.contains("pv.controls = !coarsePtr && !hasTouch"),
+                "预览原生控件应默认关闭、仅在桌面精确指针开启（误触全屏回归锁）");
+        assertFalse(html.contains("previewVideo\" muted autoplay playsinline webkit-playsinline x5-playsinline x5-video-player-type=\"h5\" controls"),
+                "预览 video 不应保留原生 controls 属性（触屏误触全屏回归锁）");
+        assertTrue(css.contains("#previewVideo::-webkit-media-controls"),
+                "触屏端应有 webkit 媒体控件 CSS 兜底隐藏");
         // v2.3.1 真机验证第十一轮续：对讲音质修复 + 全屏悬浮控制
         assertTrue(js.contains("new Ctx({ sampleRate: 16000 })"), "对讲应请求 16kHz 采集上下文（浏览器抗混叠重采样）");
         assertTrue(js.contains("pool.shift() + pool[0]) * 0.5"), "16k→8k 应相邻平均（Nyquist 零点抗混叠）而非纯线性插值");
         assertTrue(js.contains("setInterval"), "对讲应有 40ms 匀速发送节奏器");
+        // v2.3.1 第十六轮：8kHz 上下文主路径（对齐 go2rtc/lalmax）+ OPUS 机型 WebCodecs
+        assertTrue(js.contains("new Ctx({ sampleRate: 8000 })"), "对讲应首选 8kHz 采集上下文（设备扬声器原生采样率）");
+        assertTrue(js.contains("talk.opus = msg.codec === 1032") && js.contains("new window.AudioEncoder"),
+                "OPUS 机型（72ac1）应有 WebCodecs 编码路径");
+        assertTrue(js.contains("new Ctx({ sampleRate: 48000 })"), "OPUS 机型应请求 48kHz 采集上下文");
         assertTrue(html.contains("fsOverlay") && html.contains("fsPtz") && html.contains("btnTalkFs"),
             "全屏浮层应含云台方向键与喊话按钮");
         assertTrue(js.contains("togglePreviewFullscreen") && js.contains("fs-fake"),
@@ -125,6 +139,11 @@ class StaticAssetContractTest {
         // v2.3.1 解锁秒开：缓存优先 + 新鲜度按需刷新 + 锁定停轮询
         assertTrue(js.contains("lastLoads"), "解锁后应按数据新鲜度决定是否重拉（设备 60s/概览 30s）");
         assertTrue(js.contains("setMiotProp"), "米家设备控制应有属性写入逻辑");
+        assertTrue(html.contains("id=\"miotRows\"") && js.contains("renderMiotProps(did)"),
+                "米家设备控制应按读取结果整表 JS 渲染（排版重构）");
+        assertTrue(js.contains("miot-unsup-tag") && js.contains("class=\"miot-row"),
+                "不支持的米家属性应灰显并打「不支持」标签");
+        assertTrue(html.contains("data-miotset") || js.contains("data-miotset"), "米家控制行应有设置按钮标记");
         assertTrue(js.contains("toggleSleep") && !js.contains("wakeCamera"), "唤醒/休眠应统一为 toggleSleep");
         assertTrue(js.contains("stopAppTimers"), "锁定后应停止主界面轮询（消灭 401 空转）");
         // v2.3.1 回放续播新段 + 起始点落前一段

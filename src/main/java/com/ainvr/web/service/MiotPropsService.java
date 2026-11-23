@@ -99,7 +99,9 @@ public class MiotPropsService {
                         "did", base,
                         "siid", siid(k),
                         "piid", piid(k)))));
-                JsonNode first = res.path("result").path(0);
+                // 真机单设备 prop/get 返回顶层数组（与休眠探测同坑，见 MiotSleepService.extractPropItem），
+                // 此前只解析 result 包裹形态导致所有属性永远 code=-1、界面全部显示「不支持」。
+                JsonNode first = MiotSleepService.extractPropItem(res);
                 int code = first.path("code").asInt(-1);
                 item.put("code", code);
                 if (code == 0 && first.hasNonNull("value")) {

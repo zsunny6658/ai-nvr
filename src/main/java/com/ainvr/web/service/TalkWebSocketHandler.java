@@ -16,6 +16,7 @@ import org.springframework.web.socket.handler.AbstractWebSocketHandler;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
@@ -31,8 +32,9 @@ import java.util.regex.Pattern;
  *       让设备准备好扬声器通道，然后回文本 JSON：
  *       {@code {"ok":true,"codec":1027,"linearPcm":false,"sampleRate":8000}}；
  *       失败回 {@code {"ok":false,"error":"..."}} 并关闭；</li>
- *   <li>浏览器实时上行二进制音频块（A-law 320B/40ms 或线性 PCM 640B/40ms），
- *       服务端透传为 MISS 上行音频包（CS2 通道 3）；</li>
+ *   <li>浏览器实时上行二进制音频块（A-law 320B/40ms、线性 PCM 640B/40ms，
+ *       或 OPUS 机型经 WebCodecs 编码的 40ms 帧），服务端统一按设备帧长
+ *       重切后透传为 MISS 上行音频包（CS2 通道 3）；</li>
  *   <li>连接关闭或上游会话重建时服务端发 SpeakerStop 0x108。</li>
  * </ol>
  *
@@ -46,8 +48,8 @@ public class TalkWebSocketHandler extends AbstractWebSocketHandler {
     private static final Pattern DID_PATTERN = Pattern.compile("/ws/talk/([^/?]+)");
     /** 单个音频块上限：线性 PCM 640B（40ms@8k）的 2.5 倍，防误发大包。 */
     private static final int MAX_CHUNK_BYTES = 1600;
-    /** SpeakerStart 后到首个音频包的间隔（对齐 go2rtc 固定 sleep 1s，留余量）。 */
-    private static final long SPEAKER_WARMUP_MS = 700;
+    /** SpeakerStart 后到首个音频包的间隔（对齐 go2rtc 固定 sleep 1s）。 */
+    private static final long SPEAKER_WARMUP_MS = 1000;
 
     private final StreamHub hub;
     private final DeviceCatalog catalog;
@@ -74,9 +76,10 @@ public class TalkWebSocketHandler extends AbstractWebSocketHandler {
             reject(session, "设备列表中未找到 did=" + baseDid);
             return;
         }
-        if (!MissCommands.speakerSupported(device.model())) {
-            reject(session, "该机型（" + device.model() + "）对讲上行需要 OPUS，暂不支持");
-            return;
+        if (!MissCommands.speakerLinearPcm(device.model())
+                && MissCommands.speakerCodecFor(device.model()) == MissCommands.CODEC_OPUS) {
+            // 72ac1 等 OPUS 机型：前端用 WebCodecs 编码，服务端只透传；旧浏览器不支持时报错提示
+            session.getAttributes().put("opus", Boolean.TRUE);
         }
         if (activeByDid.containsKey(baseDid)) {
             reject(session, "该摄像头正在被另一路喊话占用（扬声器独占）");
@@ -96,9 +99,10 @@ public class TalkWebSocketHandler extends AbstractWebSocketHandler {
         session.getAttributes().put("speaker", speaker);
         // 对齐 go2rtc：SpeakerStart 后等待设备准备扬声器通道再接收音频
         Thread.sleep(SPEAKER_WARMUP_MS);
-        String json = "{\"ok\":true,\"codec\":" + speaker.codec()
+        int codec = speaker.codec();
+        String json = "{\"ok\":true,\"codec\":" + codec
                 + ",\"linearPcm\":" + speaker.linearPcm()
-                + ",\"sampleRate\":8000"
+                + ",\"sampleRate\":" + (codec == MissCommands.CODEC_OPUS ? 48000 : 8000)
                 + ",\"deviceReplied\":" + (hub.speakerReply(baseDid).replyAt() > 0)
                 + "}";
         session.sendMessage(new TextMessage(json));
@@ -121,7 +125,28 @@ public class TalkWebSocketHandler extends AbstractWebSocketHandler {
             return;
         }
         try {
-            hub.speakerWrite(did, speaker, payload);
+            if (Boolean.TRUE.equals(session.getAttributes().get("opus"))) {
+                // OPUS 帧：前端按 40ms 帧编码后一帧一消息，设备按帧边界解码，直接透传
+                hub.speakerWrite(did, speaker, payload);
+                return;
+            }
+            // v2.3.1 第十六轮（调研结论）：分帧固定在发送侧——无论客户端发来多大一块，
+            // 统一按设备期望的 40ms 帧长（PCMA 320B / PCM 640B）重切后再上行，
+            // 客户端实现差异不再影响设备侧播放
+            int frame = speaker.linearPcm() ? 640 : 320;
+            java.io.ByteArrayOutputStream acc = (java.io.ByteArrayOutputStream)
+                    session.getAttributes().computeIfAbsent("audioAcc",
+                            k -> new java.io.ByteArrayOutputStream(frame * 8));
+            synchronized (acc) {
+                acc.write(payload, 0, payload.length);
+                while (acc.size() >= frame) {
+                    byte[] all = acc.toByteArray();
+                    byte[] one = Arrays.copyOfRange(all, 0, frame);
+                    hub.speakerWrite(did, speaker, one);
+                    acc.reset();
+                    acc.write(all, frame, all.length - frame);
+                }
+            }
         } catch (IOException e) {
             log.info("[{}] 对讲上行中断：{}", did, e.getMessage());
             closeQuietly(session, CloseStatus.GOING_AWAY.withReason("上游取流会话已重建"));

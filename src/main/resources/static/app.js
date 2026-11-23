@@ -903,10 +903,11 @@
             '</div></div>';
     }
 
-    /** v2.3.1 摄像头筛选：all / online / sleeping / offline。 */
+    /** v2.3.1 摄像头筛选：all / online / awake(未休眠) / sleeping / offline。 */
     function deviceMatchesFilter(c, f) {
         f = f || state.deviceFilter || 'all';
         if (f === 'online') { return !!c.online; }
+        if (f === 'awake') { return !!c.online && c.sleeping !== true; }
         if (f === 'sleeping') { return !!c.online && c.sleeping === true; }
         if (f === 'offline') { return !c.online; }
         return true;
@@ -914,12 +915,13 @@
 
     /** 刷新筛选 chips 的计数与选中态（renderDevices 同步调用）。 */
     function updateFilterChips() {
-        var n = { all: state.devices.length, online: 0, sleeping: 0, offline: 0 };
+        var n = { all: state.devices.length, online: 0, awake: 0, sleeping: 0, offline: 0 };
         state.devices.forEach(function (c) {
             if (c.online) { n.online++; } else { n.offline++; }
             if (c.online && c.sleeping === true) { n.sleeping++; }
+            if (c.online && c.sleeping !== true) { n.awake++; }
         });
-        var labels = { all: '全部', online: '在线', sleeping: '休眠中', offline: '离线' };
+        var labels = { all: '全部', online: '在线', awake: '未休眠', sleeping: '休眠中', offline: '离线' };
         document.querySelectorAll('#devFilter .chip').forEach(function (b) {
             var f = b.getAttribute('data-filter');
             b.textContent = labels[f] + ' ' + n[f];
@@ -3767,7 +3769,8 @@
        WebSocket 二进制上行 → 服务端 MISS CS2 通道 3 → 摄像头扬声器。
        复用当前取流会话（0x106/0x108），不新增摄像头连接。 */
     var talk = { ws: null, ctx: null, stream: null, node: null, src: null, gain: null,
-        active: false, did: null, linearPcm: false, buf: null,
+        active: false, did: null, linearPcm: false, opus: false, enc: null, opusFrame: null, opusUsed: 0, opusTs: 0,
+        buf: null,
         pool: null, queue: null, pacer: null, dc: 0, acc: null, accPos: 0 };
 
     function talkTip(text, kind) {
@@ -3842,6 +3845,12 @@
                 return;
             }
             talk.linearPcm = !!msg.linearPcm;
+            talk.opus = msg.codec === 1032;
+            if (talk.opus && (!window.AudioEncoder || !window.AudioData)) {
+                setPtzStatus('该机型对讲需要浏览器支持 WebCodecs（较新的 Chrome/Edge/Safari）；当前浏览器不支持', 'err');
+                talkStop(true);
+                return;
+            }
             talk.buf = null;
             setPtzStatus('对讲已接通' + (msg.deviceReplied ? '（设备已确认扬声器）' : '（设备未应答，声音可能仍可送达）'), 'ok');
             talkTip('对讲进行中：说话即可，再次点击「结束喊话」停止', 'ok');
@@ -3856,46 +3865,84 @@
     function talkStartMic() {
         try {
             var Ctx = window.AudioContext || window.webkitAudioContext;
-            // v2.3.1 杂音修复 ①：直接向浏览器要 16kHz 采集上下文——浏览器自带高质量
-            // 抗混叠重采样；此前 48k/44.1k → 8k 纯线性插值抽取无低通，语音高频与
-            // 噪声全部混叠折回 0-4kHz，是「根本听不清」的主因
-            var ctx;
-            try { ctx = new Ctx({ sampleRate: 16000 }); }
-            catch (e1) { ctx = new Ctx(); }
+            var ctx = null, rate = 0;
+            if (talk.opus) {
+                // 72ac1 等 OPUS 机型：48kHz 上下文 + WebCodecs AudioEncoder（lalmax 同款）
+                try { ctx = new Ctx({ sampleRate: 48000 }); rate = ctx.sampleRate; } catch (eOp) { ctx = null; }
+                if (!ctx || rate !== 48000) {
+                    setPtzStatus('该机型对讲需要浏览器支持 48kHz 音频上下文（WebCodecs）', 'err');
+                    talkStop(true);
+                    return;
+                }
+            } else {
+                // v2.3.1 第十六轮（对照 go2rtc / lalmax-nvr 参考实现重写）：
+                // 首选 8000Hz 采集上下文——设备扬声器即 8kHz，浏览器原生重采样自带
+                // 高质量低通，样本零抽取直发（lalmax 同款做法）。此前 16kHz 上下文
+                // + 成对平均在部分内核不生效时静默掉进 48k 线性插值兜底，无低通
+                // 抗混叠 → 高频折回 → 摄像头喇叭满幅杂音。
+                try { ctx = new Ctx({ sampleRate: 8000 }); rate = ctx.sampleRate; } catch (e0) { ctx = null; }
+                if (!ctx || rate !== 8000) {
+                    if (ctx) { try { ctx.close(); } catch (e0c) { /* 忽略 */ } ctx = null; }
+                    try { ctx = new Ctx({ sampleRate: 16000 }); rate = ctx.sampleRate; } catch (e1) { ctx = null; }
+                    if (ctx && rate !== 16000 && rate !== 8000) {
+                        // 内核不支持自定义采样率：用默认上下文 + 兜底重采样
+                        try { ctx.close(); } catch (e1c) { /* 忽略 */ }
+                        ctx = new Ctx();
+                        rate = ctx.sampleRate || 16000;
+                    }
+                }
+            }
             talk.ctx = ctx;
             talk.acc = [];
             talk.accPos = 0;
-            talk.pool = [];   // 16kHz 原始样本池
+            talk.pool = [];   // 非 8kHz 上下文时的原始样本池
             talk.queue = [];  // 40ms 整块队列（匀速发送）
             talk.src = ctx.createMediaStreamSource(talk.stream);
-            talk.node = ctx.createScriptProcessor(2048, 1, 1);
+            talk.node = ctx.createScriptProcessor(1024, 1, 1);
+            if (talk.opus) {
+                setupOpusEncoder();
+            }
             talk.node.onaudioprocess = function (e) {
                 if (!talk.active || !talk.ws || talk.ws.readyState !== 1) { return; }
                 var input = e.inputBuffer.getChannelData(0);
-                var pool = talk.pool;
-                for (var i = 0; i < input.length; i++) { pool.push(input[i]); }
+                if (talk.opus) {
+                    feedOpusSamples(input);
+                    return;
+                }
                 var out = [];
-                var rate = ctx.sampleRate || 16000;
-                if (rate === 16000) {
-                    // v2.3.1 无声热修：主路径 2:1 成对平均（[0.5,0.5] FIR，在 8k Nyquist
-                    // 处有零点）——此前 rate/8000=2 误入兜底插值分支，而 pool 已被本分支
-                    // 消费光，兜底再从空池插值恒得空 → 一个字节都没发出去
-                    while (pool.length >= 2) {
-                        var s16 = (pool.shift() + pool[0]) * 0.5;
-                        talk.dc += (s16 - talk.dc) * 0.01;
-                        out.push(s16 - talk.dc);
+                if (rate === 8000) {
+                    // 主路径：上下文即 8kHz，样本直接可用，只做 DC 高通去底噪
+                    for (var i = 0; i < input.length; i++) {
+                        talk.dc += (input[i] - talk.dc) * 0.01;
+                        out.push(input[i] - talk.dc);
                     }
                 } else {
-                    // 兜底：上下文不支持 16kHz（如旧 iOS），带窗线性插值抽取到 8kHz
-                    var step = rate / 8000;
-                    var acc = pool, pos = talk.accPos;
-                    while (pos + 1 < acc.length) {
-                        var i0 = Math.floor(pos), f = pos - i0;
-                        out.push(acc[i0] * (1 - f) + acc[i0 + 1] * f);
-                        pos += step;
+                    var pool = talk.pool;
+                    for (var p = 0; p < input.length; p++) { pool.push(input[p]); }
+                    if (rate === 16000) {
+                        // 2:1 成对平均（[0.5,0.5] FIR，8k Nyquist 处有零点，抗混叠）
+                        while (pool.length >= 2) {
+                            var s16 = (pool.shift() + pool[0]) * 0.5;
+                            talk.dc += (s16 - talk.dc) * 0.01;
+                            out.push(s16 - talk.dc);
+                        }
+                    } else {
+                        // 兜底：上下文不支持 8k/16k（旧 iOS 等），整数倍滑动平均低通
+                        // + 带窗线性插值抽取到 8kHz（先滤后抽，抑制混叠）
+                        var step = rate / 8000;
+                        var acc = pool, pos = talk.accPos;
+                        var i0, f;
+                        while (pos + 1 < acc.length) {
+                            i0 = Math.floor(pos); f = pos - i0;
+                            var lo = Math.max(0, i0 - 3), hi = Math.min(acc.length - 1, i0 + 4);
+                            var s = 0, n = 0;
+                            for (var w = lo; w <= hi; w++) { s += acc[w]; n++; }
+                            out.push((s / n) * (1 - f) + acc[i0 + 1] * f);
+                            pos += step;
+                        }
+                        talk.pool = acc.slice(Math.floor(pos));
+                        talk.accPos = pos - Math.floor(pos);
                     }
-                    talk.pool = acc.slice(Math.floor(pos));
-                    talk.accPos = pos - Math.floor(pos);
                 }
                 if (!out.length) { return; }
                 if (talk.linearPcm) {
@@ -3922,21 +3969,78 @@
             talk.gain.gain.value = 0;
             talk.node.connect(talk.gain);
             talk.gain.connect(ctx.destination);
-            // v2.3.1 杂音修复 ③：40ms 匀速发送——ScriptProcessor 回调天然抖动，
-            // 直发会让设备侧播放忽快忽慢（机械感杂音）；队列积压 ≥3 块时双发追赶
-            talk.pacer = setInterval(function () {
-                if (!talk.active || !talk.ws || talk.ws.readyState !== 1) { return; }
-                var q = talk.queue;
-                if (!q.length) { return; }
-                var n = q.length >= 3 ? 2 : 1;
-                while (n-- > 0 && q.length) {
-                    talk.ws.send(q.shift().buffer);
-                }
-            }, 40);
+            if (!talk.opus) {
+                // 40ms 匀速发送——ScriptProcessor 回调天然抖动，直发会让设备侧播放
+                // 忽快忽慢（机械感杂音）；队列积压 ≥3 块时双发追赶。
+                // OPUS 路径按 40ms 帧在编码器输出侧即时发送，无需节奏器。
+                talk.pacer = setInterval(function () {
+                    if (!talk.active || !talk.ws || talk.ws.readyState !== 1) { return; }
+                    var q = talk.queue;
+                    if (!q.length) { return; }
+                    var n = q.length >= 3 ? 2 : 1;
+                    while (n-- > 0 && q.length) {
+                        talk.ws.send(q.shift().buffer);
+                    }
+                }, 40);
+            }
         } catch (e) {
             setPtzStatus('麦克风处理初始化失败：' + e.message, 'err');
             talkStop(true);
         }
+    }
+
+    /* OPUS 机型（72ac1 等）：WebCodecs AudioEncoder 40ms 帧，输出即时发送。
+       对照 lalmax-nvr web/src/lib/xiaomiTalkAudio.ts：bitrate 32k、frameDuration 40ms、
+       原始 opus 帧（非 WebM/Ogg 容器）。 */
+    function setupOpusEncoder() {
+        var OPUS_FRAME = 1920; // 48000 × 40ms
+        talk.opusFrame = new Float32Array(OPUS_FRAME);
+        talk.opusUsed = 0;
+        talk.opusTs = 0;
+        talk.enc = new window.AudioEncoder({
+            output: function (chunk) {
+                if (!talk.active || !talk.ws || talk.ws.readyState !== 1) { return; }
+                if (talk.ws.bufferedAmount > 64000) {
+                    setPtzStatus('对讲发送拥塞，已停止', 'err');
+                    talkStop(true);
+                    return;
+                }
+                var outBuf = new ArrayBuffer(chunk.byteLength);
+                chunk.copyTo(outBuf);
+                talk.ws.send(outBuf);
+            },
+            error: function (err) {
+                setPtzStatus('对讲编码失败：' + (err && err.message), 'err');
+                talkStop(true);
+            }
+        });
+        talk.enc.configure({
+            codec: 'opus', sampleRate: 48000, numberOfChannels: 1, bitrate: 32000,
+            opus: { format: 'opus', frameDuration: 40000 }
+        });
+        talk.feedOpus = function (samples) {
+            var data = new window.AudioData({
+                format: 'f32', sampleRate: 48000, numberOfFrames: samples.length,
+                numberOfChannels: 1, timestamp: talk.opusTs, data: samples
+            });
+            talk.opusTs += 40000;
+            try { talk.enc.encode(data); } finally { data.close(); }
+        };
+    }
+
+    /** 麦克风样本 → 1920 样本（40ms@48k）帧 → OPUS 编码。 */
+    function feedOpusSamples(input) {
+        var OPUS_FRAME = 1920;
+        var frame = talk.opusFrame, used = talk.opusUsed;
+        for (var i = 0; i < input.length; i++) {
+            if (used === OPUS_FRAME) {
+                talk.feedOpus(frame);
+                frame = talk.opusFrame = new Float32Array(OPUS_FRAME);
+                used = 0;
+            }
+            frame[used++] = input[i];
+        }
+        talk.opusUsed = used;
     }
 
     /* 整块（320B A-law / 640B PCM）入匀速队列，保证服务端 MISS 包大小正确 */
@@ -3957,6 +4061,11 @@
         if (talk.node) { try { talk.node.disconnect(); } catch (e) { /* 忽略 */ } talk.node = null; }
         if (talk.gain) { try { talk.gain.disconnect(); } catch (e) { /* 忽略 */ } talk.gain = null; }
         if (talk.src) { try { talk.src.disconnect(); } catch (e) { /* 忽略 */ } talk.src = null; }
+        if (talk.enc) { try { if (talk.enc.state !== 'closed') { talk.enc.close(); } } catch (e) { /* 忽略 */ } talk.enc = null; }
+        talk.opusFrame = null;
+        talk.opusUsed = 0;
+        talk.opusTs = 0;
+        talk.feedOpus = null;
         if (talk.ctx) { try { talk.ctx.close(); } catch (e) { /* 忽略 */ } talk.ctx = null; }
         if (talk.stream) { talk.stream.getTracks().forEach(function (t) { t.stop(); }); talk.stream = null; }
         if (talk.pacer) { clearInterval(talk.pacer); talk.pacer = null; }
@@ -6119,14 +6228,23 @@
     /** 米家属性读取结果缓存（did → {key:{code,value,label}}），渲染与写回用。 */
     var miotCache = {};
 
+    /**
+     * v2.3.1 第十六轮：控制项定义改为数据驱动，读取结果后整表 JS 渲染——
+     * 每行「名称 + 说明 + 控件 + 设置」，不支持项灰显打标，替代旧版静态
+     * label+select 逐项堆叠的排版。
+     */
     var MIOT_CONTROLS = [
-        ['nightShot', 'miotNightShot'],
-        ['imageRollover', 'miotRollover'],
-        ['timeWatermark', 'miotWatermark'],
-        ['humanTracking', 'miotTracking'],
-        ['recordingMode', 'miotRecMode'],
-        ['guardSwitch', 'miotGuard'],
-        ['guardSensitivity', 'miotSens']
+        { key: 'nightShot', label: '夜视模式', hint: '红外补光方式（关闭 / 打开 / 自动）', type: 'enum',
+          opts: [['0', '关闭'], ['1', '打开'], ['2', '自动']] },
+        { key: 'imageRollover', label: '画面翻转', hint: '倒装摄像头的 180° 画面矫正', type: 'enum',
+          opts: [['0', '正常'], ['180', '翻转 180°']] },
+        { key: 'timeWatermark', label: '时间水印', hint: '画面右上角时间戳', type: 'bool' },
+        { key: 'humanTracking', label: '人形追踪', hint: '云台款：画面自动跟随人形', type: 'bool' },
+        { key: 'recordingMode', label: '存储卡录制', hint: '摄像头本机 SD 卡的录制方式', type: 'enum',
+          opts: [['0', '不录制'], ['1', '录制移动画面'], ['2', '始终录制']] },
+        { key: 'guardSwitch', label: '看家助手', hint: '移动侦测告警推送开关', type: 'bool' },
+        { key: 'guardSensitivity', label: '侦测灵敏度', hint: '看家助手的移动侦测灵敏度', type: 'enum',
+          opts: [['0', '低'], ['1', '中'], ['2', '高']] }
     ];
 
     function refreshMiotDevSelect() {
@@ -6160,23 +6278,29 @@
         }
     }
 
+    /** 按读取结果整表渲染控制项；返回该机支持/不支持摘要。 */
     function renderMiotProps(did) {
         var props = miotCache[did] || {};
-        var unsupported = [];
-        MIOT_CONTROLS.forEach(function (pair) {
-            var key = pair[0], selId = pair[1];
-            var sel = $(selId);
-            var item = props[key];
-            var setBtn = document.querySelector('[data-miotset="' + key + '"]');
-            var ok = item && item.code === 0 && item.value !== null && item.value !== undefined;
-            sel.disabled = !ok;
-            if (setBtn) setBtn.disabled = !ok;
-            if (ok) {
-                sel.value = String(item.value);
-            } else {
-                unsupported.push(item ? item.label || key : key);
-            }
-        });
+        var box = $('miotRows');
+        var supported = 0;
+        box.innerHTML = MIOT_CONTROLS.map(function (def) {
+            var item = props[def.key];
+            var ok = !!(item && item.code === 0 && item.value !== null && item.value !== undefined);
+            if (ok) { supported++; }
+            var opts = (def.type === 'bool' ? [['true', '开启'], ['false', '关闭']] : def.opts)
+                .map(function (o) {
+                    var selAttr = (ok && String(item.value) === o[0]) ? ' selected' : '';
+                    return '<option value="' + o[0] + '"' + selAttr + '>' + esc(o[1]) + '</option>';
+                }).join('');
+            var tag = ok ? '' : '<span class="miot-unsup-tag">不支持</span>';
+            return '<div class="miot-row' + (ok ? '' : ' unsup') + '">'
+                + '<span class="miot-label">' + esc(def.label) + tag
+                + '<small>' + esc(def.hint) + '</small></span>'
+                + '<select class="select" data-miotval="' + def.key + '"' + (ok ? '' : ' disabled') + '>' + opts + '</select>'
+                + '<button class="btn tiny primary" data-miotset="' + def.key + '" type="button"'
+                + (ok ? '' : ' disabled') + '>设置</button>'
+                + '</div>';
+        }).join('');
         $('miotPropForm').hidden = false;
         // 存储卡只读信息
         var sd = props.sdStatus, total = props.sdTotal, free = props.sdFree;
@@ -6192,24 +6316,28 @@
             sdText = '本机型不支持存储卡状态读取';
         }
         $('miotSdInfo').textContent = sdText;
-        $('miotMsg').textContent = unsupported.length
-            ? '本机型不支持的属性：' + unsupported.join('、')
-            : '全部属性读取成功';
+        var unsupported = MIOT_CONTROLS.length - supported;
+        $('miotMsg').textContent = unsupported
+            ? '读取完成：' + supported + ' 项可控制，' + unsupported + ' 项本机型不支持（灰显）'
+            : '读取完成：全部 ' + supported + ' 项均可控制';
     }
 
     async function setMiotProp(did, key) {
-        var selId = null;
-        MIOT_CONTROLS.forEach(function (pair) { if (pair[0] === key) selId = pair[1]; });
-        if (!selId) return;
-        var raw = $(selId).value;
-        var isBool = key === 'timeWatermark' || key === 'humanTracking' || key === 'guardSwitch';
-        var value = isBool ? raw === 'true' : Number(raw);
+        var sel = document.querySelector('[data-miotval="' + key + '"]');
+        if (!sel || sel.disabled) return;
+        var def = null;
+        MIOT_CONTROLS.forEach(function (d) { if (d.key === key) def = d; });
+        if (!def) return;
+        var raw = sel.value;
+        var value = def.type === 'bool' ? raw === 'true' : Number(raw);
         $('miotMsg').textContent = '设置中…';
         try {
             await api('api/devices/' + encodeURIComponent(did) + '/miot/' + encodeURIComponent(key),
                 { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ value: value }) });
             toast('已下发', 'ok');
             $('miotMsg').textContent = '已设置';
+            // 重新读取刷新该行显示值（云端写后读可能有短暂滞后，失败不影响设置结果）
+            loadMiotProps(did);
         } catch (e) {
             if (e.status === 401) { scheduleGateRelock(); return; }
             toast('设置失败：' + e.message, 'err');
@@ -6258,13 +6386,15 @@
             applyTheme(currentTheme() === 'dark' ? 'light' : 'dark');
         });
 
-        // v2.3.1 米家设备控制：选摄像头即读取，各属性改完点「设置」即时下发
+        // v2.3.1 米家设备控制：选摄像头即读取；控制行由 JS 整表渲染，
+        // 「设置」按钮走容器事件委托（行随读取结果重建，不能逐按钮绑定）
         $('miotDevSelect').addEventListener('change', function () { loadMiotProps(this.value); });
         $('btnMiotReload').addEventListener('click', function () { loadMiotProps($('miotDevSelect').value); });
-        document.querySelectorAll('[data-miotset]').forEach(function (b) {
-            b.addEventListener('click', function () {
+        $('miotRows').addEventListener('click', function (e) {
+            var b = e.target && e.target.closest ? e.target.closest('[data-miotset]') : null;
+            if (b && !b.disabled) {
                 setMiotProp($('miotDevSelect').value, b.getAttribute('data-miotset'));
-            });
+            }
         });
         $('btnMiotReboot').addEventListener('click', function () {
             var did = $('miotDevSelect').value;
@@ -6419,12 +6549,15 @@
         var pv = $('previewVideo');
         pv.addEventListener('playing', function () { $('previewLoading').hidden = true; });
         pv.addEventListener('loadeddata', function () { $('previewLoading').hidden = true; });
-        // v2.3.1 热修：触屏端禁用预览原生控件——手机浏览器（含 X5/QQ 内核）点按视频
-        // 即弹原生控制条，误触全屏键/手势即整页接管全屏，「随便点一下就全屏」；
-        // 实时预览是直播流，原生控件的进度条无意义，全屏统一走顶栏按钮/悬浮层
-        if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) {
-            pv.controls = false;
-        }
+        // v2.3.1 第十六轮热修：预览原生控件默认关闭，仅在「精确指针 + 无触摸能力」的
+        // 桌面环境开启。此前依赖 pointer:coarse 媒体查询做开关，部分手机内核（X5/QQ
+        // 浏览器旧版）不识别该查询 → 原生控制条仍在 → 点一下视频即弹控制条，误触全屏
+        // 键后走 <video> 元素级原生全屏，应用的全屏浮层在 DOM 里不可见，表现为
+        // 「随便点一下就全屏 + 全屏后没有操作的地方」。controls 已从 HTML 属性移除，
+        // 这里反向开关；style.css 再按 coarse 指针 CSS 级兜底隐藏 webkit 媒体控件。
+        var coarsePtr = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+        var hasTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+        pv.controls = !coarsePtr && !hasTouch;
     }
 
     /* ---------- 初始化 ---------- */

@@ -109,7 +109,19 @@ public final class MissClient implements AutoCloseable {
                                 log.info("MISS 云台设备应答 0x113：{}", reply);
                             } else if (inner == MissCommands.CMD_SPEAKER_START_RES) {
                                 // 对讲（0x106）的设备应答：记录明文与时刻，前端据此判断设备是否接受喊话。
+                                // v2.3.1 第十六轮：4 字节 body 未必是文本——补记 hex 与 LE32 解读，
+                                // 真机调试时可直接看出设备返回码/codec 应答。
                                 String reply = readableUtf8(plain, 4);
+                                if (reply.isBlank()) {
+                                    byte[] body = plain.length > 4
+                                            ? Arrays.copyOfRange(plain, 4, plain.length) : new byte[0];
+                                    StringBuilder hexb = new StringBuilder();
+                                    for (byte b : body) { hexb.append(String.format("%02x", b)); }
+                                    long le32 = body.length >= 4
+                                            ? (body[0] & 0xFFL) | ((body[1] & 0xFFL) << 8)
+                                            | ((body[2] & 0xFFL) << 16) | ((body[3] & 0xFFL) << 24) : -1;
+                                    reply = "hex=" + hexb + (body.length == 4 ? "（LE32=" + le32 + "）" : "");
+                                }
                                 lastSpeakerReply = reply;
                                 lastSpeakerReplyAt = System.currentTimeMillis();
                                 detail += " 扬声器应答：" + reply;
