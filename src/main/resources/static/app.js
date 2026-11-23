@@ -4709,9 +4709,18 @@
         else if (state.devices.length) { pb.did = String(state.devices[0].did); $('pbCam').value = pb.did; }
         setZoomUi();
         startPbLive();
-        // v2.3.1 首次进入自动续播最近一段录像（米家式：进回放即看到刚录的画面）；
-        // 带着事件跳转待办进来时不自动播，交给 applyPbPending 精确定位
-        if (!pb.inited) { pb.inited = true; loadTimeline(!state.pbPending); }
+        // v2.3.1 每次进入回放页都自动播放（米家式，不只首次）：
+        // - 首次进入：自动续播最近一段录像，让一进回放就看到刚录的画面；
+        //   带事件跳转待办进来时不自动播，交给 applyPbPending 精确定位；
+        // - 再次进入：离开回放页时视频会被 pausePb 暂停，直接恢复播放（保留上次进度）；
+        //   若上次已播到当天最后一段的末尾，则重新定位到最新一段续播。
+        if (!pb.inited) { pb.inited = true; loadTimeline(!state.pbPending); return; }
+        if (state.pbPending) { return; } // 事件跳转待办由 applyPbPending 负责定位起播
+        var v = pbV();
+        if (pb.idx >= 0 && v.src) {
+            if (v.ended) { loadTimeline(true); }
+            else { v.play().catch(function () {}); }
+        }
     }
 
     function renderPbCam() {

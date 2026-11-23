@@ -72,10 +72,30 @@ public final class CameraStream {
     /** 连续「一个媒体包都没收到」的连接次数，用于重连熔断。 */
     private volatile int consecutiveNoFrame;
 
+    /**
+     * 休眠闸门（v2.3.1）：入参 did，返回 true=摄像头休眠中不应拨流。
+     * 由 {@code StreamHub.setSleepGate} 注入（实现在 web.service.MiotSleepService，
+     * hub 层不直接依赖，避免包间环）。
+     */
+    private volatile java.util.function.Predicate<String> sleepGate;
+    /** 休眠挂起日志去重：同一轮休眠只打一次。 */
+    private volatile boolean sleepHoldLogged;
+
     public CameraStream(String did, String model, MissOpener opener) {
         this.did = did;
         this.model = model;
         this.opener = opener;
+    }
+
+    /** 注入休眠闸门（应用装配时调用一次）。 */
+    public void setSleepGate(java.util.function.Predicate<String> gate) {
+        this.sleepGate = gate;
+    }
+
+    /** 该摄像头当前是否处于休眠（闸门未注入或探测未知时视为不休眠，不拦截）。 */
+    private boolean isSleeping() {
+        java.util.function.Predicate<String> g = sleepGate;
+        return g != null && Boolean.TRUE.equals(g.test(did));
     }
 
     public String did() {
@@ -209,6 +229,32 @@ public final class CameraStream {
     private void runUpstream() {
         int backoffIndex = 0;
         while (running) {
+            // v2.3.1 休眠闸门：摄像头休眠时上游不出流，持续拨流只会每次「15s 无媒体包」
+            // 失败再重拨——且退避会被局域网可达性探测的 wakeup 不断清零（休眠设备的
+            // 唤醒监听仍应答 CS2 探测，被误判「恢复可达」），形成 15 秒一轮的重连风暴。
+            // 休眠期间挂起：每 60s 自查一次，或被 wakeup 打断（真正唤醒时
+            // MiotSleepService 探测到休眠解除会触发 wakeup，立即恢复拨流）。
+            if (isSleeping()) {
+                if (!sleepHoldLogged) {
+                    sleepHoldLogged = true;
+                    log.info("[{}] 摄像头休眠中，暂停上游取流（唤醒后自动恢复）", did);
+                }
+                synchronized (backoffLock) {
+                    if (!wakeupRequested) {
+                        try {
+                            backoffLock.wait(60_000);
+                        } catch (InterruptedException ie) {
+                            Thread.currentThread().interrupt();
+                            if (!running) {
+                                break;
+                            }
+                        }
+                    }
+                    wakeupRequested = false; // 休眠期间即使被唤醒也不拨流，闸门说了算
+                }
+                continue;
+            }
+            sleepHoldLogged = false;
             MissClient client = null;
             int gen = 0;
             boolean gotFrame = false;

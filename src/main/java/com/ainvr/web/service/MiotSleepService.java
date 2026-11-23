@@ -45,15 +45,21 @@ public class MiotSleepService {
 
     private final DeviceCatalog catalog;
     private final SessionHolder sessionHolder;
+    private final com.ainvr.hub.StreamHub streamHub;
     /** 主设备 did → 是否休眠（true=休眠中）。缺省表示尚未探测或固件不支持。 */
     private final ConcurrentHashMap<String, Boolean> sleepState = new ConcurrentHashMap<>();
     /** 主设备 did → 最近一次属性读取失败码（成功后移除）。用于失败可见化，避免静默降级成「一直在线」。 */
     private final ConcurrentHashMap<String, Integer> failCodes = new ConcurrentHashMap<>();
     private final ScheduledExecutorService scheduler;
 
-    public MiotSleepService(DeviceCatalog catalog, SessionHolder sessionHolder) {
+    public MiotSleepService(DeviceCatalog catalog, SessionHolder sessionHolder,
+                            com.ainvr.hub.StreamHub streamHub) {
         this.catalog = catalog;
         this.sessionHolder = sessionHolder;
+        this.streamHub = streamHub;
+        // v2.3.1 休眠闸门：休眠中的摄像头不拨上游流（否则会被局域网可达性探测的
+        // wakeup 不断清零退避，形成 15 秒一轮的重连风暴）
+        streamHub.setSleepGate(this::sleeping);
         this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "miot-sleep-probe");
             t.setDaemon(true);
@@ -121,10 +127,21 @@ public class MiotSleepService {
         out.put("code", code);
         if (code == CODE_OK && item.path("value").isBoolean()) {
             boolean value = item.path("value").asBoolean();
+            boolean sleeping = !value;
             failCodes.remove(base);
-            sleepState.put(base, !value);
+            Boolean prev = sleepState.put(base, sleeping);
             out.put("value", value);
-            out.put("sleeping", !value);
+            out.put("sleeping", sleeping);
+            // v2.3.1 成功探测也可见化：状态变化（含首次探明）打 INFO，真机日志可自证探测在跑
+            if (prev == null || prev != sleeping) {
+                log.info("[{}] 休眠探测：摄像头{}（MIoT on={}）{}", base,
+                        sleeping ? "进入休眠，已暂停取流" : "工作中",
+                        value, prev == null ? "（首次探明）" : "（状态变化）");
+                if (prev != null && !sleeping) {
+                    // 休眠→工作：立即唤醒取流（打断闸门挂起与退避等待）
+                    streamHub.wakeup(base, "休眠解除", true);
+                }
+            }
         } else {
             Integer fc = failCodes.put(base, code);
             if (fc == null || fc != code) {
@@ -161,9 +178,15 @@ public class MiotSleepService {
             LoginSession session = sessionHolder.renew();
             new MiCloudApi(session).call("/miotspec/prop/set", Map.of("params", List.of(param)));
         }
-        sleepState.put(base, sleep);
-        log.info("[{}] 已{}摄像头（MIoT {}.{}）", base, sleep ? "休眠" : "唤醒",
-                propInt("ainvr.sleep.siid", 2), propInt("ainvr.sleep.piid", 1));
+        Boolean prev = sleepState.put(base, sleep);
+        if (prev == null || prev != sleep) {
+            log.info("[{}] 已{}摄像头（MIoT {}.{}）", base, sleep ? "休眠" : "唤醒",
+                    propInt("ainvr.sleep.siid", 2), propInt("ainvr.sleep.piid", 1));
+            if (!sleep) {
+                // 手动唤醒：立即恢复取流（打断休眠闸门挂起）
+                streamHub.wakeup(base, "手动唤醒", true);
+            }
+        }
     }
 
     private JsonNode call(String api, Object params) {

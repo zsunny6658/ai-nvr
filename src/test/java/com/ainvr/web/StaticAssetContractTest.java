@@ -31,7 +31,7 @@ class StaticAssetContractTest {
 
         assertTrue(html.contains("btnPreviewBack"), "预览弹层缺少应用内返回按钮");
         assertTrue(html.contains("btnPlayerBack"), "回放弹层缺少应用内返回按钮");
-        assertTrue(html.contains("v=72"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
+        assertTrue(html.contains("v=73"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
         // v2.3.1 真机验证第五轮：主题快捷按钮两态 + 选目录自动授权 + 内置权限面板
         assertTrue(js.contains("trimAuthorizePath"), "缺少选目录自动授权逻辑");
         assertTrue(js.contains("authorizeUserFile"), "缺少用户空间授权调用");
@@ -86,6 +86,9 @@ class StaticAssetContractTest {
         assertTrue(js.contains("refreshTimelineLive().then"), "播到尾端应先刷新时间轴再定论（新封段无缝续播）");
         assertTrue(js.contains("cur.recording && cur.durMs > oldDur"), "录制段时长增长时应从断点续播");
         assertTrue(js.contains("prev.durMs / 1000 - 30"), "进回放起始点应落在上一段末尾 30 秒处");
+        // v2.3.1 真机验证第七轮：每次进回放页都自动播放（不只首次），再次进入恢复播放
+        assertTrue(js.contains("v.ended) { loadTimeline(true)"), "上次已播到末尾时应重新定位到最新段");
+        assertTrue(js.contains("else { v.play().catch(function () {}); }"), "再次进入回放页应直接恢复播放");
         // v2.3.1 入口收敛（docs/design/05 P1+P2）：录像文件唯一入口=卡片弹层，事件卡片入口强化
         assertTrue(html.contains("filesModal"), "录像文件应为弹层（从摄像头卡片进入）");
         assertTrue(html.contains("btnFilesAll"), "设置页应保留全部录像文件管理入口");

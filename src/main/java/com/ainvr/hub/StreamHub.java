@@ -24,6 +24,20 @@ public final class StreamHub {
     private final ConcurrentHashMap<String, CameraStream> streams = new ConcurrentHashMap<>();
 
     /**
+     * 休眠闸门（v2.3.1）：did → 是否休眠中（true=不拨流）。装配期由
+     * MiotSleepService 注入，之后创建的每条 CameraStream 都继承。
+     */
+    private volatile java.util.function.Predicate<String> sleepGate;
+
+    /** 注入休眠闸门：立即作用于全部现存流，并供后续新建流继承。 */
+    public void setSleepGate(java.util.function.Predicate<String> gate) {
+        this.sleepGate = gate;
+        for (CameraStream c : streams.values()) {
+            c.setSleepGate(gate);
+        }
+    }
+
+    /**
      * 订阅一台摄像头。
      *
      * @param did    设备 DID
@@ -38,6 +52,10 @@ public final class StreamHub {
         }
         CameraStream cs = streams.compute(did, (d, existing) -> {
             CameraStream stream = existing != null ? existing : new CameraStream(d, model, opener);
+            java.util.function.Predicate<String> gate = sleepGate;
+            if (gate != null) {
+                stream.setSleepGate(gate);
+            }
             stream.subscribe(sink);
             return stream;
         });
