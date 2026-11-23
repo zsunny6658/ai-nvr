@@ -2892,9 +2892,17 @@
         }
         try {
             var d = await api('api/settings/browse?path=' + encodeURIComponent(dir));
-            el.textContent = d && d.currentWritable === true
-                ? '存储权限：已授权 ✓（' + dir + '）'
-                : '存储权限：未授权或不可写，录像写入会失败';
+            if (d && d.currentWritable === true) {
+                el.textContent = '存储权限：已授权 ✓（' + dir + '）';
+                return;
+            }
+            // v2.3.1 热修：独立浏览器访问时面板不再隐藏，未授权补文字指引
+            // （「打开系统授权页」按钮是 sdk-only，独立环境只能给出路径指引）
+            el.textContent = '存储权限：未授权或不可写，录像写入会失败'
+                + (document.body.classList.contains('sdk-host')
+                    ? ''
+                    : '——请在飞牛桌面上打开本应用重新选择一次目录（会自动申请授权），'
+                      + '或到 应用中心 → 本应用 → 设置 → 存储管理 勾选该目录并重启应用');
         } catch (e) {
             if (e.status === 401) { scheduleGateRelock(); return; }
             el.textContent = '存储权限：状态未知（' + (e.message || '检测失败') + '）';
@@ -6205,9 +6213,10 @@
         document.querySelectorAll('#tab-settings .set-card[data-sgroup]').forEach(function (c) {
             c.hidden = c.getAttribute('data-sgroup') !== name;
         });
-        // v2.3.1 进入存储分组时刷新内置权限面板状态
+        // v2.3.1 热修：进入存储分组即刷新权限面板——不再限定飞牛宿主，
+        // 独立浏览器也要能看到存储授权状态与指引
         if (name === 'storage') {
-            whenTrimHost(function (t) { if (t) { refreshPermStatus(); } });
+            refreshPermStatus();
         }
         // v2.3.1 进入实时画面分组时填充米家设备控制的摄像头下拉
         if (name === 'stream') {

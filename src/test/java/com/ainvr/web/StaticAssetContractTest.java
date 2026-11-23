@@ -31,13 +31,19 @@ class StaticAssetContractTest {
 
         assertTrue(html.contains("btnPreviewBack"), "预览弹层缺少应用内返回按钮");
         assertTrue(html.contains("btnPlayerBack"), "回放弹层缺少应用内返回按钮");
-        assertTrue(html.contains("v=82"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
+        assertTrue(html.contains("v=83"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
         // v2.3.1 真机验证第五轮：主题快捷按钮两态 + 选目录自动授权 + 内置权限面板
         assertTrue(js.contains("trimAuthorizePath"), "缺少选目录自动授权逻辑");
         assertTrue(js.contains("authorizeUserFile"), "缺少用户空间授权调用");
         assertTrue(html.contains("btnOpenAppPerm"), "存储卡片缺少系统授权页直达按钮");
         assertTrue(html.contains("permStatusText"), "存储卡片缺少权限状态检测");
         assertTrue(css.contains(".set-perm"), "缺少内置权限面板样式");
+        // v2.3.1 真机验证第十七轮热修：权限面板不再 sdk-only（独立浏览器也显示状态与指引），
+        // 仅「打开系统授权页」按钮保留飞牛宿主专属
+        assertFalse(html.contains("set-perm sdk-only"), "权限面板不应整体 sdk-only（独立浏览器会整块看不到）");
+        assertTrue(html.contains("btn tiny sdk-only\" id=\"btnOpenAppPerm\""), "打开系统授权页按钮应保留 sdk-only");
+        assertTrue(js.contains("refreshPermStatus();"), "进入存储分组应无条件刷新权限状态（不限飞牛宿主）");
+        assertTrue(js.contains("应用中心 → 本应用 → 设置 → 存储管理"), "独立浏览器未授权时应有文字授权指引");
         assertFalse(js.contains("'light' ? 'auto' : 'dark'"), "侧栏主题快捷按钮不应循环到跟随系统");
         // v2.3.1 第四轮性能修复：解锁懒加载录像列表 + 分组增量渲染 + 回放换段预载修复
         assertTrue(js.contains("maybeSwapEarly"), "缺少回放边界提前交接逻辑");

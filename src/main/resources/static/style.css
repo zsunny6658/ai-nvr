@@ -541,9 +541,9 @@ button.net.sleep:hover { filter: brightness(1.15); }
 .set-card code { font-family: Consolas, monospace; word-break: break-all; }
 .set-card .link-row input { padding: 7px 9px; font-size: 12px; }
 .set-pick { display: flex; gap: 8px; }
-/* v2.3.1 内置存储权限面板：状态行 + 系统授权页直达 */
+/* v2.3.1 内置存储权限面板：状态行 + 系统授权页直达（热修后所有环境可见，
+   仅「打开系统授权页」按钮保留 sdk-only 隐藏逻辑） */
 .set-perm { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; padding: 8px 10px; border: 1px dashed var(--line); border-radius: 8px; }
-body.sdk-host .set-perm.sdk-only { display: flex !important; }
 .set-pick input { flex: 1; min-width: 0; background: var(--panel-2); cursor: default; }
 .set-edit { display: flex; gap: 8px; align-items: center; }
 .set-edit input { flex: 1; min-width: 0; }
