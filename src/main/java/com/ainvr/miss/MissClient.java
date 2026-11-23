@@ -313,7 +313,9 @@ public final class MissClient implements AutoCloseable {
         byte[] header = new byte[32];
         putLe32(header, 0, encrypted.length);
         putLe32(header, 4, codecId);
-        putLe32(header, 16, (int) (System.currentTimeMillis() & 0xFFFFFFFFL));
+        // go2rtc：offset16 写 64bit LE 墙钟毫秒（"not really necessary"，但字段宽
+        // 必须是 8 字节——此前写 32 位致高 4 字节恒 0，时间戳值也截断失真）
+        putLe64(header, 16, System.currentTimeMillis());
         conn.writeAudioPacket(header, encrypted);
     }
 
@@ -426,6 +428,13 @@ public final class MissClient implements AutoCloseable {
         dst[off + 1] = (byte) ((v >>> 8) & 0xFF);
         dst[off + 2] = (byte) ((v >>> 16) & 0xFF);
         dst[off + 3] = (byte) ((v >>> 24) & 0xFF);
+    }
+
+    /** 写入小端 64 位值（对讲音频包头 offset16 墙钟毫秒，对齐 go2rtc WriteAudio）。 */
+    private static void putLe64(byte[] dst, int off, long v) {
+        for (int i = 0; i < 8; i++) {
+            dst[off + i] = (byte) ((v >>> (i * 8)) & 0xFF);
+        }
     }
 
     private static long le64(byte[] b, int off) {

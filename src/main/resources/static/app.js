@@ -3650,10 +3650,65 @@
     function closePreview() {
         // 双击 / 触摸+click 重复触发守卫：避免二次 leaveOverlayHistory 退掉首页历史条目
         if ($('previewModal').hidden && !overlayHistoryDepth) return;
+        exitPreviewFullscreen(true);
         talkStop(true);
         stopPreviewOnly();
         leaveOverlayHistory();
         loadDevices(false);
+    }
+
+    /* ==================== v2.3.1 全屏悬浮控制 ====================
+       全屏时云台方向键 + 喊话按钮悬浮在画面上，无需在全屏/半屏反复横跳。
+       三条路径：标准元素全屏（Android/桌面）→ fullscreenchange 同步浮层；
+       iOS 等不支持元素全屏 → 应用内伪全屏（video-wrap fixed inset 0）；
+       视频原生全屏键已用 CSS 隐藏（Chromium/Safari），统一走应用全屏。 */
+    function isFsActive() {
+        return !!(document.fullscreenElement || document.webkitFullscreenElement)
+            || $('videoWrap').classList.contains('fs-fake');
+    }
+
+    function updateFsOverlay() {
+        $('fsOverlay').hidden = !isFsActive();
+        $('btnFullscreen').textContent = isFsActive() ? '⛶ 退出全屏' : '⛶ 全屏';
+        $('btnFsExit').hidden = !(document.fullscreenElement || document.webkitFullscreenElement);
+    }
+
+    function exitPreviewFullscreen(silent) {
+        if ($('videoWrap').classList.contains('fs-fake')) {
+            $('videoWrap').classList.remove('fs-fake');
+        }
+        var fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+        if (fsEl) {
+            var exit = document.exitFullscreen || document.webkitExitFullscreen;
+            try { if (exit) { exit.call(document); } } catch (e) { /* 忽略 */ }
+        }
+        if (!silent) { updateFsOverlay(); }
+    }
+
+    function togglePreviewFullscreen() {
+        if (isFsActive()) {
+            exitPreviewFullscreen(false);
+            return;
+        }
+        var wrap = $('videoWrap');
+        var req = wrap.requestFullscreen || wrap.webkitRequestFullscreen;
+        if (req) {
+            try {
+                var p = req.call(wrap);
+                if (p && p.catch) {
+                    p.catch(function () {
+                        wrap.classList.add('fs-fake');
+                        updateFsOverlay();
+                    });
+                }
+            } catch (e) {
+                wrap.classList.add('fs-fake');
+            }
+        } else {
+            // iOS Safari 等不支持元素全屏：应用内伪全屏（浮层仍在 DOM 内可见）
+            wrap.classList.add('fs-fake');
+        }
+        updateFsOverlay();
     }
 
     /* ==================== v2.3.1 对讲喊话 ====================
@@ -3662,7 +3717,7 @@
        复用当前取流会话（0x106/0x108），不新增摄像头连接。 */
     var talk = { ws: null, ctx: null, stream: null, node: null, src: null, gain: null,
         active: false, did: null, linearPcm: false, buf: null,
-        acc: null, accPos: 0 };
+        pool: null, queue: null, pacer: null, dc: 0, acc: null, accPos: 0 };
 
     function talkTip(text, kind) {
         var el = $('talkTip');
@@ -3719,6 +3774,7 @@
         talk.active = true;
         $('btnTalk').classList.add('talking');
         $('btnTalk').textContent = '🔇 结束喊话';
+        if ($('btnTalkFs')) { $('btnTalkFs').classList.add('talking'); $('btnTalkFs').textContent = '🔇 结束喊话'; }
         talkTip('对讲已开启：请对着麦克风说话，再次点击结束', 'ok');
         setPtzStatus('对讲通道建立中…', 'warn');
 
@@ -3749,41 +3805,60 @@
     function talkStartMic() {
         try {
             var Ctx = window.AudioContext || window.webkitAudioContext;
-            talk.ctx = new Ctx();
+            // v2.3.1 杂音修复 ①：直接向浏览器要 16kHz 采集上下文——浏览器自带高质量
+            // 抗混叠重采样；此前 48k/44.1k → 8k 纯线性插值抽取无低通，语音高频与
+            // 噪声全部混叠折回 0-4kHz，是「根本听不清」的主因
+            var ctx;
+            try { ctx = new Ctx({ sampleRate: 16000 }); }
+            catch (e1) { ctx = new Ctx(); }
+            talk.ctx = ctx;
             talk.acc = [];
             talk.accPos = 0;
-            talk.src = talk.ctx.createMediaStreamSource(talk.stream);
-            // 采集 2048 样本一帧，跨回调累积后按精确比率线性插值降采样到 8kHz，
-            // 再按 320 样本（40ms A-law）/ 640 样本（40ms 线性 PCM）切块上行
-            talk.node = talk.ctx.createScriptProcessor(2048, 1, 1);
+            talk.pool = [];   // 16kHz 原始样本池
+            talk.queue = [];  // 40ms 整块队列（匀速发送）
+            talk.src = ctx.createMediaStreamSource(talk.stream);
+            talk.node = ctx.createScriptProcessor(2048, 1, 1);
             talk.node.onaudioprocess = function (e) {
                 if (!talk.active || !talk.ws || talk.ws.readyState !== 1) { return; }
                 var input = e.inputBuffer.getChannelData(0);
-                var acc = talk.acc, pos = talk.accPos;
-                for (var i = 0; i < input.length; i++) { acc.push(input[i]); }
-                var step = (talk.ctx.sampleRate || 44100) / 8000;
-                var down = [];
-                while (pos + 1 < acc.length) {
-                    var i0 = Math.floor(pos), f = pos - i0;
-                    down.push(acc[i0] * (1 - f) + acc[i0 + 1] * f);
-                    pos += step;
+                // v2.3.1 杂音修复 ②：16k→8k 用相邻两样本平均（[0.5,0.5] FIR，
+                // 在 8k Nyquist 处恰有零点）抑制抽取混叠；再做一阶 DC 高通去隆隆声
+                var pool = talk.pool;
+                for (var i = 0; i < input.length; i++) { pool.push(input[i]); }
+                var out = [];
+                while (pool.length >= 2) {
+                    var s = (pool.shift() + pool[0]) * 0.5;
+                    talk.dc += (s - talk.dc) * 0.01;
+                    out.push(s - talk.dc);
                 }
-                var keepFrom = Math.floor(pos);
-                talk.acc = acc.slice(keepFrom);
-                talk.accPos = pos - keepFrom;
+                var rate = ctx.sampleRate || 16000;
+                var step = rate / 8000;
+                if (step !== 1) {
+                    // 兜底：上下文不支持 16kHz（如旧 iOS），退化为带窗线性插值抽取
+                    var acc = pool.slice(), pos = talk.accPos, down = [];
+                    while (pos + 1 < acc.length) {
+                        var i0 = Math.floor(pos), f = pos - i0;
+                        down.push(acc[i0] * (1 - f) + acc[i0 + 1] * f);
+                        pos += step;
+                    }
+                    talk.pool = acc.slice(Math.floor(pos));
+                    talk.accPos = pos - Math.floor(pos);
+                    out = down;
+                }
+                if (!out.length) { return; }
                 if (talk.linearPcm) {
                     // hlc6：16bit 小端线性 PCM，每 40ms 640 字节
-                    var pcm = new Int16Array(down.length);
-                    for (var m = 0; m < down.length; m++) {
-                        pcm[m] = Math.max(-32768, Math.min(32767, Math.round(down[m] * 32767)));
+                    var pcm = new Int16Array(out.length);
+                    for (var m = 0; m < out.length; m++) {
+                        pcm[m] = Math.max(-32768, Math.min(32767, Math.round(out[m] * 32767)));
                     }
                     pushTalkChunk(new Uint8Array(pcm.buffer), 640);
                 } else {
                     // 绝大多数机型：G.711 A-law 8kHz，每 40ms 320 字节
-                    var bytes = new Uint8Array(down.length);
-                    for (var k = 0; k < down.length; k++) {
-                        var s = Math.max(-32768, Math.min(32767, Math.round(down[k] * 32767)));
-                        bytes[k] = linearToAlaw(s);
+                    var bytes = new Uint8Array(out.length);
+                    for (var k = 0; k < out.length; k++) {
+                        var sv = Math.max(-32768, Math.min(32767, Math.round(out[k] * 32767)));
+                        bytes[k] = linearToAlaw(sv);
                     }
                     pushTalkChunk(bytes, 320);
                 }
@@ -3791,26 +3866,39 @@
             talk.src.connect(talk.node);
             // 经零增益节点接到 destination：保证 ScriptProcessor 持续回调，又不把麦克风
             // 声音外放（手机扬声器外放会被麦克风再次拾音造成回声啸叫）
-            talk.gain = talk.ctx.createGain();
+            talk.gain = ctx.createGain();
             talk.gain.gain.value = 0;
             talk.node.connect(talk.gain);
-            talk.gain.connect(talk.ctx.destination);
+            talk.gain.connect(ctx.destination);
+            // v2.3.1 杂音修复 ③：40ms 匀速发送——ScriptProcessor 回调天然抖动，
+            // 直发会让设备侧播放忽快忽慢（机械感杂音）；队列积压 ≥3 块时双发追赶
+            talk.pacer = setInterval(function () {
+                if (!talk.active || !talk.ws || talk.ws.readyState !== 1) { return; }
+                var q = talk.queue;
+                if (!q.length) { return; }
+                var n = q.length >= 3 ? 2 : 1;
+                while (n-- > 0 && q.length) {
+                    talk.ws.send(q.shift().buffer);
+                }
+            }, 40);
         } catch (e) {
             setPtzStatus('麦克风处理初始化失败：' + e.message, 'err');
             talkStop(true);
         }
     }
 
-    /* 累积到整块（320B A-law / 640B PCM）再发送，保证服务端 MISS 包大小正确 */
+    /* 整块（320B A-law / 640B PCM）入匀速队列，保证服务端 MISS 包大小正确 */
     function pushTalkChunk(bytes, chunkSize) {
-        if (!talk.buf) { talk.buf = []; }
+        var q = talk.queue || (talk.queue = []);
+        var buf = talk.buf || (talk.buf = []);
         for (var i = 0; i < bytes.length; i++) {
-            talk.buf.push(bytes[i]);
+            buf.push(bytes[i]);
         }
-        while (talk.buf.length >= chunkSize && talk.ws && talk.ws.readyState === 1) {
-            var chunk = new Uint8Array(talk.buf.splice(0, chunkSize));
-            talk.ws.send(chunk.buffer);
+        while (buf.length >= chunkSize) {
+            q.push(new Uint8Array(buf.splice(0, chunkSize)));
         }
+        // 队列深度保护：落后太多（>15 块 = 600ms）时丢最老的，避免持续累积延迟
+        while (q.length > 15) { q.shift(); }
     }
 
     function talkCleanup() {
@@ -3819,7 +3907,11 @@
         if (talk.src) { try { talk.src.disconnect(); } catch (e) { /* 忽略 */ } talk.src = null; }
         if (talk.ctx) { try { talk.ctx.close(); } catch (e) { /* 忽略 */ } talk.ctx = null; }
         if (talk.stream) { talk.stream.getTracks().forEach(function (t) { t.stop(); }); talk.stream = null; }
+        if (talk.pacer) { clearInterval(talk.pacer); talk.pacer = null; }
         talk.buf = null;
+        talk.pool = null;
+        talk.queue = null;
+        talk.dc = 0;
         talk.acc = null;
         talk.accPos = 0;
     }
@@ -3834,6 +3926,7 @@
         }
         $('btnTalk').classList.remove('talking');
         $('btnTalk').textContent = '🎤 喊话';
+        if ($('btnTalkFs')) { $('btnTalkFs').classList.remove('talking'); $('btnTalkFs').textContent = '🎤 喊话'; }
         if (wasActive && !silent) { toast('对讲已结束', 'ok'); }
         if (wasActive) { talkTip('喊话复用当前连接，点击开始/再次点击结束', ''); }
     }
@@ -5677,6 +5770,20 @@
             var b = e.target.closest('button[data-dir]');
             if (b) ptzMove(b.getAttribute('data-dir'));
         });
+        // v2.3.1 全屏悬浮控制：方向键 / 喊话 / 全屏切换（事件委托与 ptzPad 同构）
+        $('fsPtz').addEventListener('click', function (e) {
+            var b = e.target.closest('button[data-dir]');
+            if (b) ptzMove(b.getAttribute('data-dir'));
+        });
+        $('btnTalkFs').addEventListener('click', function () {
+            var did = state.previewDid;
+            if (!did) { toast('请先打开一路预览', 'err'); return; }
+            talkStart(did);
+        });
+        $('btnFullscreen').addEventListener('click', togglePreviewFullscreen);
+        $('btnFsExit').addEventListener('click', function () { exitPreviewFullscreen(false); });
+        document.addEventListener('fullscreenchange', updateFsOverlay);
+        document.addEventListener('webkitfullscreenchange', updateFsOverlay);
         $('btnChaseLive').addEventListener('click', function () {
             if (!chaseLiveEdge(false)) { toast('当前已是最新画面', 'ok'); }
             updateLiveBadge();
