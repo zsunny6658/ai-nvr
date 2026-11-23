@@ -484,7 +484,8 @@ button.net.sleep:hover { filter: brightness(1.15); }
 }
 .settings-nav-item:hover { background: var(--panel-2); }
 .settings-nav-item.active { background: var(--primary); color: #fff; font-weight: 600; }
-.settings-body { min-width: 0; display: grid; grid-template-columns: 1.5fr 1fr; gap: 16px; align-items: start; }
+/* v2.3.1 对齐排布：同行卡片等高（主卡在左宽列，次卡在右窄列），视觉更整齐 */
+.settings-body { min-width: 0; display: grid; grid-template-columns: 1.5fr 1fr; gap: 16px; }
 .settings-body .set-card[hidden] { display: none; }
 /* 宽卡：横跨两列（备份与恢复、共享看板、MQTT、清晰度/云台、AI 等内容多的卡） */
 .set-card-wide { grid-column: 1 / -1; }
@@ -516,6 +517,9 @@ button.net.sleep:hover { filter: brightness(1.15); }
 .set-card code { font-family: Consolas, monospace; word-break: break-all; }
 .set-card .link-row input { padding: 7px 9px; font-size: 12px; }
 .set-pick { display: flex; gap: 8px; }
+/* v2.3.1 内置存储权限面板：状态行 + 系统授权页直达 */
+.set-perm { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; padding: 8px 10px; border: 1px dashed var(--line); border-radius: 8px; }
+body.sdk-host .set-perm.sdk-only { display: flex !important; }
 .set-pick input { flex: 1; min-width: 0; background: var(--panel-2); cursor: default; }
 .set-edit { display: flex; gap: 8px; align-items: center; }
 .set-edit input { flex: 1; min-width: 0; }

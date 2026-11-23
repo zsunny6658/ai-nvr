@@ -939,9 +939,9 @@
         document.querySelectorAll('input[name="uiTheme"]').forEach(function (r) { r.checked = r.value === raw; });
         var lb = $('btnThemeLabel');
         if (lb) {
-            // 快捷按钮展示「点击后将切到」的模式：深色→浅色→跟随系统 循环
-            var next = raw === 'dark' ? 'light' : raw === 'light' ? 'auto' : 'dark';
-            lb.textContent = next === 'light' ? '浅色模式' : next === 'auto' ? '跟随系统' : '深色模式';
+            // 快捷按钮仅深/浅两态（「跟随系统」只在设置页提供）；auto 下按生效主题取反
+            var next = currentTheme() === 'dark' ? 'light' : 'dark';
+            lb.textContent = next === 'light' ? '浅色模式' : '深色模式';
         }
         try { localStorage.setItem('ainvr_theme', raw); } catch (e2) { /* 存储不可用忽略 */ }
     }
@@ -2505,6 +2505,16 @@
         document.addEventListener('visibilitychange', function () { if (!document.hidden) refresh(); });
     }
 
+    /** v2.3.1 向飞牛宿主申请所选目录的存储授权（选完即授权，免去去系统设置手动开）：
+     *  先按用户空间（authorizeUserFile），失败再按共享空间（authorizeSharedFile）。 */
+    async function trimAuthorizePath(p) {
+        var t = trimState.app;
+        if (!t) { return false; }
+        try { if (typeof t.authorizeUserFile === 'function') { await t.authorizeUserFile(p); return true; } } catch (e) { /* 继续尝试共享授权 */ }
+        try { if (typeof t.authorizeSharedFile === 'function') { await t.authorizeSharedFile(p); return true; } } catch (e2) { /* 放弃，回落可写性校验 */ }
+        return false;
+    }
+
     /** 飞牛系统文件选择器选目录；返回绝对路径或 null（取消 / 拒绝 / 无宿主）。 */
     async function trimPickDir(title) {
         var t = trimState.app;
@@ -2575,7 +2585,7 @@
         whenTrimHost(function (t) {
             $('dirSysPick').hidden = !t;
             if (t) {
-                $('dirStatus').textContent = '飞牛应用沙盒内仅能列出已授权目录，推荐点「系统文件选择器…」浏览全部共享目录。';
+                $('dirStatus').textContent = '飞牛应用沙盒内仅能列出已授权目录，推荐点「系统文件选择器…」浏览全部共享目录，选完自动申请授权。';
             }
         });
         loadDir(start);
@@ -2593,44 +2603,46 @@
     }
 
     /** 「浏览…」入口：飞牛宿主直接调系统文件选择器（沙盒内后端列不出 fnOS 目录），
-     *  取消 / 失败 / 独立浏览器回落服务器目录弹窗。 */
-    function browseDirFlow(target) {
+     *  选完自动向宿主申请存储授权；取消 / 失败 / 独立浏览器回落服务器目录弹窗。 */
+    async function browseDirFlow(target) {
         dirTarget = target === 'archive' ? 'archive' : 'recording';
-        whenTrimHost(function (t) {
-            if (!t) { openDirModal(dirTarget); return; }
-            // 宿主握手期间用户已等待：给出即时反馈再弹系统选择器
-            toast('正在打开飞牛文件选择器…');
-            trimPickDir(dirTarget === 'archive' ? '选择快照归档目录' : '选择录像存储目录')
-                .then(function (picked) {
-                    if (!picked) { openDirModal(dirTarget); return; }
-                    var p = picked.replace(/\/+$/, '') || '/';
-                    api('api/settings/browse?path=' + encodeURIComponent(p))
-                        .then(function (d) {
-                            if (d && d.currentWritable === true) {
-                                applyPickedDir(p);
-                                toast('已选择目录（记得点保存）：' + p, 'ok');
-                            } else {
-                                toast('该目录对本应用不可写：请在 fnOS 应用设置 → 存储管理中授权后再选', 'err');
-                                openDirModal(dirTarget);
-                            }
-                        })
-                        .catch(function () { openDirModal(dirTarget); });
-                });
-        });
+        var t = trimState.app;
+        if (!t) { openDirModal(dirTarget); return; }
+        // 宿主握手期间用户已等待：给出即时反馈再弹系统选择器
+        toast('正在打开飞牛文件选择器…');
+        var picked = await trimPickDir(dirTarget === 'archive' ? '选择快照归档目录' : '选择录像存储目录');
+        if (!picked) { openDirModal(dirTarget); return; }
+        var p = picked.replace(/\/+$/, '') || '/';
+        var ok = await trimAuthorizePath(p); // v2.3.1 选完即申请授权
+        try {
+            var d = await api('api/settings/browse?path=' + encodeURIComponent(p));
+            if (d && d.currentWritable === true) {
+                applyPickedDir(p);
+                toast('已选择目录（' + (ok ? '已自动授权' : '可写') + '，记得点保存）：' + p, 'ok');
+                return;
+            }
+            toast('已尝试自动授权，该目录仍不可写：为你打开系统授权页后请重新选择', 'err');
+        } catch (e) {
+            if (e.status === 401) { scheduleGateRelock(); return; }
+            toast('目录可写性校验失败：' + (e.message || ''), 'err');
+        }
+        if (t.openAppSetting) { try { t.openAppSetting(); } catch (e3) { /* 忽略 */ } }
+        openDirModal(dirTarget);
     }
 
-    /** 飞牛系统文件选择器：选完目录后校验可写性并作为当前选择。 */
+    /** 飞牛系统文件选择器：选完目录后申请授权、校验可写性并作为当前选择。 */
     async function sysPickDir() {
         var picked = await trimPickDir(dirTarget === 'archive' ? '选择快照归档目录' : '选择录像存储目录');
         if (!picked) return;
         var p = picked.replace(/\/+$/, '') || '/';
+        await trimAuthorizePath(p); // v2.3.1 选完即申请授权
         try {
             var d = await api('api/settings/browse?path=' + encodeURIComponent(p));
             var writable = d.currentWritable === true;
             dirPicked = writable ? p : null;
-            $('dirSelected').textContent = writable ? p : (p + '（不可写，无法选择）');
+            $('dirSelected').textContent = writable ? p : (p + '（已尝试授权，仍不可写，无法选择）');
             $('dirConfirm').disabled = !writable;
-            if (!writable) toast('该目录对本应用不可写，请另选目录', 'err');
+            if (!writable) toast('已尝试自动授权仍不可写：请到 fnOS 应用设置 → 存储管理手动授权', 'err');
         } catch (e) {
             $('dirSelected').textContent = p + '（无法校验可写性）';
             $('dirConfirm').disabled = true;
@@ -2639,6 +2651,27 @@
 
     function closeDirModal() {
         $('dirModal').hidden = true;
+    }
+
+    /* ---------- v2.3.1 内置存储权限面板（设置 → 存储与录像） ---------- */
+    /** 检测当前录像目录对本应用的可写性，实时显示授权状态。 */
+    async function refreshPermStatus() {
+        var el = $('permStatusText');
+        if (!el) return;
+        var dir = ($('setCurDir').textContent || '').trim();
+        if (!dir || dir === '—') {
+            el.textContent = '存储权限：使用默认目录（应用私有空间，无需授权）';
+            return;
+        }
+        try {
+            var d = await api('api/settings/browse?path=' + encodeURIComponent(dir));
+            el.textContent = d && d.currentWritable === true
+                ? '存储权限：已授权 ✓（' + dir + '）'
+                : '存储权限：未授权或不可写，录像写入会失败';
+        } catch (e) {
+            if (e.status === 401) { scheduleGateRelock(); return; }
+            el.textContent = '存储权限：状态未知（' + (e.message || '检测失败') + '）';
+        }
     }
 
     async function loadDir(path, create) {
@@ -5294,6 +5327,14 @@
         $('dirReload').addEventListener('click', function () { loadDir(dirData.current); });
         $('dirGo').addEventListener('click', goManualDir);
         $('dirSysPick').addEventListener('click', sysPickDir);
+        // v2.3.1 内置权限面板：直达 fnOS 应用授权页（应用设置 → 存储管理）
+        $('btnOpenAppPerm').addEventListener('click', function () {
+            whenTrimHost(function (t) {
+                if (t && typeof t.openAppSetting === 'function') {
+                    try { t.openAppSetting(); } catch (e) { /* 忽略 */ }
+                }
+            });
+        });
         $('dirManualPath').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); goManualDir(); } });
         $('dirModal').addEventListener('click', function (e) { if (e.target === this) closeDirModal(); });
 
@@ -5528,6 +5569,10 @@
         document.querySelectorAll('#tab-settings .set-card[data-sgroup]').forEach(function (c) {
             c.hidden = c.getAttribute('data-sgroup') !== name;
         });
+        // v2.3.1 进入存储分组时刷新内置权限面板状态
+        if (name === 'storage') {
+            whenTrimHost(function (t) { if (t) { refreshPermStatus(); } });
+        }
         document.querySelectorAll('#settingsNav .settings-nav-item').forEach(function (b) {
             b.classList.toggle('active', b.getAttribute('data-sgroup') === name);
         });
@@ -5546,10 +5591,9 @@
             showSettingsGroup(localStorage.getItem('ainvr_set_group') || 'storage');
         } catch (e) { showSettingsGroup('storage'); }
 
-        // v2.3.0 主题切换：侧栏快捷按钮 + 设置页单选；v2.3.1 快捷按钮循环（深色→浅色→跟随系统）
+        // v2.3.0 主题切换：侧栏快捷按钮 + 设置页单选；快捷按钮仅深/浅两态（跟随系统只在设置页）
         $('btnTheme').addEventListener('click', function () {
-            var cur = storedTheme();
-            applyTheme(cur === 'dark' ? 'light' : cur === 'light' ? 'auto' : 'dark');
+            applyTheme(currentTheme() === 'dark' ? 'light' : 'dark');
         });
         document.querySelectorAll('input[name="uiTheme"]').forEach(function (r) {
             r.addEventListener('change', function () { if (r.checked) { applyTheme(r.value); } });

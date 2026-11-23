@@ -31,7 +31,14 @@ class StaticAssetContractTest {
 
         assertTrue(html.contains("btnPreviewBack"), "预览弹层缺少应用内返回按钮");
         assertTrue(html.contains("btnPlayerBack"), "回放弹层缺少应用内返回按钮");
-        assertTrue(html.contains("v=64"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
+        assertTrue(html.contains("v=65"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
+        // v2.3.1 真机验证第五轮：主题快捷按钮两态 + 选目录自动授权 + 内置权限面板
+        assertTrue(js.contains("trimAuthorizePath"), "缺少选目录自动授权逻辑");
+        assertTrue(js.contains("authorizeUserFile"), "缺少用户空间授权调用");
+        assertTrue(html.contains("btnOpenAppPerm"), "存储卡片缺少系统授权页直达按钮");
+        assertTrue(html.contains("permStatusText"), "存储卡片缺少权限状态检测");
+        assertTrue(css.contains(".set-perm"), "缺少内置权限面板样式");
+        assertFalse(js.contains("'light' ? 'auto' : 'dark'"), "侧栏主题快捷按钮不应循环到跟随系统");
         // v2.3.1 第四轮性能修复：解锁懒加载录像列表 + 分组增量渲染 + 回放换段预载修复
         assertTrue(js.contains("maybeSwapEarly"), "缺少回放边界提前交接逻辑");
         assertTrue(js.contains("idle.preload = 'auto'"), "待命元素应显式 auto 预缓冲");

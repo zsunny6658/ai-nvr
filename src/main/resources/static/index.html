@@ -12,7 +12,7 @@
     <base href="./">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='4' fill='%230e1116'/%3E%3Ccircle cx='8' cy='8' r='3' fill='%2322d3ee'/%3E%3C/svg%3E">
     <title>aiNVR · AI 增强摄像头 NVR</title>
-    <link rel="stylesheet" href="style.css?v=64">
+    <link rel="stylesheet" href="style.css?v=65">
 </head>
 <body>
 
@@ -327,7 +327,11 @@
                         <button class="btn" id="btnRefreshDir" type="button">刷新</button>
                     </div>
                     <div id="setError" class="error-box" hidden></div>
-                    <p class="muted small">默认目录：<code id="setDefaultDir"></code>。选择的是<strong>服务器</strong>（运行本程序的机器）上的目录；设置会持久化，重启后仍生效。</p>
+                    <div class="set-perm sdk-only">
+                        <span class="muted small" id="permStatusText">存储权限：检测中…</span>
+                        <button class="btn tiny" id="btnOpenAppPerm" type="button">打开系统授权页</button>
+                    </div>
+                    <p class="muted small">默认目录：<code id="setDefaultDir"></code>。选择的是<strong>服务器</strong>（运行本程序的机器）上的目录；设置会持久化，重启后仍生效。飞牛内点「浏览…」即弹出系统文件选择器，<strong>选完会自动申请该目录的存储授权</strong>，无需再到系统设置手动开权限。</p>
                 </div>
                 <div class="set-card" data-sgroup="storage">
                     <h3>事件快照归档</h3>
@@ -378,7 +382,7 @@
                     <div id="setMqttMsg" class="muted small"></div>
                     <p class="muted small" id="setMqttStatus"></p>
                 </div>
-                <div class="set-card" data-sgroup="storage">
+                <div class="set-card set-card-wide" data-sgroup="storage">
                     <h3>录像参数</h3>
                     <label>录像分段时长（秒，10～3600）</label>
                     <div class="set-edit">
@@ -615,7 +619,7 @@
                     </div>
                     <p class="muted small" id="setQualityHint"></p>
                 </div>
-                <div class="set-card" data-sgroup="share">
+                <div class="set-card set-card-wide" data-sgroup="share">
                     <h3>共享看板参数</h3>
                     <p class="muted small">免鉴权共享大屏的事件、心跳与轮询周期。事件时长对下一次触发生效，心跳周期下一轮生效；轮询/兜底重载在大屏下次加载时生效。</p>
                     <label>事件画面时长（秒，5～3600）</label>
@@ -974,8 +978,8 @@
 <div id="toast" class="toast"></div>
 
 <script src="vendor/hls.min.js"></script>
-<script type="module" src="vendor/trimapp-bridge.js?v=64"></script>
-<script src="watchdog.js?v=64"></script>
-<script src="app.js?v=64"></script>
+<script type="module" src="vendor/trimapp-bridge.js?v=65"></script>
+<script src="watchdog.js?v=65"></script>
+<script src="app.js?v=65"></script>
 </body>
 </html>
