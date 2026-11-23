@@ -819,22 +819,20 @@
             + (c.online ? '在线' : '离线') + '</span>';
     }
 
-    /** v2.3.1 唤醒 / 休眠摄像头（云端 MIoT 属性写，成功后实时探测同步徽标）。 */
+    /** v2.3.1 唤醒 / 休眠摄像头（云端 MIoT 属性写，服务端有钉住窗口防读数滞后翻转）。 */
     async function toggleSleep(did, wake) {
         var label = wake ? '唤醒' : '休眠';
         try {
-            await api('api/devices/' + encodeURIComponent(did) + '/sleep/' + (wake ? '1' : '0'),
+            var resp = await api('api/devices/' + encodeURIComponent(did) + '/sleep/' + (wake ? '1' : '0'),
                 { method: 'POST' });
             toast(label + '指令已下发' + (wake ? '，摄像头启动约需几秒' : ''), 'ok');
-            // 实时探测一次并把徽标同步到位，不等下一轮 5s 轮询
-            try {
-                var p = await api('api/devices/' + encodeURIComponent(did) + '/sleep');
-                var base = String(did).split('#')[0];
-                state.devices.forEach(function (d) {
-                    if (d.did === did || String(d.did).split('#')[0] === base) d.sleeping = p.sleeping;
-                });
-                renderDevices();
-            } catch (e2) { /* 探测失败不打扰，交给轮询 */ }
+            // 直接以 POST 返回的下发状态渲染（不要立刻 probeOne：云端读数滞后会返回
+            // 旧值把刚设置的状态翻转回去；服务端已钉住，loadDevices 拉到的是权威值）
+            var base = String(did).split('#')[0];
+            state.devices.forEach(function (d) {
+                if (d.did === did || String(d.did).split('#')[0] === base) d.sleeping = resp.sleeping;
+            });
+            renderDevices();
             loadDevices(true);
         } catch (e) {
             if (e.status === 401) { scheduleGateRelock(); return; }
@@ -848,12 +846,17 @@
         var recBtn = c.recording
             ? '<button class="btn rec-on" data-act="recstop" data-did="' + esc(c.did) + '">停止录像</button>'
             : '<button class="btn" data-act="recstart" data-did="' + esc(c.did) + '"' + offlineDis + '>开始录像</button>';
+        // v2.3.1 米家式休眠交互：休眠中卡顶快照区整体变为「点击唤醒」入口，
+        // hover 显示播放覆盖层（唤醒后可再进预览；下方按钮行也有预览入口）
+        var sleeping = c.online && c.sleeping === true && String(c.did).indexOf('#') < 0;
         return '<div class="cam-card' + (c.online ? '' : ' offline') + '" data-did="' + esc(c.did) + '">' +
-            // v2.3.0 视频优先卡：顶部最近快照，点击进入实时预览（与预览按钮同一 data-act 委托）
-            '<button type="button" class="cam-media" data-act="preview" data-did="' + esc(c.did) + '"' +
-            (c.online ? '' : ' disabled') + ' title="点击进入实时预览">' +
+            // v2.3.0 视频优先卡：顶部最近快照，点击进入实时预览（休眠时点击唤醒）
+            '<button type="button" class="cam-media' + (sleeping ? ' cam-media-sleep' : '') + '" data-act="'
+            + (sleeping ? 'wake' : 'preview') + '" data-did="' + esc(c.did) + '"' +
+            (c.online ? '' : ' disabled') + ' title="' + (sleeping ? '休眠中 · 点击唤醒' : '点击进入实时预览') + '">' +
             '<img class="cam-media-img" data-snap-did="' + esc(c.did) + '" alt="最近画面" loading="lazy" hidden>' +
             '<span class="cam-media-hint">' + (c.online ? '快照加载中…' : '') + '</span>' +
+            (sleeping ? '<span class="cam-sleep-play" aria-hidden="true"><span class="tri"></span></span>' : '') +
             '</button>' +
             '<div class="cam-top"><div>' +
             '<div class="cam-name"><span class="nm">' + esc(c.name) + '</span>' + onlineBadge(c) + '</div>' +
@@ -867,11 +870,12 @@
             '</div>' +
             '<div class="cam-actions cam-actions-sub">' +
             recBtn +
-            // v2.3.1 应用内休眠设置：工作中可一键休眠（休眠中卡片徽标已有唤醒入口）；
-            // 副镜头（did 含 #）跟随主镜头不单独下发
-            (c.online && c.sleeping !== true && String(c.did).indexOf('#') < 0
-                ? '<button class="btn soft" data-act="sleep" data-did="' + esc(c.did)
-                    + '" title="让摄像头进入休眠（米家同款，云端下发）">休眠</button>' : '') +
+            // v2.3.1 休眠/唤醒常驻切换：在线显示「休眠」，休眠中显示「唤醒」
+            //（徽标点击同样可唤醒）；副镜头（did 含 #）跟随主镜头不单独下发
+            (c.online && String(c.did).indexOf('#') < 0
+                ? '<button class="btn soft" data-act="' + (sleeping ? 'wake' : 'sleep') + '" data-did="' + esc(c.did)
+                    + '" title="' + (sleeping ? '唤醒摄像头（米家同款，云端下发）' : '让摄像头进入休眠（米家同款，云端下发）') + '">'
+                    + (sleeping ? '唤醒' : '休眠') + '</button>' : '') +
             '<button class="btn soft probe-btn" data-act="probe" data-did="' + esc(c.did) + '">自检</button>' +
             '</div>' +
             // v1.2.14：米家式卡片底部 —— 最近几条画面变动事件快照（异步填充，不阻塞设备列表）

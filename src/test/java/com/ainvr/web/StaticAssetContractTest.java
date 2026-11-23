@@ -31,7 +31,7 @@ class StaticAssetContractTest {
 
         assertTrue(html.contains("btnPreviewBack"), "预览弹层缺少应用内返回按钮");
         assertTrue(html.contains("btnPlayerBack"), "回放弹层缺少应用内返回按钮");
-        assertTrue(html.contains("v=75"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
+        assertTrue(html.contains("v=76"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
         // v2.3.1 真机验证第五轮：主题快捷按钮两态 + 选目录自动授权 + 内置权限面板
         assertTrue(js.contains("trimAuthorizePath"), "缺少选目录自动授权逻辑");
         assertTrue(js.contains("authorizeUserFile"), "缺少用户空间授权调用");
@@ -52,6 +52,12 @@ class StaticAssetContractTest {
         assertTrue(js.contains("sleeping === true"), "休眠徽标应依据云端 sleeping 属性");
         assertTrue(js.contains("toggleSleep"), "缺少点击休眠徽标唤醒 / 卡片休眠下发逻辑");
         assertTrue(js.contains("net sleep"), "缺少休眠徽标样式标记");
+        // v2.3.1 真机验证第九轮：米家式休眠交互（卡顶点击唤醒 + 次行常驻切换 + 钉住防翻转）
+        assertTrue(js.contains("cam-sleep-play"), "休眠卡顶应有 hover 播放覆盖层");
+        assertTrue(js.contains("cam-media-sleep"), "休眠态卡顶快照区应有独立标记类");
+        assertTrue(js.contains("d.sleeping = resp.sleeping"), "下发后应直接用 POST 返回状态渲染，不得立即探测覆盖");
+        assertTrue(!js.contains("d.sleeping = p.sleeping"), "下发后不应再用实时探测旧值覆盖状态");
+        assertTrue(js.contains("(sleeping ? 'wake' : 'sleep')"), "次行按钮应按休眠态切换 wake/sleep 动作");
         assertTrue(js.contains("(v === 'light' || v === 'dark' || v === 'auto') ? v : 'auto'"), "主题默认应跟随系统");
         assertTrue(html.contains("value=\"auto\" checked"), "外观单选默认应为「跟随系统」");
         // v2.3.1 真机验证第三轮：固定编号排序 + 预览不再全屏 + A-law 修复

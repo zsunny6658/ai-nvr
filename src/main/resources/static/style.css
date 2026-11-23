@@ -1035,3 +1035,29 @@ body.sdk-host .sdk-only { display: inline-block !important; }
 .fb-token-row input { flex: 1 1 200px; min-width: 0; }
 .fb-state { white-space: nowrap; }
 .fb-up-new { color: #f59e0b; font-weight: 600; }
+
+/* ===== v2.3.1 米家式休眠卡：hover 播放覆盖层（点击唤醒） ===== */
+.cam-sleep-play {
+    position: absolute; inset: 0; z-index: 2;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(10, 14, 20, .38);
+    opacity: 0; transition: opacity .18s ease; pointer-events: none;
+}
+.cam-media-sleep:hover .cam-sleep-play,
+.cam-media-sleep:focus-visible .cam-sleep-play { opacity: 1; }
+.cam-sleep-play .tri {
+    width: 52px; height: 52px; border-radius: 50%;
+    background: rgba(20, 26, 34, .78); border: 1px solid rgba(255, 255, 255, .28);
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, .4);
+}
+.cam-sleep-play .tri::before {
+    content: ''; display: block; margin-left: 4px;
+    border-style: solid; border-width: 10px 0 10px 16px;
+    border-color: transparent transparent transparent #e6edf3;
+}
+/* 触屏设备无 hover：常显弱化播放标识，保证可发现性 */
+@media (hover: none) {
+    .cam-sleep-play { opacity: .85; background: rgba(10, 14, 20, .18); }
+    .cam-sleep-play .tri { width: 44px; height: 44px; }
+}

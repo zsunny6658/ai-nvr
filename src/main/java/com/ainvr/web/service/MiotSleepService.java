@@ -50,6 +50,15 @@ public class MiotSleepService {
     private final ConcurrentHashMap<String, Boolean> sleepState = new ConcurrentHashMap<>();
     /** 主设备 did → 最近一次属性读取失败码（成功后移除）。用于失败可见化，避免静默降级成「一直在线」。 */
     private final ConcurrentHashMap<String, Integer> failCodes = new ConcurrentHashMap<>();
+    /**
+     * 手动下发后的「钉住」窗口：米家云 prop/set 写入后 prop/get 读数有明显滞后
+     * （真机：下发休眠后立刻读仍返回旧值 true=工作中，90s 轮询 / 前端实时探测
+     * 都会把刚设置的正确状态翻转回「在线」）。钉住期内忽略与下发值不一致的云端
+     * 读数，读数一致则提前解除。did → 过期时间戳(ms) 与钉住状态。
+     */
+    private static final long PIN_MS = TimeUnit.MINUTES.toMillis(5);
+    private final ConcurrentHashMap<String, Long> pinnedUntil = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Boolean> pinnedState = new ConcurrentHashMap<>();
     private final ScheduledExecutorService scheduler;
 
     public MiotSleepService(DeviceCatalog catalog, SessionHolder sessionHolder,
@@ -129,6 +138,34 @@ public class MiotSleepService {
             boolean value = item.path("value").asBoolean();
             boolean sleeping = !value;
             failCodes.remove(base);
+            // 钉住期内：云端读数滞后于手动下发时忽略本次读数（保持钉住状态），
+            // 读数与下发值一致则提前解除钉住
+            long now = System.currentTimeMillis();
+            Long pu = pinnedUntil.get(base);
+            if (pu != null) {
+                if (pu > now) {
+                    boolean ps = Boolean.TRUE.equals(pinnedState.get(base));
+                    if (sleeping == ps) {
+                        pinnedUntil.remove(base);
+                        pinnedState.remove(base);
+                        log.debug("[{}] 云端读数已与手动下发一致，解除钉住", base);
+                    } else {
+                        log.info("[{}] 云端读数滞后于手动下发（on={}，钉住为{}），{} 分钟内忽略",
+                                base, value, ps ? "休眠" : "唤醒",
+                                TimeUnit.MILLISECONDS.toMinutes(PIN_MS));
+                        Map<String, Object> pinnedOut = new java.util.LinkedHashMap<>();
+                        pinnedOut.put("did", base);
+                        pinnedOut.put("code", code);
+                        pinnedOut.put("value", value);
+                        pinnedOut.put("sleeping", ps);
+                        pinnedOut.put("pinned", true);
+                        return pinnedOut;
+                    }
+                } else {
+                    pinnedUntil.remove(base);
+                    pinnedState.remove(base);
+                }
+            }
             Boolean prev = sleepState.put(base, sleeping);
             out.put("value", value);
             out.put("sleeping", sleeping);
@@ -184,6 +221,9 @@ public class MiotSleepService {
             new MiCloudApi(session).call("/miotspec/prop/set", Map.of("params", List.of(param)));
         }
         Boolean prev = sleepState.put(base, sleep);
+        // 手动下发进入钉住窗口：云端读数滞后期间忽略不一致的 prop/get 结果
+        pinnedUntil.put(base, System.currentTimeMillis() + PIN_MS);
+        pinnedState.put(base, sleep);
         if (prev == null || prev != sleep) {
             log.info("[{}] 已{}摄像头（MIoT {}.{}）", base, sleep ? "休眠" : "唤醒",
                     propInt("ainvr.sleep.siid", 2), propInt("ainvr.sleep.piid", 1));
