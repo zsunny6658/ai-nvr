@@ -32,6 +32,7 @@
         // v1.2.13：按摄像头分组展示（折叠状态 / 各设备文件数）
         // v2.3.1：每组增量渲染（首次 50 行，点「加载更多」续 200 行），避免上千行 DOM 一次成型卡死主线程
         recCollapsed: new Set(), recExpanded: new Set(), recCounts: {}, recShown: new Map(), recListCurrent: [], recGroupCount: 1,
+        lastLoads: { devicesFull: 0, dashboard: 0, boards: 0, about: 0 },
         // v1.2.8：事件告警页（选中集 / 已加载行 / 分页游标）
         evSelected: new Set(), evRows: [], evOffset: 0, evTotal: 0, evBusy: false,
         // v1.2.15：全量事件数 / 删除或清空操作的重入保护
@@ -332,6 +333,7 @@
         setTimeout(function () { $('setupPw1').focus(); }, 0);
     }
     function showLock() {
+        stopAppTimers(); // 锁定即停主界面轮询（解锁后 showApp 会按新鲜度重启）
         hideAll();
         $('lockView').hidden = false;
         $('lockPw').value = '';
@@ -359,16 +361,31 @@
         document.body.classList.add('authed');
         $('userChip').textContent = '已登录 · ' + userId + '（' + region + '）';
         resetLoginPanels();
-        loadDevices(true);
-        // v2.3.1 解锁卡顿修复：录像列表不再解锁即加载——后端要扫整个录像目录、前端要
-        // 一次性渲染上千行 DOM（每行 4 个按钮），主线程被阻塞数秒导致进界面特别卡。
-        // 已改为打开「回放 → 录像文件」窗格时按需加载（setPbPane），并做分组增量渲染。
-        loadBoards();
-        loadDashboard(); // 内含卡片最近快照刷新（v1.2.14）
-        loadAbout();
+        // v2.3.1 解锁秒开：锁定期间 DOM 与数据都还在内存里，解锁后先原样展示缓存画面，
+        // 再按「新鲜度」决定要不要重拉——原实现每次解锁都 loadDevices(true)（服务端走
+        // 米家云端全量刷新，数秒）+ 强制整表重建摄像头卡（快照闪断重载）+ 概览扫录像目录，
+        // 用户刚锁完马上解锁也要等一轮全量加载，体感“进页面特别慢”。
+        // 设备全量刷新 60s 内复用；概览 30s 内复用（dashTimer 也会按时刷）；其余会话内一次。
+        var now = Date.now();
+        stopAppTimers();
         state.pollTimer = setInterval(function () { loadDevices(false); }, 5000);
         // 概览含录像目录扫描，30 秒一次即可，不跟着 5 秒设备轮询走
         state.dashTimer = setInterval(loadDashboard, 30000);
+        if (!state.devices.length || now - state.lastLoads.devicesFull > 60000) {
+            loadDevices(true);
+        } else {
+            loadDevices(false); // 轻量状态同步（online/recording 徽标），不重建卡片
+        }
+        if (now - state.lastLoads.dashboard > 30000) { loadDashboard(); }
+        if (!state.lastLoads.boards) { loadBoards(); }
+        if (!state.lastLoads.about) { loadAbout(); }
+    }
+
+    /** 停掉主界面轮询：锁定/登出后不再空转——原实现锁定后 5s 设备轮询与 30s 概览扫描
+     *  继续打门禁接口，全部 401 触发回锁链路，白白消耗请求还拖慢解锁后的首个加载。 */
+    function stopAppTimers() {
+        if (state.pollTimer) { clearInterval(state.pollTimer); state.pollTimer = null; }
+        if (state.dashTimer) { clearInterval(state.dashTimer); state.dashTimer = null; }
     }
 
     /* ---------- 访问密码门禁路由 ---------- */
@@ -611,6 +628,7 @@
     async function loadDashboard() {
         try {
             var d = await api('api/dashboard');
+            state.lastLoads.dashboard = Date.now(); // 新鲜度标记：解锁后 30s 内复用缓存画面
             var dev = d.devices || {}, ev = d.events || {}, rec = d.recordings || {},
                 st = d.streams || {}, mo = d.motion || {};
             statSet('dsDevTotal', 'dsDevSub', dev.total == null ? '-' : dev.total,
@@ -643,6 +661,7 @@
         api('api/version', { noRelock: true }).then(function (d) {
             var v = d.version || '?';
             el.textContent = 'v' + v;
+            state.lastLoads.about = Date.now();
             // 解锁后再补运行时长（需鉴权；未解锁时 401 属正常，静默忽略且不触发回锁）
             api('api/about', { noRelock: true }).then(function (a) {
                 if (a && a.uptimeMs) {
@@ -719,6 +738,7 @@
     async function loadDevices(forceRefresh) {
         try {
             var data = await api('api/devices?refresh=' + (forceRefresh ? 'true' : 'false'));
+            if (forceRefresh) { state.lastLoads.devicesFull = Date.now(); }
             var list = data.devices || [];
             var structureChanged = list.length !== state.devices.length ||
                 list.some(function (c) {
@@ -1090,6 +1110,7 @@
             var data = await api('api/boards');
             state.boards = data.boards || [];
             renderBoards();
+            state.lastLoads.boards = Date.now(); // 会话内一次；新建/删除看板后有各自的刷新入口
         } catch (e) {
             toast('看板加载失败：' + e.message, 'err');
         }
