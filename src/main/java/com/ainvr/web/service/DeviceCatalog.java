@@ -63,6 +63,9 @@ public class DeviceCatalog {
             t.setDaemon(true);
             return t;
         });
+        // 启动预热：3s 后若已登录（含恢复的会话）立即拉一次设备列表——否则进程重启后
+        // devices 一直为空，用户打开页面还要再等一次米家云端全量刷新（数秒）才能出卡片。
+        this.scheduler.schedule(this::safeRefresh, 3, TimeUnit.SECONDS);
         this.scheduler.scheduleAtFixedRate(this::safeRefresh,
                 AUTO_REFRESH_SECONDS, AUTO_REFRESH_SECONDS, TimeUnit.SECONDS);
     }
@@ -70,7 +73,8 @@ public class DeviceCatalog {
     /** 后台任务：仅在已登录时刷新，任何异常都静默保留上一份缓存。 */
     private void safeRefresh() {
         try {
-            if (sessionHolder.isLoggedIn() && !devices.isEmpty()) {
+            // v2.3.1：空列表也刷新（启动预热场景）；未登录时跳过
+            if (sessionHolder.isLoggedIn()) {
                 refresh();
             }
         } catch (Exception e) {

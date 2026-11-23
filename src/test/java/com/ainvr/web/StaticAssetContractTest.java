@@ -31,7 +31,7 @@ class StaticAssetContractTest {
 
         assertTrue(html.contains("btnPreviewBack"), "预览弹层缺少应用内返回按钮");
         assertTrue(html.contains("btnPlayerBack"), "回放弹层缺少应用内返回按钮");
-        assertTrue(html.contains("v=70"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
+        assertTrue(html.contains("v=71"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
         // v2.3.1 真机验证第五轮：主题快捷按钮两态 + 选目录自动授权 + 内置权限面板
         assertTrue(js.contains("trimAuthorizePath"), "缺少选目录自动授权逻辑");
         assertTrue(js.contains("authorizeUserFile"), "缺少用户空间授权调用");

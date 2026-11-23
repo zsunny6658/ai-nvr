@@ -375,8 +375,15 @@
         state.pollTimer = setInterval(function () { loadDevices(false); }, 5000);
         // 概览含录像目录扫描，30 秒一次即可，不跟着 5 秒设备轮询走
         state.dashTimer = setInterval(loadDashboard, 30000);
-        if (!state.devices.length || now - state.lastLoads.devicesFull > 60000) {
+        if (!state.devices.length) {
+            // 进程重启后首访：本机无缓存可用，必须拉一次云端。后端已在启动 3s 后预热
+            // 过设备列表（DeviceCatalog 预热），此时命中后端内存缓存，通常只需亚秒级。
             loadDevices(true);
+        } else if (now - state.lastLoads.devicesFull > 60000) {
+            // 超过新鲜度：先轻量同步让徽标/卡片立即呈现（不重建、不等云端），
+            // 全量刷新转后台异步执行，完成后下一次轮询自动把变化刷上来。
+            loadDevices(false);
+            setTimeout(function () { loadDevices(true); }, 50);
         } else {
             loadDevices(false); // 轻量状态同步（online/recording 徽标），不重建卡片
         }
@@ -566,6 +573,8 @@
         var p = $('lockPw').value;
         if (!p) { showLockError('请输入访问密码'); return; }
         $('btnUnlock').disabled = true;
+        var oldLabel = $('btnUnlock').textContent;
+        $('btnUnlock').textContent = '校验中…';
         try {
             var d = await api('api/access/unlock', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -580,7 +589,7 @@
             toast('已解锁', 'ok');
             route();
         } catch (e) { showLockError(e.message); }
-        finally { $('btnUnlock').disabled = false; }
+        finally { $('btnUnlock').disabled = false; $('btnUnlock').textContent = oldLabel; }
     }
 
     async function lockConsole() {

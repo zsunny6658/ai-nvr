@@ -103,7 +103,8 @@ public class AccessController {
         // opt-in 模式下用访问密码派生密钥恢复此前落盘的米家会话（默认模式为空操作）
         sessionHolder.restoreAfterUnlock();
         Map<String, Object> m = gateResult(session);
-        m.put("remember", keyStore.regenerateUnlockToken(pw));
+        // 刚 verify 成功，直接取令牌——不再重复 PBKDF2 校验（解锁响应提速）
+        m.put("remember", keyStore.regenerateUnlockTokenAfterVerify(pw));
         return m;
     }
 

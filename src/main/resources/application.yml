@@ -1,5 +1,11 @@
 server:
   port: 9080
+  # 打开提速：页面文本资源 gzip 压缩（app.js 约 300KB -> 70KB）。仅对下列文本类型生效，
+  # video/mp4、video/iso.segment 等二进制不在白名单，行为不变。
+  compression:
+    enabled: true
+    mime-types: text/html,text/plain,text/css,text/javascript,application/javascript,application/json
+    min-response-size: 1024
   servlet:
     # 门禁会话不依赖 Cookie（改用 Authorization 头 / __ainvr_t 查询参数的令牌会话），
     # 因此此处不再配置 session cookie（SameSite/Secure 对跨站 iframe + HTTP 均无法生效）。

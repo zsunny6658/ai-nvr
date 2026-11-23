@@ -38,6 +38,8 @@ public class SessionHolder {
         this.store = store;
         this.keyStore = keyStore;
         this.props = props;
+        // 非 opt-in 模式无需在密码校验时派生会话密钥——省一次 12 万迭代 PBKDF2（解锁提速）
+        keyStore.setSessionKeyCacheEnabled(props.isSessionKeyFromPassword());
         // opt-in 模式：启动时不自动恢复，需先经访问密码解锁（见 restoreWithKey）。
         if (!props.isSessionKeyFromPassword()) {
             store.load().ifPresent(s -> {

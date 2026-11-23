@@ -91,7 +91,7 @@ class AccessGateFlowTest {
     @Test
     void unlockReturnsRememberCredentialForSilentReauth() {
         AccessKeyStore keys = keyStoreConfigured(true);
-        when(keys.regenerateUnlockToken(any())).thenReturn("remember-token-123");
+        when(keys.regenerateUnlockTokenAfterVerify(any())).thenReturn("remember-token-123");
         TokenSessionManager tokens = new TokenSessionManager();
         AccessController controller = new AccessController(keys, mock(SessionHolder.class), tokens);
 

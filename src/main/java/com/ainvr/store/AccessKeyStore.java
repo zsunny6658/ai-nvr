@@ -54,6 +54,12 @@ public class AccessKeyStore {
     private volatile Record record;
     /** 本次进程内已校验通过的访问密码派生出的会话主密钥（仅内存，不落盘）。 */
     private volatile byte[] cachedSessionKey;
+    /**
+     * 是否在密码校验成功时顺带派生会话主密钥。仅 opt-in（session-key-from-password=true）
+     * 模式需要；默认模式跳过可省一次 12 万迭代 PBKDF2（NAS 低功耗 CPU 上约 0.3~0.6s）。
+     * 默认 true 保持旧行为（测试与手工构造场景兼容），Spring 装配时由 SessionHolder 按配置关闭。
+     */
+    private volatile boolean sessionKeyCacheEnabled = true;
 
     public AccessKeyStore() {
         this(DataDir.get());
@@ -62,6 +68,11 @@ public class AccessKeyStore {
     public AccessKeyStore(Path dir) {
         this.dir = dir;
         this.record = load();
+    }
+
+    /** 仅 opt-in 会话密钥模式需要缓存派生密钥；装配方按配置关闭可减少解锁时的重复派生。 */
+    public void setSessionKeyCacheEnabled(boolean enabled) {
+        this.sessionKeyCacheEnabled = enabled;
     }
 
     public boolean isConfigured() {
@@ -94,7 +105,9 @@ public class AccessKeyStore {
         r.urlHash = urlTokenHashB64(password, salt, ITERATIONS);
         persist(r);
         record = r;
-        cacheSessionKey(password, salt, ITERATIONS);
+        if (sessionKeyCacheEnabled) {
+            cacheSessionKey(password, salt, ITERATIONS);
+        }
         log.info("访问密码已设置（PBKDF2 迭代 {}）", ITERATIONS);
     }
 
@@ -109,7 +122,7 @@ public class AccessKeyStore {
             byte[] expected = Base64.getDecoder().decode(r.hash);
             byte[] actual = pbkdf2(password, salt, r.iterations, KEY_BITS);
             boolean ok = MessageDigest.isEqual(expected, actual);
-            if (ok) {
+            if (ok && sessionKeyCacheEnabled) {
                 cacheSessionKey(password, salt, r.iterations);
             }
             return ok;
@@ -180,12 +193,34 @@ public class AccessKeyStore {
         if (!verify(password)) {
             throw new IllegalArgumentException("访问密码错误");
         }
-        String expectedHash = urlTokenHashB64(password, Base64.getDecoder().decode(r.salt), r.iterations);
+        return doRegenerateUnlockToken(password, r);
+    }
+
+    /**
+     * 供调用方<strong>在同一请求内刚刚 verify 成功</strong>后直接取令牌——省去重复的
+     * PBKDF2 校验（unlock 接口原先一次请求最多做 6 次 12 万迭代派生，NAS 低功耗 CPU 上
+     * 是「输入密码后卡十多秒」的主要来源；重构后降到 3 次）。
+     * 密码哈希校验由调用方负责；这里仍校验记录存在与旧版 urlHash 补算。
+     */
+    public synchronized String regenerateUnlockTokenAfterVerify(char[] password) {
+        Record r = record;
+        if (r == null) {
+            throw new IllegalStateException("尚未设置访问密码");
+        }
+        return doRegenerateUnlockToken(password, r);
+    }
+
+    /** 令牌与令牌哈希共享同一次 PBKDF2 派生（hash = SHA-256(token)，无需再派生一遍）。 */
+    private String doRegenerateUnlockToken(char[] password, Record r) {
+        byte[] tokenKey = pbkdf2(password, tokenSalt(Base64.getDecoder().decode(r.salt)), r.iterations, KEY_BITS);
+        String token = Base64.getUrlEncoder().withoutPadding().encodeToString(tokenKey);
+        String expectedHash = Base64.getEncoder().encodeToString(
+                sha256(token.getBytes(StandardCharsets.UTF_8)));
         if (!expectedHash.equals(r.urlHash)) {
             r.urlHash = expectedHash;
             persist(r);
         }
-        return buildUnlockToken(password);
+        return token;
     }
 
     /**
@@ -225,7 +260,9 @@ public class AccessKeyStore {
         nr.urlHash = urlTokenHashB64(newPassword, salt, ITERATIONS);
         persist(nr);
         record = nr;
-        cacheSessionKey(newPassword, salt, ITERATIONS);
+        if (sessionKeyCacheEnabled) {
+            cacheSessionKey(newPassword, salt, ITERATIONS);
+        }
         log.info("访问密码已修改（PBKDF2 迭代 {}）", ITERATIONS);
         return buildUnlockToken(newPassword);
     }
