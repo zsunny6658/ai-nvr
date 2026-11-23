@@ -9,6 +9,7 @@ import com.ainvr.store.MotionSettings;
 import com.ainvr.web.service.DeviceCatalog;
 import com.ainvr.web.service.HlsService;
 import com.ainvr.web.service.LiveFrameService;
+import com.ainvr.web.service.MiotSleepService;
 import com.ainvr.web.service.RecordingService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -38,11 +39,12 @@ public class DashboardController {
     private final AppSettingsStore settings;
     private final LiveFrameService liveFrames;
     private final RtspServer rtspServer;
+    private final MiotSleepService sleepService;
 
     public DashboardController(DeviceCatalog catalog, RecordingService recordings,
                                EventStore events, StreamHub hub, HlsService hls,
                                AppSettingsStore settings, LiveFrameService liveFrames,
-                               RtspServer rtspServer) {
+                               RtspServer rtspServer, MiotSleepService sleepService) {
         this.catalog = catalog;
         this.recordings = recordings;
         this.events = events;
@@ -51,6 +53,7 @@ public class DashboardController {
         this.settings = settings;
         this.liveFrames = liveFrames;
         this.rtspServer = rtspServer;
+        this.sleepService = sleepService;
     }
 
     @GetMapping("/dashboard")
@@ -79,6 +82,8 @@ public class DashboardController {
         dev.put("offline", devices.size() - online);
         dev.put("recording", recording);
         dev.put("previewing", previewing);
+        // v2.3.1：休眠中的台数（米家云 isOnline 对休眠设备仍报在线，单独给前端展示）
+        dev.put("sleeping", countSleeping(devices, did -> sleepService.sleeping(did)));
         out.put("devices", dev);
 
         Map<String, Object> streams = new LinkedHashMap<>();
@@ -117,6 +122,27 @@ public class DashboardController {
         out.put("motion", Map.of("enabled", motion.enabled(), "threshold", motion.threshold()));
         out.put("rtspPort", safe(rtspServer::getPort, -1));
         return out;
+    }
+
+    /**
+     * 统计休眠中的主镜头台数（副镜头 {@code #2} 跟随主镜头不重复计数）。
+     * 包级可见静态方法便于单测；探测未知（null）/探测异常均不计入。
+     */
+    static int countSleeping(List<CameraDevice> devices, java.util.function.Predicate<String> sleeping) {
+        int n = 0;
+        for (CameraDevice d : devices) {
+            if (com.ainvr.miss.DualLens.isSecondary(d.did())) {
+                continue;
+            }
+            try {
+                if (Boolean.TRUE.equals(sleeping.test(d.did()))) {
+                    n++;
+                }
+            } catch (RuntimeException ignore) {
+                // 单设备探测异常不影响整体统计
+            }
+        }
+        return n;
     }
 
     /** 单项数据源失败时回落，避免一个不可用模块拖垮整个概览。 */

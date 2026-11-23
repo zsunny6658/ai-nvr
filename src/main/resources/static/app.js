@@ -5,6 +5,7 @@
     var $ = function (id) { return document.getElementById(id); };
     var state = {
         errLog: [], // v2.3.1 前端错误环形记录（上报 Issue 时随诊断报告带上）
+        deviceFilter: 'all', // v2.3.1 摄像头筛选：all / online / sleeping / offline
         loggedIn: false,
         userId: null,
         region: null,
@@ -665,14 +666,15 @@
             state.lastLoads.dashboard = Date.now(); // 新鲜度标记：解锁后 30s 内复用缓存画面
             var dev = d.devices || {}, ev = d.events || {}, rec = d.recordings || {},
                 st = d.streams || {}, mo = d.motion || {};
+            // v2.3.1 统计条压缩：休眠/离线/录像中并入摄像头副行；未处理并入事件副行
+            var devSub = (dev.online == null ? '-' : dev.online) + ' 在线 · '
+                + (dev.sleeping || 0) + ' 休眠 · ' + (dev.offline || 0) + ' 离线'
+                + (dev.recording ? ' · ' + dev.recording + ' 路录像中' : '');
             statSet('dsDevTotal', 'dsDevSub', dev.total == null ? '-' : dev.total,
-                (dev.recording || 0) + ' 路录像中');
-            statSet('dsOnline', 'dsOnlineSub', dev.online == null ? '-' : dev.online,
-                (dev.offline || 0) + ' 台离线', dev.offline ? 'warn' : 'ok');
+                devSub, dev.offline ? 'warn' : 'ok');
             statSet('dsToday', 'dsTodaySub', ev.today == null ? 0 : ev.today,
-                mo.enabled ? '运动侦测已开启' : '运动侦测未开启');
-            statSet('dsUnhandled', 'dsUnhandledSub', ev.unhandled == null ? 0 : ev.unhandled,
-                '累计 ' + (ev.total || 0) + ' 条', ev.unhandled ? 'warn' : 'ok');
+                '未处理 ' + (ev.unhandled == null ? 0 : ev.unhandled) + ' 条',
+                ev.unhandled ? 'warn' : 'ok');
             updateEvBadge(ev.unhandled);
             statSet('dsRecFiles', 'dsRecSub', rec.files == null ? 0 : rec.files,
                 fmtSize(rec.bytes));
@@ -901,15 +903,49 @@
             '</div></div>';
     }
 
+    /** v2.3.1 摄像头筛选：all / online / sleeping / offline。 */
+    function deviceMatchesFilter(c, f) {
+        f = f || state.deviceFilter || 'all';
+        if (f === 'online') { return !!c.online; }
+        if (f === 'sleeping') { return !!c.online && c.sleeping === true; }
+        if (f === 'offline') { return !c.online; }
+        return true;
+    }
+
+    /** 刷新筛选 chips 的计数与选中态（renderDevices 同步调用）。 */
+    function updateFilterChips() {
+        var n = { all: state.devices.length, online: 0, sleeping: 0, offline: 0 };
+        state.devices.forEach(function (c) {
+            if (c.online) { n.online++; } else { n.offline++; }
+            if (c.online && c.sleeping === true) { n.sleeping++; }
+        });
+        var labels = { all: '全部', online: '在线', sleeping: '休眠中', offline: '离线' };
+        document.querySelectorAll('#devFilter .chip').forEach(function (b) {
+            var f = b.getAttribute('data-filter');
+            b.textContent = labels[f] + ' ' + n[f];
+            b.classList.toggle('active', (state.deviceFilter || 'all') === f);
+        });
+    }
+
     function renderDevices() {
         var grid = $('deviceGrid');
-        $('camCount').textContent = state.devices.length + ' 台摄像头';
+        var f = state.deviceFilter || 'all';
+        var list = state.devices.filter(function (c) { return deviceMatchesFilter(c, f); });
+        $('camCount').textContent = state.devices.length + ' 台摄像头'
+            + (f !== 'all' ? ' · 筛选出 ' + list.length + ' 台' : '');
         grid.dataset.count = String(state.devices.length);
         if (!state.devices.length) {
             grid.innerHTML = '<div class="empty">账号下未发现摄像头</div>';
+            updateFilterChips();
             return;
         }
-        grid.innerHTML = state.devices.map(cardHtml).join('');
+        if (!list.length) {
+            grid.innerHTML = '<div class="empty">没有符合筛选条件的摄像头</div>';
+            updateFilterChips();
+            return;
+        }
+        grid.innerHTML = list.map(cardHtml).join('');
+        updateFilterChips();
         renderCamEvents(); // 卡片重建后用缓存快照重绘，不必重新请求
         refreshCardSnaps(); // v2.3.0 首屏拉起卡顶快照
     }
@@ -1114,7 +1150,11 @@
         var grid = $('deviceGrid');
         state.devices.forEach(function (c) {
             var card = grid.querySelector('.cam-card[data-did="' + CSS.escape(c.did) + '"]');
-            if (!card) { renderDevices(); return; }
+            if (!card) {
+                // 卡片不存在：可能是设备刚上线，也可能只是被当前筛选隐藏
+                if (deviceMatchesFilter(c)) { renderDevices(); }
+                return;
+            }
             // v2.3.1 休眠态变化走整卡重渲染：卡顶唤醒入口 / 次行休眠切换按钮 / 徽标联动
             var slpNow = (c.online && c.sleeping === true && String(c.did).indexOf('#') < 0) ? '1' : '';
             if (card.getAttribute('data-sleeping') !== slpNow) { renderDevices(); return; }
@@ -2040,7 +2080,8 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ did: did, quality: value })
             });
-            state.settings = s;
+            // v2.3.1 提速后端只返回 quality + reconnected，合并进缓存而非整体覆盖
+            state.settings = Object.assign({}, state.settings, s);
             renderQualitySettings(s.quality);
             var msg = s.reconnected ? '清晰度已应用，正在重建取流连接' : '清晰度已保存，下次取流时生效';
             setPtzStatus(msg + '（画面会短暂中断数秒）', s.reconnected ? 'warn' : '');
@@ -6178,6 +6219,17 @@
 
     document.querySelectorAll('.tab').forEach(function (t) {
             t.addEventListener('click', function () { gotoTab(t.getAttribute('data-tab')); });
+        });
+        // v2.3.1 统计卡点击直达对应页面
+        document.querySelectorAll('#dashStats .stat-link').forEach(function (b) {
+            b.addEventListener('click', function () { gotoTab(b.getAttribute('data-goto')); });
+        });
+        // v2.3.1 摄像头筛选 chips
+        document.querySelectorAll('#devFilter .chip').forEach(function (b) {
+            b.addEventListener('click', function () {
+                state.deviceFilter = b.getAttribute('data-filter');
+                renderDevices();
+            });
         });
 
         // v2.2.3 设置页分组导航（DSM 控制面板式）：点击左分类只显示对应卡片组，记忆上次选择

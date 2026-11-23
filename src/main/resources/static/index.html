@@ -12,7 +12,7 @@
     <base href="./">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='4' fill='%230e1116'/%3E%3Ccircle cx='8' cy='8' r='3' fill='%2322d3ee'/%3E%3C/svg%3E">
     <title>aiNVR · AI 增强摄像头 NVR</title>
-    <link rel="stylesheet" href="style.css?v=80">
+    <link rel="stylesheet" href="style.css?v=81">
 </head>
 <body>
 
@@ -126,17 +126,27 @@
         <div id="tab-cameras">
             <!-- v1.2.7 首页概览：/api/dashboard 聚合，30 秒自动刷新 -->
             <div class="stat-row" id="dashStats" aria-label="运行概览">
-                <div class="stat"><span class="stat-label">摄像头</span><strong id="dsDevTotal">-</strong><span class="stat-sub" id="dsDevSub">-</span></div>
-                <div class="stat"><span class="stat-label">在线</span><strong id="dsOnline">-</strong><span class="stat-sub" id="dsOnlineSub">-</span></div>
-                <div class="stat"><span class="stat-label">今日事件</span><strong id="dsToday">-</strong><span class="stat-sub" id="dsTodaySub">-</span></div>
-                <div class="stat"><span class="stat-label">未处理</span><strong id="dsUnhandled">-</strong><span class="stat-sub" id="dsUnhandledSub">-</span></div>
-                <div class="stat"><span class="stat-label">录像文件</span><strong id="dsRecFiles">-</strong><span class="stat-sub" id="dsRecSub">-</span></div>
-                <div class="stat"><span class="stat-label">活跃取流</span><strong id="dsStreams">-</strong><span class="stat-sub" id="dsStreamsSub">-</span></div>
+                <!-- v2.3.1 压缩为 4 张可点击统计卡：点击直达对应页面；休眠并入摄像头副行 -->
+                <button class="stat stat-link" data-goto="cameras" type="button">
+                    <span class="stat-label">摄像头</span><strong id="dsDevTotal">-</strong><span class="stat-sub" id="dsDevSub">-</span></button>
+                <button class="stat stat-link" data-goto="events" type="button">
+                    <span class="stat-label">今日事件</span><strong id="dsToday">-</strong><span class="stat-sub" id="dsTodaySub">-</span></button>
+                <button class="stat stat-link" data-goto="playback" type="button">
+                    <span class="stat-label">录像文件</span><strong id="dsRecFiles">-</strong><span class="stat-sub" id="dsRecSub">-</span></button>
+                <button class="stat stat-link" data-goto="cameras" type="button">
+                    <span class="stat-label">活跃取流</span><strong id="dsStreams">-</strong><span class="stat-sub" id="dsStreamsSub">-</span></button>
             </div>
             <div class="section-head">
                 <h2>设备列表</h2>
                 <span class="muted" id="camCount"></span>
                 <button class="btn tiny soft" id="btnGridPreview" type="button" title="多宫格同时看多路">▦ 多宫格</button>
+            </div>
+            <!-- v2.3.1 摄像头筛选：全部 / 在线 / 休眠中 / 离线（计数随刷新更新） -->
+            <div class="dev-filter" id="devFilter" role="group" aria-label="摄像头筛选">
+                <button class="chip active" data-filter="all" type="button">全部</button>
+                <button class="chip" data-filter="online" type="button">在线</button>
+                <button class="chip" data-filter="sleeping" type="button">休眠中</button>
+                <button class="chip" data-filter="offline" type="button">离线</button>
             </div>
             <div class="grid" id="deviceGrid"></div>
         </div>
@@ -1119,8 +1129,8 @@
 <div id="toast" class="toast"></div>
 
 <script src="vendor/hls.min.js"></script>
-<script type="module" src="vendor/trimapp-bridge.js?v=80"></script>
-<script src="watchdog.js?v=80"></script>
-<script src="app.js?v=80"></script>
+<script type="module" src="vendor/trimapp-bridge.js?v=81"></script>
+<script src="watchdog.js?v=81"></script>
+<script src="app.js?v=81"></script>
 </body>
 </html>

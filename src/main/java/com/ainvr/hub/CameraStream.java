@@ -109,6 +109,11 @@ public final class CameraStream {
         }
     }
 
+    /** 该设备当前是否被休眠闸门挂起（活跃取流统计剔除之，真实反映占用上游通道的设备数）。 */
+    public boolean sleepHeld() {
+        return isSleeping();
+    }
+
     public String did() {
         return did;
     }

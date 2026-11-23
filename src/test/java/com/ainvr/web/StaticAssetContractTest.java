@@ -31,7 +31,7 @@ class StaticAssetContractTest {
 
         assertTrue(html.contains("btnPreviewBack"), "预览弹层缺少应用内返回按钮");
         assertTrue(html.contains("btnPlayerBack"), "回放弹层缺少应用内返回按钮");
-        assertTrue(html.contains("v=80"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
+        assertTrue(html.contains("v=81"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
         // v2.3.1 真机验证第五轮：主题快捷按钮两态 + 选目录自动授权 + 内置权限面板
         assertTrue(js.contains("trimAuthorizePath"), "缺少选目录自动授权逻辑");
         assertTrue(js.contains("authorizeUserFile"), "缺少用户空间授权调用");
@@ -63,7 +63,30 @@ class StaticAssetContractTest {
         assertTrue(js.contains("data-sleeping"), "卡片应带休眠态标记供轮询检测整卡重渲染");
         assertTrue(js.contains("badge off\">休眠中"), "休眠中应显示「休眠中」徽标而非预览中/录像中");
         assertTrue(js.contains("dev.sleeping === true) { img.hidden = false; return; }"), "休眠中应跳过快照轮询保留最近画面");
+        assertTrue(js.contains("(pointer: coarse)"), "触屏端应检测粗指针以禁用预览原生控件");
+        // v2.3.1 第十四轮：对讲 16k 主路径与兜底插值互斥（无声回归锁）
         assertTrue(js.contains("rate === 16000"), "对讲 16k 主路径应与兜底插值互斥（无声回归锁）");
+        assertTrue(js.contains("pushTalkChunk(bytes, 320)") && js.contains("pushTalkChunk(new Uint8Array(pcm.buffer), 640)"),
+                "对讲分块大小应为 A-law 320B / PCM 640B（40ms）");
+        assertTrue(js.contains("talk.pacer = setInterval") && js.contains("}, 40);"),
+                "对讲应有 40ms 匀速节奏器");
+        // v2.3.1 第十五轮：统计条压缩 + 可点击 + 休眠计数；筛选 chips；页脚/导航移动端
+        assertTrue(js.contains("dev.sleeping || 0"), "统计副行应包含休眠台数");
+        assertTrue(js.contains("'未处理 ' + (ev.unhandled == null ? 0 : ev.unhandled) + ' 条'"),
+                "事件卡副行应显示未处理数");
+        assertTrue(html.contains("data-goto=\"cameras\"") && html.contains("data-goto=\"events\"")
+                        && html.contains("data-goto=\"playback\""),
+                "统计卡应可点击直达对应页面");
+        assertTrue(html.contains("id=\"devFilter\"") && html.contains("data-filter=\"sleeping\""),
+                "应有摄像头筛选 chips（含休眠中）");
+        assertTrue(js.contains("function deviceMatchesFilter"), "缺少筛选匹配函数");
+        assertTrue(js.contains("updateFilterChips()"), "筛选 chips 计数应随刷新更新");
+        assertTrue(css.contains(".dev-filter") && css.contains(".chip.active"), "缺少筛选 chips 样式");
+        assertTrue(css.contains(".stat-link"), "统计卡应有点击态样式");
+        assertTrue(css.contains("flex-wrap: wrap; padding: 6px;"),
+                "手机设置导航应换行展示全部分组（横向滑动藏菜单问题）");
+        assertTrue(css.contains(".app-footer { padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px)); }"),
+                "移动端页脚下让位规则必须位于文件末尾（此前被 .app-footer 简写覆盖）");
         assertTrue(js.contains("cam-sleep-art") && js.contains("休眠中 · 点击唤醒"), "休眠卡应显示月亮占位图而非快照");
         assertTrue(js.contains("pv.controls = false"), "触屏端应禁用预览原生控件（误触全屏回归锁）");
         // v2.3.1 真机验证第十一轮续：对讲音质修复 + 全屏悬浮控制

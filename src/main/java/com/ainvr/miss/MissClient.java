@@ -310,13 +310,22 @@ public final class MissClient implements AutoCloseable {
             throw new IOException("MISS 会话已关闭");
         }
         byte[] encrypted = ChaCha20Cipher.encode(sharedKey, payload);
-        byte[] header = new byte[32];
-        putLe32(header, 0, encrypted.length);
-        putLe32(header, 4, codecId);
-        // go2rtc：offset16 写 64bit LE 墙钟毫秒（"not really necessary"，但字段宽
-        // 必须是 8 字节——此前写 32 位致高 4 字节恒 0，时间戳值也截断失真）
-        putLe64(header, 16, System.currentTimeMillis());
+        byte[] header = buildAudioHeader(encrypted.length, codecId, System.currentTimeMillis());
         conn.writeAudioPacket(header, encrypted);
+    }
+
+    /**
+     * 构建 32 字节 MISS 媒体包头（包级可见，供单测锁定字节布局）：
+     * offset 0 = 载荷长度 LE32；offset 4 = 编解码 ID LE32；
+     * offset 16 = 64bit LE 墙钟毫秒（对齐 go2rtc，字段宽必须 8 字节）；
+     * 其余字节恒 0。
+     */
+    static byte[] buildAudioHeader(int encryptedLen, int codecId, long tsMs) {
+        byte[] header = new byte[32];
+        putLe32(header, 0, encryptedLen);
+        putLe32(header, 4, codecId);
+        putLe64(header, 16, tsMs);
+        return header;
     }
 
     /** 最近一次 0x107 扬声器应答明文（可能为 null：设备未应答或尚未发送 0x106）。 */

@@ -78,11 +78,14 @@ public final class StreamHub {
         log.info("StreamHub 退订 did={}（活跃上游设备数={}）", did, activeUpstreamCount());
     }
 
-    /** 当前有订阅者、即真正占用上游通道的设备数。 */
+    /**
+     * 当前有订阅者、即真正占用上游通道的设备数。
+     * v2.3.1：休眠中被闸门挂起的设备不计入（挂起期间不拨流、不占通道）。
+     */
     public int activeUpstreamCount() {
         int n = 0;
         for (CameraStream c : streams.values()) {
-            if (c.subscriberCount() > 0) {
+            if (c.subscriberCount() > 0 && !c.sleepHeld()) {
                 n++;
             }
         }

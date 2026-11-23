@@ -284,15 +284,10 @@ public class SettingsController {
             }
             settingsStore.saveDeviceQuality(req.did(), v);
             boolean woke = streamHub.wakeup(req.did(), "取流清晰度已修改", true);
-            // 重建整页设置时若某项聚合失败（与本次保存无关），不应表现为“保存失败”
-            Map<String, Object> m;
-            try {
-                m = getSettings();
-            } catch (Exception e) {
-                log.warn("updateQuality 保存成功，但聚合设置读取失败（已降级返回）：{}", e.toString());
-                m = new LinkedHashMap<>();
-                m.put("quality", qualityInfo());
-            }
+            // v2.3.1 提速：不再聚合整个 getSettings()（内含录像目录 listFiles 扫描，
+            // NAS 大目录下要 1-3 秒）——前端只用 quality 与 reconnected 两个字段
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("quality", qualityInfo());
             m.put("reconnected", woke);
             return m;
         } catch (ApiException e) {

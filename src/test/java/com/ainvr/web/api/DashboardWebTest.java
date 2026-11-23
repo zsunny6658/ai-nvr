@@ -9,6 +9,7 @@ import com.ainvr.store.MotionSettings;
 import com.ainvr.web.service.DeviceCatalog;
 import com.ainvr.web.service.HlsService;
 import com.ainvr.web.service.LiveFrameService;
+import com.ainvr.web.service.MiotSleepService;
 import com.ainvr.web.service.RecordingService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -37,6 +38,7 @@ class DashboardWebTest {
     private AppSettingsStore settings;
     private LiveFrameService frames;
     private RtspServer rtsp;
+    private MiotSleepService sleep;
     private MockMvc mvc;
 
     @BeforeEach
@@ -49,8 +51,9 @@ class DashboardWebTest {
         settings = Mockito.mock(AppSettingsStore.class);
         frames = Mockito.mock(LiveFrameService.class);
         rtsp = Mockito.mock(RtspServer.class);
+        sleep = Mockito.mock(MiotSleepService.class);
         mvc = MockMvcBuilders.standaloneSetup(new DashboardController(
-                catalog, recordings, events, hub, hls, settings, frames, rtsp))
+                catalog, recordings, events, hub, hls, settings, frames, rtsp, sleep))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
 
@@ -59,6 +62,7 @@ class DashboardWebTest {
                 new CameraDevice("d2", "门口", "model.b", "mac2", "192.168.1.11", false)));
         Mockito.when(recordings.isRecording("d1")).thenReturn(true);
         Mockito.when(hls.isPreviewing("d1")).thenReturn(true);
+        Mockito.when(sleep.sleeping("d1")).thenReturn(true);   // 门口 d2 离线、客厅 d1 休眠
         Mockito.when(settings.motion()).thenReturn(MotionSettings.DEFAULTS);
         Mockito.when(hub.activeUpstreamCount()).thenReturn(2);
         Mockito.when(hub.activeDids()).thenReturn(List.of("d1", "d2"));
@@ -81,6 +85,7 @@ class DashboardWebTest {
                 .andExpect(jsonPath("$.devices.offline").value(1))
                 .andExpect(jsonPath("$.devices.recording").value(1))
                 .andExpect(jsonPath("$.devices.previewing").value(1))
+                .andExpect(jsonPath("$.devices.sleeping").value(1))
                 .andExpect(jsonPath("$.streams.activeUpstreams").value(2))
                 .andExpect(jsonPath("$.streams.activeDids[0]").value("d1"))
                 .andExpect(jsonPath("$.streams.activeFrameSources").value(1))
@@ -99,11 +104,13 @@ class DashboardWebTest {
         Mockito.when(recordings.list(isNull())).thenThrow(new IOException("目录暂不可读"));
         Mockito.when(events.stats()).thenThrow(new RuntimeException("索引未就绪"));
         Mockito.when(recordings.isRecording("d1")).thenThrow(new RuntimeException("状态异常"));
+        Mockito.when(sleep.sleeping(Mockito.anyString())).thenThrow(new RuntimeException("探测异常"));
 
         mvc.perform(get("/api/dashboard"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.devices.total").value(2))
                 .andExpect(jsonPath("$.devices.online").value(1))
+                .andExpect(jsonPath("$.devices.sleeping").value(0))
                 .andExpect(jsonPath("$.devices.recording").value(0))
                 .andExpect(jsonPath("$.recordings.files").value(0))
                 .andExpect(jsonPath("$.recordings.bytes").value(0))
