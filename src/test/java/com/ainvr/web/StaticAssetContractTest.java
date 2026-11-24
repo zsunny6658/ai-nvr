@@ -31,7 +31,7 @@ class StaticAssetContractTest {
 
         assertTrue(html.contains("btnPreviewBack"), "预览弹层缺少应用内返回按钮");
         assertTrue(html.contains("btnPlayerBack"), "回放弹层缺少应用内返回按钮");
-        assertTrue(html.contains("v=84"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
+        assertTrue(html.contains("v=85"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
         // v2.3.1 真机验证第五轮：主题快捷按钮两态 + 选目录自动授权 + 内置权限面板
         assertTrue(js.contains("trimAuthorizePath"), "缺少选目录自动授权逻辑");
         assertTrue(js.contains("authorizeUserFile"), "缺少用户空间授权调用");
@@ -99,6 +99,18 @@ class StaticAssetContractTest {
         assertTrue(css.contains(".stat-link"), "统计卡应有点击态样式");
         assertTrue(css.contains(".stat-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));"),
                 "统计卡应为 4 列等宽布局（6 列留空两格问题）");
+        // v2.3.1 第十九轮回归锁：.stat-link 只加交互态，禁止再重置卡片外观——
+        // 此前 background:none/border:none/padding:inherit 把 .stat 卡片底色边框
+        // 内边距全数覆盖，统计区退化成裸文字贴边（真机截图实锤）
+        {
+            int statIdx = css.indexOf(".stat-link {");
+            int miotIdx = css.indexOf(".miot-rows");
+            assertTrue(statIdx >= 0 && miotIdx > statIdx, "stat-link 样式块应存在");
+            String statLinkBlock = css.substring(statIdx, miotIdx);
+            assertFalse(statLinkBlock.contains("background: none"), "stat-link 禁止重置卡片底色（会盖掉 .stat 卡片外观）");
+            assertFalse(statLinkBlock.contains("border: none"), "stat-link 禁止重置边框");
+            assertFalse(statLinkBlock.contains("padding: inherit"), "stat-link 禁止继承内边距（继承到 0 = 文字贴边）");
+        }
         assertTrue(css.contains("flex-wrap: wrap; padding: 6px;"),
                 "手机设置导航应换行展示全部分组（横向滑动藏菜单问题）");
         assertTrue(css.contains(".app-footer { padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px)); }"),

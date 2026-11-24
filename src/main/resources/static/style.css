@@ -248,12 +248,16 @@ body:not(.authed) .sidenav { display: none; }
 }
 
 /* ============ 概览统计 ============ */
-.stat-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 18px; }
-.stat { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
-    box-shadow: var(--shadow); padding: 10px 13px; display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.stat-label { font-size: 11px; color: var(--muted); font-weight: 600; letter-spacing: .3px; }
-.stat strong { font-size: 21px; line-height: 1.25; font-variant-numeric: tabular-nums; }
-.stat-sub { font-size: 11px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* v2.3.1 第十九轮：卡片观感重做——此前 .stat-link 在文件后部用 background:none /
+   border:none / padding:inherit 把卡片底色边框内边距全数覆盖，统计区退化成裸文字贴边 */
+.stat-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
+.stat { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    box-shadow: var(--shadow); padding: 13px 16px 12px; display: flex; flex-direction: column;
+    gap: 4px; min-width: 0; position: relative; }
+.stat-label { font-size: 12px; color: var(--muted); font-weight: 600; letter-spacing: .5px; }
+.stat strong { font-size: 26px; line-height: 1.2; font-variant-numeric: tabular-nums; letter-spacing: -.3px; }
+.stat-sub { font-size: 11.5px; color: var(--faint); white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; margin-top: 1px; }
 .stat.ok strong { color: var(--green); }
 .stat.warn strong { color: var(--amber); }
 .stat.danger strong { color: var(--red); }
@@ -934,9 +938,9 @@ body.authed .container { padding-bottom: calc(78px + env(safe-area-inset-bottom,
     .rtsp-line code { min-width: 0; }
     .toast { bottom: calc(64px + env(safe-area-inset-bottom, 0px)); max-width: 92vw; }
     .toast-item { font-size: 12px; padding: 8px 12px; }
-    .stat-row { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 14px; }
-    .stat { padding: 10px 12px; }
-    .stat strong { font-size: 19px; }
+    .stat-row { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+    .stat { padding: 11px 13px 10px; }
+    .stat strong { font-size: 22px; }
     .cam-actions { flex-wrap: wrap; }
     .cam-actions .btn { min-width: 88px; }
     .pb-bar { gap: 6px; }
@@ -1101,20 +1105,21 @@ body.sdk-host .sdk-only { display: inline-block !important; }
 }
 
 /* ===== v2.3.1 统计卡可点击 + 摄像头筛选 chips ===== */
+/* 只加交互态，不再重置卡片外观（底色/边框/内边距由 .stat 提供） */
 .stat-link {
     position: relative;
-    border: none; background: none; cursor: pointer;
-    text-align: left; font: inherit; color: inherit; padding: inherit;
-    transition: background .15s, border-color .15s, transform .15s;
+    cursor: pointer;
+    text-align: left; font: inherit; color: inherit;
+    transition: background .15s, border-color .15s, transform .15s, box-shadow .15s;
 }
-.stat-link:hover { background: var(--panel-2); transform: translateY(-1px); }
+.stat-link:hover { background: var(--panel-2); border-color: var(--accent-line, #4a8fe7); transform: translateY(-1px); }
 .stat-link:active { transform: translateY(0); }
 .stat-link:focus-visible { outline: 2px solid var(--accent-line, #4a8fe7); outline-offset: 2px; }
 /* hover 提示「点击直达」的小箭头 */
 .stat-link::after {
     content: '›';
-    position: absolute; top: 10px; right: 12px;
-    font-size: 16px; line-height: 1; color: var(--faint);
+    position: absolute; top: 12px; right: 14px;
+    font-size: 18px; line-height: 1; color: var(--faint);
     opacity: 0; transition: opacity .15s;
 }
 .stat-link:hover::after { opacity: 1; color: var(--accent-line, #4a8fe7); }
