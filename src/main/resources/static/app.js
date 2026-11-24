@@ -3182,7 +3182,10 @@
         function once() {
             tries++;
             fetch(u, { cache: 'no-store' }).then(function (r) { return r.text(); }).then(function (txt) {
-                if (segCount(txt) >= 3 || tries >= 40) { finish(); }
+                // v2.3.1 第二十轮起播提速：原先等 3 个分片（每片约 3.2s ≈ 白等 10 秒）
+                // 才赋 src；改为首个分片就绪即起播，后续分片边播边缓冲，
+                // 起播时间 10s 级 → 3-4s 级。起播后短暂缓冲由看门狗与原生缓冲兜底。
+                if (segCount(txt) >= 1 || tries >= 40) { finish(); }
                 else { setTimeout(once, 300); }
             }).catch(function () { if (tries >= 40) { finish(); } else { setTimeout(once, 300); } });
         }
@@ -3455,7 +3458,10 @@
             maxBufferLength: 8,
             maxMaxBufferLength: 20,
             startPosition: -1,
-            enableWorker: true
+            enableWorker: true,
+            // v2.3.1 第二十轮起播提速：manifest 解析期间即预取首分片，
+            // 与解析完成后的首片加载并行，省一个串行往返
+            startFragPrefetch: true
         };
         var ht = getToken();
         if (ht) {
@@ -5970,6 +5976,21 @@
         $('btnFsExit').addEventListener('click', function () { exitPreviewFullscreen(false); });
         document.addEventListener('fullscreenchange', guardNativeVideoFs);
         document.addEventListener('webkitfullscreenchange', guardNativeVideoFs);
+        // v2.3.1 第二十轮：iOS 前置拦截——webkitbeginfullscreen 在进入原生全屏「之前」
+        // 触发（fullscreenchange 是之后），此时立即退出并转为应用内伪全屏，
+        // 用户完全看不到原生全屏闪现。previewVideo 是静态元素（remount 只换 src），
+        // 初始化时绑定一次即可。
+        (function () {
+            var pv = $('previewVideo');
+            var stopNative = function () {
+                try { if (pv.webkitDisplayingFullscreen) { pv.webkitExitFullscreen(); } } catch (e) { /* 忽略 */ }
+                setTimeout(function () {
+                    $('videoWrap').classList.add('fs-fake');
+                    updateFsOverlay();
+                }, 60);
+            };
+            pv.addEventListener('webkitbeginfullscreen', stopNative);
+        })();
         $('btnChaseLive').addEventListener('click', function () {
             if (!chaseLiveEdge(false)) { toast('当前已是最新画面', 'ok'); }
             updateLiveBadge();

@@ -31,7 +31,7 @@ class StaticAssetContractTest {
 
         assertTrue(html.contains("btnPreviewBack"), "预览弹层缺少应用内返回按钮");
         assertTrue(html.contains("btnPlayerBack"), "回放弹层缺少应用内返回按钮");
-        assertTrue(html.contains("v=85"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
+        assertTrue(html.contains("v=86"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
         // v2.3.1 真机验证第五轮：主题快捷按钮两态 + 选目录自动授权 + 内置权限面板
         assertTrue(js.contains("trimAuthorizePath"), "缺少选目录自动授权逻辑");
         assertTrue(js.contains("authorizeUserFile"), "缺少用户空间授权调用");
@@ -99,6 +99,15 @@ class StaticAssetContractTest {
         assertTrue(css.contains(".stat-link"), "统计卡应有点击态样式");
         assertTrue(css.contains(".stat-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));"),
                 "统计卡应为 4 列等宽布局（6 列留空两格问题）");
+        // v2.3.1 第二十轮回归锁：手机原生全屏根除 + 起播提速
+        assertTrue(html.contains("id=\"videoShield\"") && css.contains(".video-shield"),
+                "视频触摸屏障层（防 X5/夸克手势劫持进自带全屏）必须存在");
+        assertTrue(js.contains("webkitbeginfullscreen"),
+                "iOS 前置全屏事件拦截（webkitbeginfullscreen）缺失");
+        assertTrue(js.contains("startFragPrefetch: true"),
+                "hls.js 应开启首分片预取（起播提速）");
+        assertTrue(js.contains("segCount(txt) >= 1"),
+                "原生 HLS 预热应等首个分片即起播（等 3 片白等约 10 秒）");
         // v2.3.1 第十九轮回归锁：.stat-link 只加交互态，禁止再重置卡片外观——
         // 此前 background:none/border:none/padding:inherit 把 .stat 卡片底色边框
         // 内边距全数覆盖，统计区退化成裸文字贴边（真机截图实锤）

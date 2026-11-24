@@ -1097,6 +1097,17 @@ body.sdk-host .sdk-only { display: inline-block !important; }
 .video-wrap:fullscreen video,
 .video-wrap:fullscreen .compat-frame { max-width: 100%; max-height: 100%; width: 100%; }
 
+/* ===== v2.3.1 第二十轮：视频触摸屏障 =====
+   透明层盖住视频，所有触摸/点击都落在屏障上、永不落到 <video> 元素——
+   X5/夸克/UC 等内核对 video 有手势劫持（双击/长按进自带全屏播放器，不走
+   Fullscreen API、fullscreenchange 不触发，事件拦截法失效），触摸不落到
+   video 元素即可根除。提示层/加载层提到屏障之上保持可读；fs-overlay(z6)
+   与云台按钮仍在最上层可点。 */
+.video-shield { position: absolute; inset: 0; z-index: 3;
+    touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+.video-hint { z-index: 4; pointer-events: none; }
+.video-loading { z-index: 4; pointer-events: none; }
+
 /* ===== v2.3.1 休眠卡占位图（不加载快照） ===== */
 .cam-sleep-art {
     position: absolute; inset: 0; z-index: 1;
