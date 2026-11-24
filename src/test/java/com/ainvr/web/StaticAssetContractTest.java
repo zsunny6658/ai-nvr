@@ -31,7 +31,7 @@ class StaticAssetContractTest {
 
         assertTrue(html.contains("btnPreviewBack"), "预览弹层缺少应用内返回按钮");
         assertTrue(html.contains("btnPlayerBack"), "回放弹层缺少应用内返回按钮");
-        assertTrue(html.contains("v=87"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
+        assertTrue(html.contains("v=88"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
         // v2.3.1 真机验证第五轮：主题快捷按钮两态 + 选目录自动授权 + 内置权限面板
         assertTrue(js.contains("trimAuthorizePath"), "缺少选目录自动授权逻辑");
         assertTrue(js.contains("authorizeUserFile"), "缺少用户空间授权调用");
@@ -128,6 +128,27 @@ class StaticAssetContractTest {
                 "hls.js 应开启首分片预取（起播提速）");
         assertTrue(js.contains("segCount(txt) >= 1"),
                 "原生 HLS 预热应等首个分片即起播（等 3 片白等约 10 秒）");
+        // v2.3.1 第二十二轮回归锁：iPhone 全屏劫持根修（MSE 优先 + 退出后恢复播放）+ 明文应答 + 客户端诊断
+        {
+            int mountIdx = js.indexOf("function mountPreviewPlayer");
+            int nativeIdx = js.indexOf("v2.3.1 对讲喊话");
+            assertTrue(mountIdx >= 0 && nativeIdx > mountIdx, "mountPreviewPlayer 应存在");
+            String mountBlock = js.substring(mountIdx, nativeIdx);
+            assertFalse(mountBlock.contains("isChromium()"),
+                    "预览挂载不得再用 isChromium 门槛排除 iOS MSE（iPhone 原生 HLS 被系统播放器接管，真机实锤）");
+            assertTrue(mountBlock.contains("Hls.isSupported()"),
+                    "hls.js 可用即应优先 MSE（iOS 17.1+ 走 ManagedMediaSource，应用内播放无系统全屏）");
+        }
+        assertTrue(js.contains("webkitendfullscreen") && js.contains("resumeInlineOnce"),
+                "iOS 退出系统全屏后必须恢复内联播放（退出即暂停=永久黑屏，真机实锤）");
+        assertTrue(js.contains("iosFsGuard.gaveUp"),
+                "内联恢复应有次数上限与放弃对抗路径（WebView 禁内联时留系统播放器兜底）");
+        assertTrue(js.contains("reportClientDiag('ios_fs_begin'"),
+                "iOS 全屏劫持事件应上报 client-log（远程定位真机问题）");
+        assertTrue(js.contains("majorSpacingPx < 76") && js.contains("needThin"),
+                "时间刻度抽稀阈值应提升至 76px 且抽稀时使用 HH:MM 短标签（iPhone 仍拥挤）");
+        assertTrue(js.contains("api/diagnostics/client-log"),
+                "前端应有客户端诊断上报通道");
         // v2.3.1 第十九轮回归锁：.stat-link 只加交互态，禁止再重置卡片外观——
         // 此前 background:none/border:none/padding:inherit 把 .stat 卡片底色边框
         // 内边距全数覆盖，统计区退化成裸文字贴边（真机截图实锤）

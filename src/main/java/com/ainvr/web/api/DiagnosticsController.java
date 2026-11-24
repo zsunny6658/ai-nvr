@@ -26,6 +26,9 @@ import java.util.Map;
 @RestController
 public class DiagnosticsController {
 
+    private static final org.slf4j.Logger log =
+            org.slf4j.LoggerFactory.getLogger(DiagnosticsController.class);
+
     private final DiagnosticsService diagnostics;
     private final AppSettingsStore settings;
 
@@ -107,6 +110,19 @@ public class DiagnosticsController {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("ok", true);
         return m;
+    }
+
+    /**
+     * v2.3.1 第二十二轮：客户端事件上报（轻量诊断）。前端把 WebView 端无法远程观察的
+     * 行为（如 iOS 原生视频全屏劫持）写进应用日志，供真机问题远程定位。
+     * 仅落 INFO 日志，不建 issue 文件、不做任何聚合。
+     */
+    @PostMapping("/api/diagnostics/client-log")
+    public Map<String, Object> clientLog(@RequestBody Map<String, Object> body) {
+        String event = String.valueOf(body.getOrDefault("event", "unknown"));
+        Object detail = body.get("detail");
+        log.info("[client-diag] {} {}", event, detail == null ? "" : String.valueOf(detail));
+        return Map.of("ok", true);
     }
 
     /** 取描述的首个非空行作为 issue 标题。 */

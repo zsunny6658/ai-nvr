@@ -3322,10 +3322,6 @@
 
     /* Chromium 内核（Edge/Chrome/内置浏览器）：其原生 MediaFoundation HLS 在长期运行遇停滞时
        会产生缓冲空洞且无法自愈，故优先 hls.js(MSE)；Safari 等保留原生优先。 */
-    function isChromium() {
-        return /Chrome\//.test(navigator.userAgent);
-    }
-
     /* 显式探测 HEVC 解码能力。Windows 上的 Chrome/Edge 依赖系统「HEVC 视频扩展」+ 硬件解码，
        macOS Safari / Apple Silicon 上的 Chrome 通常原生支持。仅用于诊断文案，不改变播放路径。
        多个常见 profile 任一命中即视为支持，避免因 level 写法差异把能播的浏览器误判为不支持。 */
@@ -3629,9 +3625,15 @@
         return hls;
     }
 
-    /* 按浏览器能力选择路径并挂载：hls.js 优先（Chromium），原生降级；返回 hls 实例 / null（原生）/ undefined（不支持） */
+    /* 按浏览器能力选择路径并挂载：hls.js 可用即优先 MSE（v2.3.1 第二十二轮），
+       原生降级；返回 hls 实例 / null（原生）/ undefined（不支持）。
+       第二十二轮根修：去掉 isChromium 前置门槛。iPhone（iOS 17.1+）的 hls.js 走
+       ManagedMediaSource，此前被该门槛排除在 MSE 之外只能用原生 HLS——而原生 HLS
+       会被 WKWebView 系统播放器接管（全屏劫持 + 退出后暂停黑屏，真机实测）。
+       MSE 路径完全是应用内 <video> 播放，从根上消灭系统全屏；旧 iOS 无 MSE 时
+       Hls.isSupported() 自然为 false，仍走原生 HLS 兜底。 */
     function mountPreviewPlayer(video, url) {
-        if (window.Hls && Hls.isSupported() && isChromium()) {
+        if (window.Hls && Hls.isSupported()) {
             state.hls = mountPreviewMse(video, url);
             return state.hls;
         }
@@ -3717,6 +3719,7 @@
     function applyPreviewPlayback(did, url) {
         stopPreviewWatchdog();
         stopCompatMode();
+        resetIosFsGuard(); // v2.3.1 第二十二轮：新会话重新给予 iOS 内联恢复机会
         if (state.previewWatch) { clearTimeout(state.previewWatch); state.previewWatch = null; }
         if (state.hls) { try { state.hls.destroy(); } catch (e) {} state.hls = null; }
         var video = $('previewVideo');
@@ -3883,6 +3886,25 @@
             return;
         }
         updateFsOverlay();
+    }
+
+    /* v2.3.1 第二十二轮：iOS 原生全屏兜底状态 + 客户端诊断上报。
+       resume/gaveUp 语义见下方 webkitbeginfullscreen 绑定处；每次重建预览播放时重置。 */
+    var iosFsGuard = { resume: 0, gaveUp: false };
+
+    function resetIosFsGuard() {
+        iosFsGuard.resume = 0;
+        iosFsGuard.gaveUp = false;
+    }
+
+    /** 轻量客户端事件上报：落服务端应用日志（[client-diag] 前缀），失败静默。
+        noRelock：诊断上报失败不应把用户踢回锁屏页。 */
+    function reportClientDiag(event, detail) {
+        api('api/diagnostics/client-log', {
+            method: 'POST',
+            noRelock: true,
+            body: JSON.stringify({ event: event, detail: detail || '' })
+        }).catch(function () { /* 忽略 */ });
     }
 
     function exitPreviewFullscreen(silent) {
@@ -5316,19 +5338,28 @@
         var ruler = $('tlRuler');
         var winEnd = pb.winStart + pb.winDur;
         var tickMs = steps.tick * 1000;
-        // v2.3.1 第二十一轮：手机窄屏防标签重叠——按主刻度实际像素间距动态抽稀标签
-        // （细线保留、只稀疏文字）。桌面宽度下维持原密度，间距 <56px 才开始抽稀。
+        // v2.3.1 第二十二轮：手机窄屏防标签重叠——按主刻度实际像素间距动态抽稀标签
+        // （细线保留、只稀疏文字），且抽稀激活时改用 HH:MM 短标签（宽度减半，
+        // 「HH:MM:SS」8 字符在 ~60px 间距下已顶满相邻刻度，iPhone 真机仍显拥挤）。
+        // 桌面宽度下维持原密度与完整秒级时间。
         var trackW = ($('tlTrack').clientWidth || 640);
         var majorMs = tickMs * steps.every;
         var majorSpacingPx = majorMs / pb.winDur * trackW;
-        var labelEvery = majorSpacingPx < 56 ? steps.every * Math.ceil(56 / majorSpacingPx) : steps.every;
+        var needThin = majorSpacingPx < 76;
+        var labelEvery = needThin ? steps.every * Math.ceil(76 / majorSpacingPx) : steps.every;
         var first = Math.ceil(pb.winStart / tickMs) * tickMs;
         var html = '';
         for (var t = first; t < winEnd; t += tickMs) {
             var nth = Math.round(t / tickMs);
             var major = (nth % labelEvery === 0);
+            var lab = '';
+            if (major) {
+                var d2 = new Date(t);
+                lab = needThin ? (pad2(d2.getHours()) + ':' + pad2(d2.getMinutes()))
+                    : (pad2(d2.getHours()) + ':' + pad2(d2.getMinutes()) + ':' + pad2(d2.getSeconds()));
+            }
             html += '<div class="tl-tick' + (major ? ' major' : '') + '" style="left:' + pct(t).toFixed(3) + '%">'
-                + (major ? '<span class="tl-lab">' + hms(t) + '</span>' : '') + '</div>';
+                + (major ? '<span class="tl-lab">' + lab + '</span>' : '') + '</div>';
         }
         ruler.innerHTML = html;
 
@@ -5437,6 +5468,8 @@
         pbResetIdle(); // 手动换段后待命元素里的旧预载缓冲已失效，清掉防误用
         var v = pbV();
         $('pbEmpty').hidden = true;
+        v.dataset.fsResume = ''; // v2.3.1 第二十二轮：新段重新给予 iOS 内联恢复机会
+        delete v.dataset.fsGiveUp;
         v.src = withToken('api/recordings/' + encodeURIComponent(s.name));
         v.play().catch(function () {});
         // v2.3.1 录制段提示每次会话只弹一次：自动接续/循环进入录制段时不再反复打扰
@@ -6125,15 +6158,45 @@
         $('btnFsExit').addEventListener('click', function () { exitPreviewFullscreen(false); });
         document.addEventListener('fullscreenchange', guardNativeVideoFs);
         document.addEventListener('webkitfullscreenchange', guardNativeVideoFs);
-        // v2.3.1 第二十一轮热修：iOS 前置事件只「退回内联」，不再转伪全屏——
-        // 上一轮的 exit+fs-fake 组合把用户困进无退出按钮的伪全屏（真机实测死锁）。
-        // webkitbeginfullscreen 在进入原生全屏「之前」触发，此时退出即可回到内联，
-        // 系统播放器对用户不可见。同时记录劫持标记便于诊断。
+        // v2.3.1 第二十二轮：iOS 原生全屏兜底策略（MSE 路径不会触发；仅旧 iOS 走到）。
+        // 第二十一轮的「退回内联」有两大缺陷：① webkitbeginfullscreen 事件触发时
+        // webkitDisplayingFullscreen 可能尚未置位，带守卫的退出变成空操作 → 用户仍在
+        // 系统全屏里；② 退出后系统播放器会暂停视频，我们从不恢复 → 用户回到内联看到的
+        // 是一张永久黑屏（真机实测「全屏后黑屏、后续预览全黑」）。
+        // 现在改为：无条件退出 → 延迟 300ms 补刀 → 恢复内联播放；恢复次数限 2 次，
+        // 超限说明该 WebView 根本不支持内联播放（配置禁用），放弃对抗、让系统播放器
+        // 正常播（用户可点「完成」退出）——有画面永远比黑屏强。事件上报 client-log
+        // 便于远程确认劫持是否仍在发生。
         (function () {
             var pv = $('previewVideo');
+            function exitNativeFs() {
+                try { if (pv.webkitDisplayingFullscreen) { pv.webkitExitFullscreen(); } } catch (e) { /* 忽略 */ }
+                try { if (pv.webkitExitFullscreen) { pv.webkitExitFullscreen(); } } catch (e) { /* 忽略 */ }
+            }
+            function resumeInlineOnce() {
+                if (iosFsGuard.gaveUp || !pv.src || !pv.paused) { return; }
+                if (iosFsGuard.resume >= 2) {
+                    iosFsGuard.gaveUp = true;
+                    reportClientDiag('ios_fs_giveup', 'preview：连续 3 次内联恢复失败，交还系统播放器');
+                    return;
+                }
+                iosFsGuard.resume++;
+                var p = pv.play(); if (p && p.catch) { p.catch(function () { /* 忽略 */ }); }
+            }
             pv.addEventListener('webkitbeginfullscreen', function () {
                 try { window.localStorage.setItem('ainvr_ios_fs_hijack', String(Date.now())); } catch (e) { /* 忽略 */ }
-                try { if (pv.webkitDisplayingFullscreen) { pv.webkitExitFullscreen(); } } catch (e) { /* 忽略 */ }
+                reportClientDiag('ios_fs_begin', 'preview：系统播放器全屏劫持');
+                if (iosFsGuard.gaveUp) { return; } // 已放弃对抗：让系统播放器播，用户可点「完成」退出
+                exitNativeFs();
+                setTimeout(function () {
+                    if (!$('previewModal') || $('previewModal').hidden) { return; }
+                    exitNativeFs();
+                    resumeInlineOnce();
+                }, 300);
+            });
+            pv.addEventListener('webkitendfullscreen', function () {
+                reportClientDiag('ios_fs_end', 'preview：系统全屏结束');
+                resumeInlineOnce();
             });
         })();
         $('btnChaseLive').addEventListener('click', function () {
@@ -6277,6 +6340,26 @@
                 });
                 el.addEventListener('webkitbeginfullscreen', function () {
                     try { window.localStorage.setItem('ainvr_ios_fs_hijack', String(Date.now())); } catch (e2) { /* 忽略 */ }
+                    reportClientDiag('ios_fs_begin', 'pb：回放系统全屏劫持');
+                    // v2.3.1 第二十二轮：与预览同款兜底——退出 + 恢复内联播放（限 2 次），
+                    // 超限放弃对抗让系统播放器播（MP4 + playsinline 通常不会走到这里）
+                    if (el.dataset.fsGiveUp) { return; }
+                    try { if (el.webkitExitFullscreen) { el.webkitExitFullscreen(); } } catch (e2) { /* 忽略 */ }
+                    setTimeout(function () {
+                        try { if (el.webkitDisplayingFullscreen) { el.webkitExitFullscreen(); } } catch (e2) { /* 忽略 */ }
+                        if (!el.src || !el.paused || el.dataset.fsGiveUp) { return; }
+                        var n = parseInt(el.dataset.fsResume || '0', 10);
+                        if (n >= 2) { el.dataset.fsGiveUp = '1'; reportClientDiag('ios_fs_giveup', 'pb：内联恢复超限'); return; }
+                        el.dataset.fsResume = String(n + 1);
+                        var p = el.play(); if (p && p.catch) { p.catch(function () { /* 忽略 */ }); }
+                    }, 300);
+                });
+                el.addEventListener('webkitendfullscreen', function () {
+                    if (!el.src || !el.paused || el.dataset.fsGiveUp) { return; }
+                    var n = parseInt(el.dataset.fsResume || '0', 10);
+                    if (n >= 2) { el.dataset.fsGiveUp = '1'; return; }
+                    el.dataset.fsResume = String(n + 1);
+                    var p = el.play(); if (p && p.catch) { p.catch(function () { /* 忽略 */ }); }
                 });
             }
             bindPbVideo($('pbVideo'));

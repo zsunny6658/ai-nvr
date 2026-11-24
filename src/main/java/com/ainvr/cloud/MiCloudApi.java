@@ -65,10 +65,20 @@ public class MiCloudApi {
             throw new MiCloudException("业务 API 网络异常：" + apiURL + " - " + e.getMessage(), e);
         }
 
-        String decrypted = signer.decryptResponse(signed.signedNonce(), raw);
+        // v2.3.1 第二十二轮根修：米家云在会话失效/业务出错时会返回「明文 JSON」应答
+        // （形如 {"code":401,...}，不再 RC4 加密）。此前无脑按 Base64 解码 →
+        // IllegalArgumentException: Illegal base64 character 7b（7b 即 '{'），
+        // code=401 永远到不了下面的续期分支 → 会话死后设备列表/云中继/预置位
+        // 全链路瘫痪且无法自愈。明文应答直接按 JSON 解析，让错误码正常流转。
+        String trimmed = raw.trim();
         final JsonNode json;
         try {
-            json = mapper.readTree(decrypted);
+            if (looksLikePlaintextJson(trimmed)) {
+                log.warn("业务 API 返回明文 JSON（跳过解密）：{} body={}", apiURL, abbreviate(trimmed));
+                json = mapper.readTree(trimmed);
+            } else {
+                json = mapper.readTree(signer.decryptResponse(signed.signedNonce(), raw));
+            }
         } catch (IOException e) {
             throw new MiCloudException("业务 API 响应解析失败：" + apiURL, e);
         }
@@ -82,5 +92,23 @@ public class MiCloudApi {
                     + " message=" + json.path("message").asText("") + " path=" + apiURL);
         }
         return json.path("result");
+    }
+
+    /** 明文 JSON 判定：去首尾空白后首字符为 '{' 或 '['（加密应答恒为 Base64 字符集开头）。 */
+    static boolean looksLikePlaintextJson(String body) {
+        if (body == null) {
+            return false;
+        }
+        String t = body.trim();
+        if (t.isEmpty()) {
+            return false;
+        }
+        char c = t.charAt(0);
+        return c == '{' || c == '[';
+    }
+
+    /** 日志截断（防超长应答刷屏）。 */
+    private static String abbreviate(String s) {
+        return s.length() > 300 ? s.substring(0, 300) + "…" : s;
     }
 }
