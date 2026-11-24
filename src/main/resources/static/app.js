@@ -3634,11 +3634,17 @@
        Hls.isSupported() 自然为 false，仍走原生 HLS 兜底。 */
     function mountPreviewPlayer(video, url) {
         if (window.Hls && Hls.isSupported()) {
+            // v2.3.1 第二十三轮：MMS 硬性要求——iPhone 上 ManagedMediaSource 必须在
+            // disableRemotePlayback=true（或提供 AirPlay 备选源）时才激活 sourceopen，
+            // 否则挂载后永远不吐数据（Apple WWDC 2023 官方说明 + 社区实测）。
+            try { video.disableRemotePlayback = true; } catch (e) { /* 忽略 */ }
             state.hls = mountPreviewMse(video, url);
+            reportMountPath('mse');
             return state.hls;
         }
         if (video.canPlayType('application/vnd.apple.mpegurl')) {
             // Safari / Edge 原生 HLS：先预热等首个 fMP4 分片生成，再赋 src 播放
+            reportMountPath('native-hls');
             warmHls(url, function () {
                 if (!$('previewModal').hidden) {
                     video.src = url;
@@ -3652,6 +3658,18 @@
             return state.hls;
         }
         return undefined;
+    }
+
+    /** v2.3.1 第二十三轮：预览挂载路径诊断（每页面会话一次）。MMS/MSE 可用性
+        直接决定 iPhone 端走哪条链路，remote 取证比猜靠谱。 */
+    function reportMountPath(path) {
+        if (state.mountPathReported) { return; }
+        state.mountPathReported = true;
+        reportClientDiag('preview_mount', 'path=' + path
+            + ' mms=' + ('ManagedMediaSource' in self)
+            + ' mse=' + (typeof self.MediaSource)
+            + ' secure=' + (window.isSecureContext)
+            + ' ua=' + navigator.userAgent.slice(0, 90));
     }
 
     /* 预览看门狗回调：销毁旧会话并清理 video，再按当前能力重新挂载，随后重建看门狗 */
@@ -3719,7 +3737,6 @@
     function applyPreviewPlayback(did, url) {
         stopPreviewWatchdog();
         stopCompatMode();
-        resetIosFsGuard(); // v2.3.1 第二十二轮：新会话重新给予 iOS 内联恢复机会
         if (state.previewWatch) { clearTimeout(state.previewWatch); state.previewWatch = null; }
         if (state.hls) { try { state.hls.destroy(); } catch (e) {} state.hls = null; }
         var video = $('previewVideo');
@@ -3886,15 +3903,6 @@
             return;
         }
         updateFsOverlay();
-    }
-
-    /* v2.3.1 第二十二轮：iOS 原生全屏兜底状态 + 客户端诊断上报。
-       resume/gaveUp 语义见下方 webkitbeginfullscreen 绑定处；每次重建预览播放时重置。 */
-    var iosFsGuard = { resume: 0, gaveUp: false };
-
-    function resetIosFsGuard() {
-        iosFsGuard.resume = 0;
-        iosFsGuard.gaveUp = false;
     }
 
     /** 轻量客户端事件上报：落服务端应用日志（[client-diag] 前缀），失败静默。
@@ -5468,8 +5476,8 @@
         pbResetIdle(); // 手动换段后待命元素里的旧预载缓冲已失效，清掉防误用
         var v = pbV();
         $('pbEmpty').hidden = true;
-        v.dataset.fsResume = ''; // v2.3.1 第二十二轮：新段重新给予 iOS 内联恢复机会
-        delete v.dataset.fsGiveUp;
+        v.dataset.srcName = s.name; // 诊断与 code=4 自动 remux 重试需要知道当前段名
+        delete v.dataset.remuxTried;
         v.src = withToken('api/recordings/' + encodeURIComponent(s.name));
         v.play().catch(function () {});
         // v2.3.1 录制段提示每次会话只弹一次：自动接续/循环进入录制段时不再反复打扰
@@ -6158,45 +6166,34 @@
         $('btnFsExit').addEventListener('click', function () { exitPreviewFullscreen(false); });
         document.addEventListener('fullscreenchange', guardNativeVideoFs);
         document.addEventListener('webkitfullscreenchange', guardNativeVideoFs);
-        // v2.3.1 第二十二轮：iOS 原生全屏兜底策略（MSE 路径不会触发；仅旧 iOS 走到）。
-        // 第二十一轮的「退回内联」有两大缺陷：① webkitbeginfullscreen 事件触发时
-        // webkitDisplayingFullscreen 可能尚未置位，带守卫的退出变成空操作 → 用户仍在
-        // 系统全屏里；② 退出后系统播放器会暂停视频，我们从不恢复 → 用户回到内联看到的
-        // 是一张永久黑屏（真机实测「全屏后黑屏、后续预览全黑」）。
-        // 现在改为：无条件退出 → 延迟 300ms 补刀 → 恢复内联播放；恢复次数限 2 次，
-        // 超限说明该 WebView 根本不支持内联播放（配置禁用），放弃对抗、让系统播放器
-        // 正常播（用户可点「完成」退出）——有画面永远比黑屏强。事件上报 client-log
-        // 便于远程确认劫持是否仍在发生。
+        // v2.3.1 第二十三轮：iOS 原生全屏策略 =「接受系统播放器，退出后内联失败自动降级」。
+        // 前两轮「拦截退出 + 恢复内联」在飞牛 App（宿主 WKWebView 疑似禁内联渲染）里
+        // 形成 退出→重播→再进全屏 的死循环（client-diag 日志实锤：begin/end 反复成对出现）；
+        // 且此时点我们的伪全屏没画面——真视频在系统播放器里，内联 video 元素渲染不出内容。
+        // 现改为：① beginfullscreen 接受（系统播放器有画面、有控制条、HEVC 直解）；
+        // ② endfullscreen 恢复内联播放一次，1.6s 后若仍无画面（paused / readyState<2）
+        //    自动切 JPEG 兼容帧——img 不受内联渲染限制，此后伪全屏 ⛶ 也有画面。
         (function () {
             var pv = $('previewVideo');
-            function exitNativeFs() {
-                try { if (pv.webkitDisplayingFullscreen) { pv.webkitExitFullscreen(); } } catch (e) { /* 忽略 */ }
-                try { if (pv.webkitExitFullscreen) { pv.webkitExitFullscreen(); } } catch (e) { /* 忽略 */ }
-            }
-            function resumeInlineOnce() {
-                if (iosFsGuard.gaveUp || !pv.src || !pv.paused) { return; }
-                if (iosFsGuard.resume >= 2) {
-                    iosFsGuard.gaveUp = true;
-                    reportClientDiag('ios_fs_giveup', 'preview：连续 3 次内联恢复失败，交还系统播放器');
-                    return;
-                }
-                iosFsGuard.resume++;
-                var p = pv.play(); if (p && p.catch) { p.catch(function () { /* 忽略 */ }); }
-            }
+            var nativeFsSeen = false;
             pv.addEventListener('webkitbeginfullscreen', function () {
-                try { window.localStorage.setItem('ainvr_ios_fs_hijack', String(Date.now())); } catch (e) { /* 忽略 */ }
-                reportClientDiag('ios_fs_begin', 'preview：系统播放器全屏劫持');
-                if (iosFsGuard.gaveUp) { return; } // 已放弃对抗：让系统播放器播，用户可点「完成」退出
-                exitNativeFs();
-                setTimeout(function () {
-                    if (!$('previewModal') || $('previewModal').hidden) { return; }
-                    exitNativeFs();
-                    resumeInlineOnce();
-                }, 300);
+                if (nativeFsSeen) { return; }
+                nativeFsSeen = true;
+                reportClientDiag('ios_fs_begin', 'preview：进入系统全屏（接受系统播放器）');
             });
             pv.addEventListener('webkitendfullscreen', function () {
-                reportClientDiag('ios_fs_end', 'preview：系统全屏结束');
-                resumeInlineOnce();
+                reportClientDiag('ios_fs_end', 'preview：系统全屏结束，尝试恢复内联');
+                if (!nativeFsSeen) { return; }
+                nativeFsSeen = false;
+                if (!$('previewModal') || $('previewModal').hidden || !pv.src) { return; }
+                var p = pv.play(); if (p && p.catch) { p.catch(function () { /* 忽略 */ }); }
+                setTimeout(function () {
+                    if ($('previewModal').hidden || !pv.src) { return; }
+                    if (pv.paused || pv.readyState < 2) {
+                        reportClientDiag('ios_fs_degrade', 'preview：退出全屏后内联无画面，降级兼容画面');
+                        autoFallbackToCompat('系统播放器对内联播放不可用：已切换兼容画面（约 2 帧/秒）；点右上角 ⛶ 可放大。');
+                    }
+                }, 1600);
             });
         })();
         $('btnChaseLive').addEventListener('click', function () {
@@ -6333,32 +6330,30 @@
                 el.addEventListener('click', togglePbPlay);
                 // v2.3.1 第二十一轮：手机回放黑屏诊断——加载错误不再无声，直接提示；
                 // iOS 强制全屏事件只记录不拦截（预览侧已验证「退回内联」策略）
+                // v2.3.1 第二十三轮：code=4（SRC_NOT_SUPPORTED）在 iPhone 上几乎都是
+                // 存量 hev1 段（iOS 只认 hvc1，真机 moov 解析实锤）——自动带 remux=1
+                // 重试一次，服务端按需 0 拷贝转封装 hvc1 后重放；转换结果会缓存。
                 el.addEventListener('error', function () {
                     if (!el.src) return;
                     var code = el.error ? el.error.code : 0;
+                    reportClientDiag('pb_error', 'code=' + code + ' seg=' + (el.dataset.srcName || '?'));
+                    if (code === 4 && el.dataset.srcName && !el.dataset.remuxTried) {
+                        el.dataset.remuxTried = '1';
+                        toast('该段正在转换为 iPhone 兼容格式…', '');
+                        el.src = withToken('api/recordings/' + encodeURIComponent(el.dataset.srcName)) + '&remux=1';
+                        el.play().catch(function () { /* 稍后由用户手势触发 */ });
+                        return;
+                    }
                     toast('回放视频加载失败（code=' + code + '），点时间轴其他区段重试', 'err');
                 });
+                // v2.3.1 第二十三轮：与预览同策略——接受系统播放器（有画面有控制条），
+                // 退出全屏后恢复内联播放一次；不再「退出+补刀」对抗（真机实锤死循环）。
                 el.addEventListener('webkitbeginfullscreen', function () {
-                    try { window.localStorage.setItem('ainvr_ios_fs_hijack', String(Date.now())); } catch (e2) { /* 忽略 */ }
-                    reportClientDiag('ios_fs_begin', 'pb：回放系统全屏劫持');
-                    // v2.3.1 第二十二轮：与预览同款兜底——退出 + 恢复内联播放（限 2 次），
-                    // 超限放弃对抗让系统播放器播（MP4 + playsinline 通常不会走到这里）
-                    if (el.dataset.fsGiveUp) { return; }
-                    try { if (el.webkitExitFullscreen) { el.webkitExitFullscreen(); } } catch (e2) { /* 忽略 */ }
-                    setTimeout(function () {
-                        try { if (el.webkitDisplayingFullscreen) { el.webkitExitFullscreen(); } } catch (e2) { /* 忽略 */ }
-                        if (!el.src || !el.paused || el.dataset.fsGiveUp) { return; }
-                        var n = parseInt(el.dataset.fsResume || '0', 10);
-                        if (n >= 2) { el.dataset.fsGiveUp = '1'; reportClientDiag('ios_fs_giveup', 'pb：内联恢复超限'); return; }
-                        el.dataset.fsResume = String(n + 1);
-                        var p = el.play(); if (p && p.catch) { p.catch(function () { /* 忽略 */ }); }
-                    }, 300);
+                    reportClientDiag('ios_fs_begin', 'pb：回放进入系统全屏（接受系统播放器）');
                 });
                 el.addEventListener('webkitendfullscreen', function () {
-                    if (!el.src || !el.paused || el.dataset.fsGiveUp) { return; }
-                    var n = parseInt(el.dataset.fsResume || '0', 10);
-                    if (n >= 2) { el.dataset.fsGiveUp = '1'; return; }
-                    el.dataset.fsResume = String(n + 1);
+                    reportClientDiag('ios_fs_end', 'pb：系统全屏结束');
+                    if (!el.src || !el.paused) { return; }
                     var p = el.play(); if (p && p.catch) { p.catch(function () { /* 忽略 */ }); }
                 });
             }

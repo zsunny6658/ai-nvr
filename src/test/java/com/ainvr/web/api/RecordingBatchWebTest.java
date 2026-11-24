@@ -1,5 +1,6 @@
 package com.ainvr.web.api;
 
+import com.ainvr.record.IosRemuxService;
 import com.ainvr.store.AppSettingsStore;
 import com.ainvr.web.config.NvrProperties;
 import com.ainvr.web.service.RecordingService;
@@ -68,7 +69,7 @@ class RecordingBatchWebTest {
         RecordingService svc = new TestService(props, Mockito.mock(AppSettingsStore.class));
         Files.write(dir.resolve(A), "AAA".getBytes(StandardCharsets.UTF_8));
         Files.write(dir.resolve(B), "BBB".getBytes(StandardCharsets.UTF_8));
-        mvc = MockMvcBuilders.standaloneSetup(new RecordingController(svc))
+        mvc = MockMvcBuilders.standaloneSetup(new RecordingController(svc, new IosRemuxService(svc)))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
     }

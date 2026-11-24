@@ -31,7 +31,7 @@ class StaticAssetContractTest {
 
         assertTrue(html.contains("btnPreviewBack"), "预览弹层缺少应用内返回按钮");
         assertTrue(html.contains("btnPlayerBack"), "回放弹层缺少应用内返回按钮");
-        assertTrue(html.contains("v=88"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
+        assertTrue(html.contains("v=89"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
         // v2.3.1 真机验证第五轮：主题快捷按钮两态 + 选目录自动授权 + 内置权限面板
         assertTrue(js.contains("trimAuthorizePath"), "缺少选目录自动授权逻辑");
         assertTrue(js.contains("authorizeUserFile"), "缺少用户空间授权调用");
@@ -139,12 +139,26 @@ class StaticAssetContractTest {
             assertTrue(mountBlock.contains("Hls.isSupported()"),
                     "hls.js 可用即应优先 MSE（iOS 17.1+ 走 ManagedMediaSource，应用内播放无系统全屏）");
         }
-        assertTrue(js.contains("webkitendfullscreen") && js.contains("resumeInlineOnce"),
-                "iOS 退出系统全屏后必须恢复内联播放（退出即暂停=永久黑屏，真机实锤）");
-        assertTrue(js.contains("iosFsGuard.gaveUp"),
-                "内联恢复应有次数上限与放弃对抗路径（WebView 禁内联时留系统播放器兜底）");
+        // v2.3.1 第二十三轮回归锁：MMS 激活条件 + 接受系统播放器策略 + hev1 根因
+        assertTrue(js.contains("disableRemotePlayback = true"),
+                "iPhone 上 ManagedMediaSource 必须先禁用 RemotePlayback 才会激活（WWDC 2023 官方要求）");
+        assertTrue(js.contains("preview_mount"),
+                "预览挂载路径应上报诊断（MMS/MSE 可用性决定 iPhone 链路，remote 取证）");
+        assertTrue(js.contains("webkitendfullscreen") && js.contains("readyState < 2"),
+                "iOS 退出系统全屏后应恢复内联并在无画面时降级兼容画面（死循环根修）");
+        {
+            // 只锁预览 begin/end 事件块内不得对抗性退出（预览关闭路径的
+            // exitNativeFullscreen 是防僵尸全屏的合法清理，不受限）
+            int beginIdx = js.indexOf("preview：进入系统全屏（接受系统播放器）");
+            int degradeIdx = js.indexOf("ios_fs_degrade");
+            assertTrue(beginIdx >= 0 && degradeIdx > beginIdx, "预览 iOS 全屏处理块应存在");
+            assertFalse(js.substring(beginIdx, degradeIdx).contains("webkitExitFullscreen"),
+                    "禁止在 begin/end 全屏事件里对抗性退出系统播放器（退出→重播→再进死循环，client-diag 实锤）");
+        }
+        assertTrue(js.contains("remux=1"),
+                "回放 code=4 应自动带 remux=1 重试（存量 hev1 段 iPhone 不识别）");
         assertTrue(js.contains("reportClientDiag('ios_fs_begin'"),
-                "iOS 全屏劫持事件应上报 client-log（远程定位真机问题）");
+                "iOS 全屏事件应上报 client-log（远程定位真机问题）");
         assertTrue(js.contains("majorSpacingPx < 76") && js.contains("needThin"),
                 "时间刻度抽稀阈值应提升至 76px 且抽稀时使用 HH:MM 短标签（iPhone 仍拥挤）");
         assertTrue(js.contains("api/diagnostics/client-log"),

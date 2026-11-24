@@ -38,9 +38,12 @@ public class RecordingController {
     private static final DateTimeFormatter ZIP_TIME = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
 
     private final RecordingService recordingService;
+    private final com.ainvr.record.IosRemuxService iosRemux;
 
-    public RecordingController(RecordingService recordingService) {
+    public RecordingController(RecordingService recordingService,
+                               com.ainvr.record.IosRemuxService iosRemux) {
         this.recordingService = recordingService;
+        this.iosRemux = iosRemux;
     }
 
     public record StartRequest(Long segmentSec) {
@@ -74,20 +77,24 @@ public class RecordingController {
 
     @GetMapping("/recordings/{name:.+}")
     public ResponseEntity<Resource> playback(@PathVariable String name,
-                                             @RequestParam(name = "dl", defaultValue = "false") boolean download) {
+                                             @RequestParam(name = "dl", defaultValue = "false") boolean download,
+                                             @RequestParam(name = "remux", defaultValue = "false") boolean remux) {
         File f = recordingService.resolveFile(name);
+        // v2.3.1 第二十三轮：存量 hev1 段（iPhone 报 code=4）按需转封装 hvc1；新段已是 hvc1 直接返回
+        File serve = iosRemux.playable(f, remux);
         String disposition = (download ? "attachment" : "inline")
                 + "; filename*=UTF-8''" + URLEncoder.encode(f.getName(), StandardCharsets.UTF_8);
         return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType("video/mp4"))
                 .header(HttpHeaders.CONTENT_DISPOSITION, disposition)
                 .header(HttpHeaders.CACHE_CONTROL, "no-cache")
-                .body(new FileSystemResource(f));
+                .body(new FileSystemResource(serve));
     }
 
     @DeleteMapping("/recordings/{name:.+}")
     public Map<String, Object> delete(@PathVariable String name) {
         recordingService.delete(name);
+        iosRemux.evictCache(name); // v2.3.1：同步清理 iOS hvc1 转封装缓存
         return Map.of("deleted", name);
     }
 

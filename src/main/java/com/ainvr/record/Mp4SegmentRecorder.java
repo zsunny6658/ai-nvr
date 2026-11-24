@@ -611,6 +611,11 @@ public final class Mp4SegmentRecorder {
         pp.deallocate();
     }
 
+    /** ffmpeg MKTAG 语义：a | b<<8 | c<<16 | d<<24（小端 fourcc）。 */
+    static int mktag(char a, char b, char c, char d) {
+        return (a) | (b << 8) | (c << 16) | (d << 24);
+    }
+
     private void openSegment(long startMs, byte[] config) throws IOException {
         String name = String.format("rec-%s-%03d-%s.mp4", did,
                 segmentCounter.incrementAndGet(),
@@ -628,7 +633,13 @@ public final class Mp4SegmentRecorder {
         var vcp = outVideo.codecpar();
         vcp.codec_type(AVMEDIA_TYPE_VIDEO);
         vcp.codec_id(videoCodecId);
-        vcp.codec_tag(0);
+        // v2.3.1 第二十三轮：必须显式指定 sample entry 标签。codec_tag=0 时 ffmpeg mp4
+        // 封装器对裸 HEVC 默认写 hev1——桌面 Chrome/Edge 可播，但 iPhone 媒体栈只认
+        // hvc1（参数集在样本条目内），hev1 直接 MEDIA_ERR_SRC_NOT_SUPPORTED（code=4）
+        // → 手机回放黑屏（真机实锤：moov 里 stsd 是 hev1）。hvc1 + hvcC extradata
+        // 恰好满足 Apple 要求。MKTAG(a,b,c,d)=a|b<<8|c<<16|d<<24。
+        vcp.codec_tag(videoCodecId == AV_CODEC_ID_HEVC
+                ? mktag('h', 'v', 'c', '1') : mktag('a', 'v', 'c', '1'));
         int vw = pendingDim == null ? 0 : pendingDim[0];
         int vh = pendingDim == null ? 0 : pendingDim[1];
         vcp.width(vw);
