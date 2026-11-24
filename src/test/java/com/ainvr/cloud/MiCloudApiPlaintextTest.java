@@ -28,4 +28,16 @@ class MiCloudApiPlaintextTest {
         assertFalse(MiCloudApi.looksLikePlaintextJson(null));
         assertFalse(MiCloudApi.looksLikePlaintextJson("RC4 加密应答恒为 Base64 字符集开头"));
     }
+
+    /** v2.3.1 第二十三轮：code=3（auth error）与 401 同属会话失效，必须进续期分支。 */
+    @Test
+    void sessionExpiredCodes() {
+        assertTrue(MiCloudApi.isSessionExpired(401));
+        assertTrue(MiCloudApi.isSessionExpired(3));
+        assertFalse(MiCloudApi.isSessionExpired(0));
+        assertFalse(MiCloudApi.isSessionExpired(1));
+        assertFalse(MiCloudApi.isSessionExpired(2));
+        assertFalse(MiCloudApi.isSessionExpired(-1));
+        assertFalse(MiCloudApi.isSessionExpired(9999));
+    }
 }

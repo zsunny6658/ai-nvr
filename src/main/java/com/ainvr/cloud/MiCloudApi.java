@@ -84,8 +84,8 @@ public class MiCloudApi {
         }
 
         int code = json.path("code").asInt(-1);
-        if (code == 401) {
-            throw new MiCloudUnauthorizedException("会话失效（code=401），需 token 恢复");
+        if (isSessionExpired(code)) {
+            throw new MiCloudUnauthorizedException("会话失效（code=" + code + "），需 token 恢复");
         }
         if (code != 0) {
             throw new MiCloudException("业务 API 失败 code=" + code
@@ -105,6 +105,16 @@ public class MiCloudApi {
         }
         char c = t.charAt(0);
         return c == '{' || c == '[';
+    }
+
+    /**
+     * v2.3.1 第二十三轮：会话失效错误码判定。
+     * 米家 IO 云对无效会话返回 code=3（message=auth error），与 code=401 同属会话失效，
+     * 都必须进续期分支（renew 用 passToken 重登后重试）。此前只认 401，code=3 变成
+     * MiCloudException 报给前端，续期死路（真机实锤：登录即报「业务 API 失败 code=3」）。
+     */
+    static boolean isSessionExpired(int code) {
+        return code == 401 || code == 3;
     }
 
     /** 日志截断（防超长应答刷屏）。 */
