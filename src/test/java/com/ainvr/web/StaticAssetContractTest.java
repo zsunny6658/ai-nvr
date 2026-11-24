@@ -31,7 +31,7 @@ class StaticAssetContractTest {
 
         assertTrue(html.contains("btnPreviewBack"), "预览弹层缺少应用内返回按钮");
         assertTrue(html.contains("btnPlayerBack"), "回放弹层缺少应用内返回按钮");
-        assertTrue(html.contains("v=86"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
+        assertTrue(html.contains("v=87"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
         // v2.3.1 真机验证第五轮：主题快捷按钮两态 + 选目录自动授权 + 内置权限面板
         assertTrue(js.contains("trimAuthorizePath"), "缺少选目录自动授权逻辑");
         assertTrue(js.contains("authorizeUserFile"), "缺少用户空间授权调用");
@@ -104,6 +104,26 @@ class StaticAssetContractTest {
                 "视频触摸屏障层（防 X5/夸克手势劫持进自带全屏）必须存在");
         assertTrue(js.contains("webkitbeginfullscreen"),
                 "iOS 前置全屏事件拦截（webkitbeginfullscreen）缺失");
+        // v2.3.1 第二十一轮回归锁：伪全屏死锁根修（iPhone 真机实测点预览被卡全屏）
+        {
+            int guardIdx = js.indexOf("function guardNativeVideoFs");
+            int exitIdx = js.indexOf("function exitPreviewFullscreen");
+            assertTrue(guardIdx >= 0 && exitIdx > guardIdx, "guardNativeVideoFs 应存在");
+            String guardBlock = js.substring(guardIdx, exitIdx);
+            assertFalse(guardBlock.contains("classList.add('fs-fake')"),
+                    "原生全屏拦截禁止自动转伪全屏（无退出按钮困死用户，真机实锤）");
+            assertTrue(js.contains("$('btnFsExit').hidden = !isFsActive()"),
+                    "伪全屏（fs-fake）必须有可见退出按钮");
+        }
+        // v2.3.1 第二十一轮回归锁：米家下拉随设备列表刷新 / 时间刻度抽稀 / 回放诊断与续播加固
+        assertTrue(js.contains("refreshMiotDevSelect();\n            if (forceRefresh || structureChanged)"),
+                "设备到达后应刷新米家设备控制下拉（手机上先开设置后到设备显示空）");
+        assertTrue(js.contains("labelEvery") && js.contains("majorSpacingPx"),
+                "回放时间刻度标签应按容器宽度动态抽稀（手机端重叠）");
+        assertTrue(js.contains("回放视频加载失败"),
+                "回放视频加载错误应有可见提示（手机黑屏诊断）");
+        assertTrue(js.contains("回放未自动续播"),
+                "续播被浏览器拦截时应有可见提示（不再静默吞拒）");
         assertTrue(js.contains("startFragPrefetch: true"),
                 "hls.js 应开启首分片预取（起播提速）");
         assertTrue(js.contains("segCount(txt) >= 1"),
@@ -185,7 +205,8 @@ class StaticAssetContractTest {
         assertTrue(js.contains("prev.durMs / 1000 - 30"), "进回放起始点应落在上一段末尾 30 秒处");
         // v2.3.1 真机验证第七轮：每次进回放页都自动播放（不只首次），再次进入恢复播放
         assertTrue(js.contains("v.ended) { loadTimeline(true)"), "上次已播到末尾时应重新定位到最新段");
-        assertTrue(js.contains("else { v.play().catch(function () {}); }"), "再次进入回放页应直接恢复播放");
+        // v2.3.1 第二十一轮：续播改为重试+可见提示（不再静默吞拒）
+        assertTrue(js.contains("回放未自动续播，点一下画面即可继续"), "再次进入回放页应恢复播放且被拦时有提示");
         // v2.3.1 帮助与反馈：诊断导出 + 双平台 Issue 上报（无令牌降级）
         assertTrue(html.contains("data-sgroup=\"feedback\""), "设置页缺少「帮助与反馈」分组");
         assertTrue(js.contains("noteErr") && js.contains("unhandledrejection"), "缺少前端错误环形记录");

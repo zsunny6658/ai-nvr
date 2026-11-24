@@ -783,6 +783,9 @@
                 });
             state.devices = list;
             renderRecFilter();
+            // v2.3.1 第二十一轮：设备到达后同步刷新米家设备控制下拉——此前只在
+            // 进入设置分组时填一次，手机上先开设置后到设备时显示「尚未发现摄像头」
+            refreshMiotDevSelect();
             if (forceRefresh || structureChanged) {
                 renderDevices();
             } else {
@@ -793,6 +796,131 @@
             if (forceRefresh) toast('加载设备失败：' + e.message, 'err');
         }
     }
+
+    /* ---------- v2.3.1 设置页：米家设备控制（夜视/翻转/水印/追踪/录制模式/看家助手/存储卡/重启） ---------- */
+
+    /** 米家属性读取结果缓存（did → {key:{code,value,label}}），渲染与写回用。 */
+    var miotCache = {};
+
+    /**
+     * v2.3.1 第十六轮：控制项定义改为数据驱动，读取结果后整表 JS 渲染——
+     * 每行「名称 + 说明 + 控件 + 设置」，不支持项灰显打标，替代旧版静态
+     * label+select 逐项堆叠的排版。
+     */
+    var MIOT_CONTROLS = [
+        { key: 'nightShot', label: '夜视模式', hint: '红外补光方式（关闭 / 打开 / 自动）', type: 'enum',
+          opts: [['0', '关闭'], ['1', '打开'], ['2', '自动']] },
+        { key: 'imageRollover', label: '画面翻转', hint: '倒装摄像头的 180° 画面矫正', type: 'enum',
+          opts: [['0', '正常'], ['180', '翻转 180°']] },
+        { key: 'timeWatermark', label: '时间水印', hint: '画面右上角时间戳', type: 'bool' },
+        { key: 'humanTracking', label: '人形追踪', hint: '云台款：画面自动跟随人形', type: 'bool' },
+        { key: 'recordingMode', label: '存储卡录制', hint: '摄像头本机 SD 卡的录制方式', type: 'enum',
+          opts: [['0', '不录制'], ['1', '录制移动画面'], ['2', '始终录制']] },
+        { key: 'guardSwitch', label: '看家助手', hint: '移动侦测告警推送开关', type: 'bool' },
+        { key: 'guardSensitivity', label: '侦测灵敏度', hint: '看家助手的移动侦测灵敏度', type: 'enum',
+          opts: [['0', '低'], ['1', '中'], ['2', '高']] }
+    ];
+
+    function refreshMiotDevSelect() {
+        var sel = $('miotDevSelect');
+        var prev = sel.value;
+        var mains = state.devices.filter(function (d) { return String(d.did).indexOf('#') < 0; });
+        sel.innerHTML = mains.map(function (d) {
+            return '<option value="' + esc(d.did) + '">' + esc(d.name) + '（' + esc(d.did) + '）</option>';
+        }).join('');
+        if (prev && mains.some(function (d) { return String(d.did) === prev; })) {
+            sel.value = prev;
+        }
+        if (!mains.length) {
+            $('miotPropForm').hidden = true;
+            $('miotMsg').textContent = '尚未发现摄像头';
+            return;
+        }
+        // v2.3.1 第二十一轮：设备到达后清除此前留下的「尚未发现摄像头」过期提示
+        if (!miotCache[sel.value]) { $('miotMsg').textContent = '设备已就绪，点「读取」获取当前属性'; }
+        if (miotCache[sel.value]) { renderMiotProps(sel.value); }
+    }
+
+    async function loadMiotProps(did) {
+        if (!did) return;
+        $('miotMsg').textContent = '读取中…';
+        try {
+            var d = await api('api/devices/' + encodeURIComponent(did) + '/miot');
+            miotCache[did] = d.props || {};
+            renderMiotProps(did);
+        } catch (e) {
+            if (e.status === 401) { scheduleGateRelock(); return; }
+            $('miotMsg').textContent = '读取失败：' + e.message;
+        }
+    }
+
+    /** 按读取结果整表渲染控制项；返回该机支持/不支持摘要。 */
+    function renderMiotProps(did) {
+        var props = miotCache[did] || {};
+        var box = $('miotRows');
+        var supported = 0;
+        box.innerHTML = MIOT_CONTROLS.map(function (def) {
+            var item = props[def.key];
+            var ok = !!(item && item.code === 0 && item.value !== null && item.value !== undefined);
+            if (ok) { supported++; }
+            var opts = (def.type === 'bool' ? [['true', '开启'], ['false', '关闭']] : def.opts)
+                .map(function (o) {
+                    var selAttr = (ok && String(item.value) === o[0]) ? ' selected' : '';
+                    return '<option value="' + o[0] + '"' + selAttr + '>' + esc(o[1]) + '</option>';
+                }).join('');
+            var tag = ok ? '' : '<span class="miot-unsup-tag">不支持</span>';
+            return '<div class="miot-row' + (ok ? '' : ' unsup') + '">'
+                + '<span class="miot-label">' + esc(def.label) + tag
+                + '<small>' + esc(def.hint) + '</small></span>'
+                + '<select class="select" data-miotval="' + def.key + '"' + (ok ? '' : ' disabled') + '>' + opts + '</select>'
+                + '<button class="btn tiny primary" data-miotset="' + def.key + '" type="button"'
+                + (ok ? '' : ' disabled') + '>设置</button>'
+                + '</div>';
+        }).join('');
+        $('miotPropForm').hidden = false;
+        // 存储卡只读信息
+        var sd = props.sdStatus, total = props.sdTotal, free = props.sdFree;
+        var sdText = '—';
+        if (sd && sd.code === 0 && sd.value !== null && sd.value !== undefined) {
+            var stMap = ['正常', '未插卡', '卡已满', '卡损坏', '格式化中', '已弹出', '修复中', '弹出中', '未初始化', '空间不足', '文件异常', '不兼容'];
+            sdText = stMap[Number(sd.value)] || ('状态 ' + sd.value);
+            if (total && total.code === 0 && free && free.code === 0
+                && total.value != null && free.value != null) {
+                sdText += ' · 剩余 ' + fmtSize(Number(free.value)) + ' / ' + fmtSize(Number(total.value));
+            }
+        } else {
+            sdText = '本机型不支持存储卡状态读取';
+        }
+        $('miotSdInfo').textContent = sdText;
+        var unsupported = MIOT_CONTROLS.length - supported;
+        $('miotMsg').textContent = unsupported
+            ? '读取完成：' + supported + ' 项可控制，' + unsupported + ' 项本机型不支持（灰显）'
+            : '读取完成：全部 ' + supported + ' 项均可控制';
+    }
+
+    async function setMiotProp(did, key) {
+        var sel = document.querySelector('[data-miotval="' + key + '"]');
+        if (!sel || sel.disabled) return;
+        var def = null;
+        MIOT_CONTROLS.forEach(function (d) { if (d.key === key) def = d; });
+        if (!def) return;
+        var raw = sel.value;
+        var value = def.type === 'bool' ? raw === 'true' : Number(raw);
+        $('miotMsg').textContent = '设置中…';
+        try {
+            await api('api/devices/' + encodeURIComponent(did) + '/miot/' + encodeURIComponent(key),
+                { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ value: value }) });
+            toast('已下发', 'ok');
+            $('miotMsg').textContent = '已设置';
+            // 重新读取刷新该行显示值（云端写后读可能有短暂滞后，失败不影响设置结果）
+            loadMiotProps(did);
+        } catch (e) {
+            if (e.status === 401) { scheduleGateRelock(); return; }
+            toast('设置失败：' + e.message, 'err');
+            $('miotMsg').textContent = '设置失败：' + e.message;
+        }
+    }
+
 
     function statusBadges(c) {
         // v2.3.1 休眠中无帧可预览/录像：快照轮询与帧源已跳过，徽标如实显示休眠
@@ -3737,22 +3865,21 @@
     function updateFsOverlay() {
         $('fsOverlay').hidden = !isFsActive();
         $('btnFullscreen').textContent = isFsActive() ? '⛶ 退出全屏' : '⛶ 全屏';
-        $('btnFsExit').hidden = !(document.fullscreenElement || document.webkitFullscreenElement);
+        // v2.3.1 第二十一轮热修：伪全屏（fs-fake）也必须能退出——此前只在
+        // document.fullscreenElement 存在时显示退出按钮，iOS 上系统播放器被
+        // 拦截后落入伪全屏，按钮隐藏、videoWrap 盖住顶栏，用户被卡死在全屏里
+        $('btnFsExit').hidden = !isFsActive();
     }
 
-    /* v2.3.1 第十八轮：原生视频全屏拦截转换。部分手机内核（X5 / 夸克 / UC 等）即便
-       无 controls 属性也会擅自把 <video> 元素本身送进原生全屏——此时应用浮层不在
-       全屏元素子树内，表现为「莫名全屏 + 没有云台按钮」。监听全屏事件：发现全屏的
-       是 video 元素本身时立即退出，转为 video-wrap 应用内伪全屏（浮层可见可用）。 */
+    /* v2.3.1 第二十一轮热修：原生视频全屏拦截改为「退回内联」而非「转伪全屏」。
+       第二十轮实测（iPhone 15 Pro / 飞牛 App）：点预览即落全屏且无法退出——根因是
+       自动转伪全屏后 btnFsExit 被隐藏、videoWrap(fixed) 盖住预览顶栏，无任何出口。
+       现在策略：系统/元素级全屏一律退回内联播放，伪全屏只由用户点「⛶ 全屏」显式进入。 */
     function guardNativeVideoFs() {
         var fsEl = document.fullscreenElement || document.webkitFullscreenElement;
         if (fsEl && fsEl.id === 'previewVideo') {
             var exit = document.exitFullscreen || document.webkitExitFullscreen;
-            try { if (exit) { exit.call(document); } } catch (e) { /* 忽略 */ }
-            setTimeout(function () {
-                $('videoWrap').classList.add('fs-fake');
-                updateFsOverlay();
-            }, 60);
+            try { if (exit) { var fp = exit.call(document); if (fp && fp.catch) { fp.catch(function () { /* 忽略 */ }); } } } catch (e) { /* 忽略 */ }
             return;
         }
         updateFsOverlay();
@@ -3765,7 +3892,7 @@
         var fsEl = document.fullscreenElement || document.webkitFullscreenElement;
         if (fsEl) {
             var exit = document.exitFullscreen || document.webkitExitFullscreen;
-            try { if (exit) { exit.call(document); } } catch (e) { /* 忽略 */ }
+            try { if (exit) { var fp = exit.call(document); if (fp && fp.catch) { fp.catch(function () { /* 忽略 */ }); } } } catch (e) { /* 忽略 */ }
         }
         if (!silent) { updateFsOverlay(); }
     }
@@ -5039,7 +5166,23 @@
         var v = pbV();
         if (pb.idx >= 0 && v.src) {
             if (v.ended) { loadTimeline(true); }
-            else { v.play().catch(function () {}); }
+            else {
+                // v2.3.1 第二十一轮：续播不再静默吞拒——重试一次，仍被浏览器拦截
+                // （自动播放策略/后台页节流）时明确提示用户点画面继续，杜绝
+                // 「切菜单回来回放悄悄停了却看不出原因」的回归无从排查
+                var p = v.play();
+                if (p && p.catch) {
+                    p.catch(function (err) {
+                        try { console.warn('[PB] 续播被拒：' + (err && err.name || err)); } catch (e1) { /* 忽略 */ }
+                        setTimeout(function () {
+                            var p2 = v.play();
+                            if (p2 && p2.catch) {
+                                p2.catch(function () { toast('回放未自动续播，点一下画面即可继续', 'err'); });
+                            }
+                        }, 300);
+                    });
+                }
+            }
         }
     }
 
@@ -5173,11 +5316,17 @@
         var ruler = $('tlRuler');
         var winEnd = pb.winStart + pb.winDur;
         var tickMs = steps.tick * 1000;
+        // v2.3.1 第二十一轮：手机窄屏防标签重叠——按主刻度实际像素间距动态抽稀标签
+        // （细线保留、只稀疏文字）。桌面宽度下维持原密度，间距 <56px 才开始抽稀。
+        var trackW = ($('tlTrack').clientWidth || 640);
+        var majorMs = tickMs * steps.every;
+        var majorSpacingPx = majorMs / pb.winDur * trackW;
+        var labelEvery = majorSpacingPx < 56 ? steps.every * Math.ceil(56 / majorSpacingPx) : steps.every;
         var first = Math.ceil(pb.winStart / tickMs) * tickMs;
         var html = '';
         for (var t = first; t < winEnd; t += tickMs) {
             var nth = Math.round(t / tickMs);
-            var major = (nth % steps.every === 0);
+            var major = (nth % labelEvery === 0);
             html += '<div class="tl-tick' + (major ? ' major' : '') + '" style="left:' + pct(t).toFixed(3) + '%">'
                 + (major ? '<span class="tl-lab">' + hms(t) + '</span>' : '') + '</div>';
         }
@@ -5976,20 +6125,16 @@
         $('btnFsExit').addEventListener('click', function () { exitPreviewFullscreen(false); });
         document.addEventListener('fullscreenchange', guardNativeVideoFs);
         document.addEventListener('webkitfullscreenchange', guardNativeVideoFs);
-        // v2.3.1 第二十轮：iOS 前置拦截——webkitbeginfullscreen 在进入原生全屏「之前」
-        // 触发（fullscreenchange 是之后），此时立即退出并转为应用内伪全屏，
-        // 用户完全看不到原生全屏闪现。previewVideo 是静态元素（remount 只换 src），
-        // 初始化时绑定一次即可。
+        // v2.3.1 第二十一轮热修：iOS 前置事件只「退回内联」，不再转伪全屏——
+        // 上一轮的 exit+fs-fake 组合把用户困进无退出按钮的伪全屏（真机实测死锁）。
+        // webkitbeginfullscreen 在进入原生全屏「之前」触发，此时退出即可回到内联，
+        // 系统播放器对用户不可见。同时记录劫持标记便于诊断。
         (function () {
             var pv = $('previewVideo');
-            var stopNative = function () {
+            pv.addEventListener('webkitbeginfullscreen', function () {
+                try { window.localStorage.setItem('ainvr_ios_fs_hijack', String(Date.now())); } catch (e) { /* 忽略 */ }
                 try { if (pv.webkitDisplayingFullscreen) { pv.webkitExitFullscreen(); } } catch (e) { /* 忽略 */ }
-                setTimeout(function () {
-                    $('videoWrap').classList.add('fs-fake');
-                    updateFsOverlay();
-                }, 60);
-            };
-            pv.addEventListener('webkitbeginfullscreen', stopNative);
+            });
         })();
         $('btnChaseLive').addEventListener('click', function () {
             if (!chaseLiveEdge(false)) { toast('当前已是最新画面', 'ok'); }
@@ -6123,6 +6268,16 @@
                 el.addEventListener('pause', syncPbPlayBtn);
                 // 点画面切换播放/暂停（待命元素 pb-off 有 pointer-events:none，不会误触）
                 el.addEventListener('click', togglePbPlay);
+                // v2.3.1 第二十一轮：手机回放黑屏诊断——加载错误不再无声，直接提示；
+                // iOS 强制全屏事件只记录不拦截（预览侧已验证「退回内联」策略）
+                el.addEventListener('error', function () {
+                    if (!el.src) return;
+                    var code = el.error ? el.error.code : 0;
+                    toast('回放视频加载失败（code=' + code + '），点时间轴其他区段重试', 'err');
+                });
+                el.addEventListener('webkitbeginfullscreen', function () {
+                    try { window.localStorage.setItem('ainvr_ios_fs_hijack', String(Date.now())); } catch (e2) { /* 忽略 */ }
+                });
             }
             bindPbVideo($('pbVideo'));
             bindPbVideo($('pbVideoB'));
@@ -6268,128 +6423,6 @@
             b.classList.toggle('active', b.getAttribute('data-sgroup') === name);
         });
         try { localStorage.setItem('ainvr_set_group', name); } catch (e2) { /* 存储不可用忽略 */ }
-    }
-
-    /* ---------- v2.3.1 设置页：米家设备控制（夜视/翻转/水印/追踪/录制模式/看家助手/存储卡/重启） ---------- */
-
-    /** 米家属性读取结果缓存（did → {key:{code,value,label}}），渲染与写回用。 */
-    var miotCache = {};
-
-    /**
-     * v2.3.1 第十六轮：控制项定义改为数据驱动，读取结果后整表 JS 渲染——
-     * 每行「名称 + 说明 + 控件 + 设置」，不支持项灰显打标，替代旧版静态
-     * label+select 逐项堆叠的排版。
-     */
-    var MIOT_CONTROLS = [
-        { key: 'nightShot', label: '夜视模式', hint: '红外补光方式（关闭 / 打开 / 自动）', type: 'enum',
-          opts: [['0', '关闭'], ['1', '打开'], ['2', '自动']] },
-        { key: 'imageRollover', label: '画面翻转', hint: '倒装摄像头的 180° 画面矫正', type: 'enum',
-          opts: [['0', '正常'], ['180', '翻转 180°']] },
-        { key: 'timeWatermark', label: '时间水印', hint: '画面右上角时间戳', type: 'bool' },
-        { key: 'humanTracking', label: '人形追踪', hint: '云台款：画面自动跟随人形', type: 'bool' },
-        { key: 'recordingMode', label: '存储卡录制', hint: '摄像头本机 SD 卡的录制方式', type: 'enum',
-          opts: [['0', '不录制'], ['1', '录制移动画面'], ['2', '始终录制']] },
-        { key: 'guardSwitch', label: '看家助手', hint: '移动侦测告警推送开关', type: 'bool' },
-        { key: 'guardSensitivity', label: '侦测灵敏度', hint: '看家助手的移动侦测灵敏度', type: 'enum',
-          opts: [['0', '低'], ['1', '中'], ['2', '高']] }
-    ];
-
-    function refreshMiotDevSelect() {
-        var sel = $('miotDevSelect');
-        var prev = sel.value;
-        var mains = state.devices.filter(function (d) { return String(d.did).indexOf('#') < 0; });
-        sel.innerHTML = mains.map(function (d) {
-            return '<option value="' + esc(d.did) + '">' + esc(d.name) + '（' + esc(d.did) + '）</option>';
-        }).join('');
-        if (prev && mains.some(function (d) { return String(d.did) === prev; })) {
-            sel.value = prev;
-        }
-        if (!mains.length) {
-            $('miotPropForm').hidden = true;
-            $('miotMsg').textContent = '尚未发现摄像头';
-            return;
-        }
-        if (miotCache[sel.value]) { renderMiotProps(sel.value); }
-    }
-
-    async function loadMiotProps(did) {
-        if (!did) return;
-        $('miotMsg').textContent = '读取中…';
-        try {
-            var d = await api('api/devices/' + encodeURIComponent(did) + '/miot');
-            miotCache[did] = d.props || {};
-            renderMiotProps(did);
-        } catch (e) {
-            if (e.status === 401) { scheduleGateRelock(); return; }
-            $('miotMsg').textContent = '读取失败：' + e.message;
-        }
-    }
-
-    /** 按读取结果整表渲染控制项；返回该机支持/不支持摘要。 */
-    function renderMiotProps(did) {
-        var props = miotCache[did] || {};
-        var box = $('miotRows');
-        var supported = 0;
-        box.innerHTML = MIOT_CONTROLS.map(function (def) {
-            var item = props[def.key];
-            var ok = !!(item && item.code === 0 && item.value !== null && item.value !== undefined);
-            if (ok) { supported++; }
-            var opts = (def.type === 'bool' ? [['true', '开启'], ['false', '关闭']] : def.opts)
-                .map(function (o) {
-                    var selAttr = (ok && String(item.value) === o[0]) ? ' selected' : '';
-                    return '<option value="' + o[0] + '"' + selAttr + '>' + esc(o[1]) + '</option>';
-                }).join('');
-            var tag = ok ? '' : '<span class="miot-unsup-tag">不支持</span>';
-            return '<div class="miot-row' + (ok ? '' : ' unsup') + '">'
-                + '<span class="miot-label">' + esc(def.label) + tag
-                + '<small>' + esc(def.hint) + '</small></span>'
-                + '<select class="select" data-miotval="' + def.key + '"' + (ok ? '' : ' disabled') + '>' + opts + '</select>'
-                + '<button class="btn tiny primary" data-miotset="' + def.key + '" type="button"'
-                + (ok ? '' : ' disabled') + '>设置</button>'
-                + '</div>';
-        }).join('');
-        $('miotPropForm').hidden = false;
-        // 存储卡只读信息
-        var sd = props.sdStatus, total = props.sdTotal, free = props.sdFree;
-        var sdText = '—';
-        if (sd && sd.code === 0 && sd.value !== null && sd.value !== undefined) {
-            var stMap = ['正常', '未插卡', '卡已满', '卡损坏', '格式化中', '已弹出', '修复中', '弹出中', '未初始化', '空间不足', '文件异常', '不兼容'];
-            sdText = stMap[Number(sd.value)] || ('状态 ' + sd.value);
-            if (total && total.code === 0 && free && free.code === 0
-                && total.value != null && free.value != null) {
-                sdText += ' · 剩余 ' + fmtSize(Number(free.value)) + ' / ' + fmtSize(Number(total.value));
-            }
-        } else {
-            sdText = '本机型不支持存储卡状态读取';
-        }
-        $('miotSdInfo').textContent = sdText;
-        var unsupported = MIOT_CONTROLS.length - supported;
-        $('miotMsg').textContent = unsupported
-            ? '读取完成：' + supported + ' 项可控制，' + unsupported + ' 项本机型不支持（灰显）'
-            : '读取完成：全部 ' + supported + ' 项均可控制';
-    }
-
-    async function setMiotProp(did, key) {
-        var sel = document.querySelector('[data-miotval="' + key + '"]');
-        if (!sel || sel.disabled) return;
-        var def = null;
-        MIOT_CONTROLS.forEach(function (d) { if (d.key === key) def = d; });
-        if (!def) return;
-        var raw = sel.value;
-        var value = def.type === 'bool' ? raw === 'true' : Number(raw);
-        $('miotMsg').textContent = '设置中…';
-        try {
-            await api('api/devices/' + encodeURIComponent(did) + '/miot/' + encodeURIComponent(key),
-                { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ value: value }) });
-            toast('已下发', 'ok');
-            $('miotMsg').textContent = '已设置';
-            // 重新读取刷新该行显示值（云端写后读可能有短暂滞后，失败不影响设置结果）
-            loadMiotProps(did);
-        } catch (e) {
-            if (e.status === 401) { scheduleGateRelock(); return; }
-            toast('设置失败：' + e.message, 'err');
-            $('miotMsg').textContent = '设置失败：' + e.message;
-        }
     }
 
     document.querySelectorAll('.tab').forEach(function (t) {
