@@ -196,8 +196,9 @@ public class MiotSleepService {
                     // 探明休眠（含首次）：休眠中无帧可录，自动停掉残留录像
                     stopRecordingQuietly(base);
                 } else if (prev != null) {
-                    // 休眠→工作：立即唤醒取流（打断闸门挂起与退避等待）
+                    // 休眠→工作：立即唤醒取流（打断闸门挂起与退避等待），并恢复休眠前录像
                     streamHub.wakeup(base, "休眠解除", true);
+                    resumeRecordingQuietly(base);
                 }
             }
         } else {
@@ -252,21 +253,30 @@ public class MiotSleepService {
                 // 手动休眠：休眠中无帧可录，停掉残留录像
                 stopRecordingQuietly(base);
             } else {
-                // 手动唤醒：立即恢复取流（打断休眠闸门挂起）
+                // 手动唤醒：立即恢复取流（打断休眠闸门挂起），并恢复休眠前录像
                 streamHub.wakeup(base, "手动唤醒", true);
+                resumeRecordingQuietly(base);
             }
         }
     }
 
     /** 休眠时停掉该设备的残留录像（休眠中无帧可录，录像状态只会误导界面）。 */
+    /** 休眠时暂停该设备的残留录像：v2.3.1 热修改为 stopForSleep——保留「期望持续录像」
+     *  标记，唤醒后自动恢复；此前用 stop() 会把期望标记一并清掉，唤醒后永不续录。 */
     private void stopRecordingQuietly(String base) {
         try {
-            if (recordingService.isRecording(base)) {
-                recordingService.stop(base);
-                log.info("[{}] 摄像头休眠，已停止录像", base);
-            }
+            recordingService.stopForSleep(base);
         } catch (Exception e) {
             log.debug("[{}] 停止录像异常（忽略）：{}", base, e.toString());
+        }
+    }
+
+    /** v2.3.1 热修：唤醒后恢复因休眠暂停的持续录像（仅休眠暂停场景，异常忽略）。 */
+    private void resumeRecordingQuietly(String base) {
+        try {
+            recordingService.resumeAfterSleep(base);
+        } catch (Exception e) {
+            log.debug("[{}] 唤醒恢复录像异常（忽略）：{}", base, e.toString());
         }
     }
 

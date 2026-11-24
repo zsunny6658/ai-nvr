@@ -283,8 +283,9 @@ body:not(.authed) .sidenav { display: none; }
 }
 .cam-media:hover img { opacity: .92; }
 .cam-card.offline .cam-media { cursor: default; }
-.cam-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 12px 14px 0; }
-.cam-name { font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+/* v2.3.1 第十八轮排版精修：卡内文字不再贴边，拉开呼吸感与层级 */
+.cam-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 14px 16px 0; }
+.cam-name { font-size: 16px; font-weight: 600; line-height: 1.35; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
 .cam-name .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .net { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 999px; flex: none; }
 .net .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
@@ -297,19 +298,19 @@ body:not(.authed) .sidenav { display: none; }
 button.net.sleep { cursor: pointer; font: inherit; font-size: 11px; font-weight: 600; font-family: inherit; }
 button.net.sleep::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 button.net.sleep:hover { filter: brightness(1.15); }
-.cam-model { font-size: 12px; color: var(--muted); margin-top: 3px; }
-.cam-ip { font-size: 12px; color: var(--faint); font-family: Consolas, monospace; margin-top: 1px; }
-.badges { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.cam-model { font-size: 12px; color: var(--muted); margin-top: 5px; letter-spacing: .02em; }
+.cam-ip { font-size: 11px; color: var(--faint); font-family: Consolas, monospace; margin-top: 3px; }
+.badges { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; padding-top: 2px; }
 .badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; font-weight: 600; }
 .badge.live { background: var(--accent-bg); color: var(--accent-ink); border: 1px solid var(--accent-line); }
 .badge.rec { background: var(--danger-bg); color: var(--red); border: 1px solid var(--danger-line); }
 .badge.off { background: var(--chip-bg); color: var(--muted); border: 1px solid var(--line); }
-.cam-actions { display: flex; gap: 8px; margin-top: 10px; padding: 0 14px 12px; }
+.cam-actions { display: flex; gap: 8px; margin-top: 12px; padding: 0 16px 14px; }
 .cam-actions .btn { flex: 1; }
 .cam-actions .btn.probe-btn { flex: 0 0 auto; padding-left: 12px; padding-right: 12px; }
 
 /* 卡片底部：最近画面变动事件快照 */
-.cam-events { border-top: 1px solid var(--line); padding: 10px 14px 12px; }
+.cam-events { border-top: 1px solid var(--line); padding: 12px 16px 14px; background: var(--panel-2, transparent); }
 .cam-events-head { display: flex; align-items: center; justify-content: space-between; gap: 8px;
     font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 8px; }
 .cam-events-more { border: 0; background: none; padding: 2px 4px; font-size: 12px;
@@ -413,7 +414,7 @@ button.net.sleep:hover { filter: brightness(1.15); }
 .lock-chip:hover { background: var(--accent-line); color: #fff; }
 /* 摄像头卡片双行操作区：主行 预览/回放/录像文件，次行 录像开关/自检 */
 .cam-actions { display: flex; gap: 8px; margin-top: 10px; padding: 0 14px 8px; }
-.cam-actions-sub { padding: 0 14px 12px; margin-top: 0; }
+.cam-actions-sub { padding: 0 16px 14px; margin-top: 0; }
 .cam-actions .btn { flex: 1; }
 .rtsp-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .rtsp-line code { background: var(--panel-2); padding: 4px 8px; border-radius: 6px; font-size: 12px; flex: 1; min-width: 200px; word-break: break-all; }

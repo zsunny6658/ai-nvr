@@ -3734,6 +3734,24 @@
         $('btnFsExit').hidden = !(document.fullscreenElement || document.webkitFullscreenElement);
     }
 
+    /* v2.3.1 第十八轮：原生视频全屏拦截转换。部分手机内核（X5 / 夸克 / UC 等）即便
+       无 controls 属性也会擅自把 <video> 元素本身送进原生全屏——此时应用浮层不在
+       全屏元素子树内，表现为「莫名全屏 + 没有云台按钮」。监听全屏事件：发现全屏的
+       是 video 元素本身时立即退出，转为 video-wrap 应用内伪全屏（浮层可见可用）。 */
+    function guardNativeVideoFs() {
+        var fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+        if (fsEl && fsEl.id === 'previewVideo') {
+            var exit = document.exitFullscreen || document.webkitExitFullscreen;
+            try { if (exit) { exit.call(document); } } catch (e) { /* 忽略 */ }
+            setTimeout(function () {
+                $('videoWrap').classList.add('fs-fake');
+                updateFsOverlay();
+            }, 60);
+            return;
+        }
+        updateFsOverlay();
+    }
+
     function exitPreviewFullscreen(silent) {
         if ($('videoWrap').classList.contains('fs-fake')) {
             $('videoWrap').classList.remove('fs-fake');
@@ -3795,26 +3813,25 @@
         return t ? u + '?__ainvr_t=' + encodeURIComponent(t) : u;
     }
 
-    /* 线性 PCM 16bit → G.711 A-law（标准算法） */
-    /* 标准 G.711 线性 → A-law（Sun g711 算法，16bit 输入）。
-       v2.3.1 修正：旧实现对小幅负样本取段错误（-100 会解成 -8448 的大振幅），
-       摄像头端听感为满幅杂音、听不清语音。 */
-    var ALAW_SEG_END = [0x1F, 0x3F, 0x7F, 0xFF, 0x1FF, 0x3FF, 0x7FF, 0xFFF];
+    /* 标准 G.711 线性 → A-law（lalmax-nvr xiaomiTalkAudio.ts 同款算法）。
+       v2.3.1 第十八轮根修：旧版在 13bit 域对负数做「-pcm-8 + 段内移位」，
+       回环测试（编码→标准解码）显示负数全域严重失真——小幅负样本 -41 解码成
+       -248（误差 207），-31800 处误差达 568，负半周解码值跳变 → 摄像头喇叭
+       「有杂音但能听出语音轮廓」的正半周正常/负半周乱码特征。新版在 16bit
+       域编码，负数 -pcm-1，全域回环误差 ≤8（小幅区）/512（满幅，A-law 固有）。 */
     function linearToAlaw(sample) {
-        var pcm = sample >> 3; // 16bit → 13bit（A-law 运算域，算术右移）
-        var mask;
-        if (pcm >= 0) { mask = 0xD5; }
-        else { mask = 0x55; pcm = -pcm - 8; }
-        if (pcm > 0xFFF) { pcm = 0xFFF; }
-        var seg = 0;
-        while (seg < 8 && pcm > ALAW_SEG_END[seg]) { seg++; }
-        var aval;
-        if (seg >= 8) { aval = 0x7F; }
-        else {
-            aval = seg << 4;
-            aval |= (seg < 2 ? (pcm >> 1) : (pcm >> seg)) & 0xF;
+        var pcm = Math.trunc(Math.max(-32768, Math.min(32767, sample)));
+        var mask = pcm >= 0 ? 0xD5 : 0x55;
+        if (pcm < 0) { pcm = -pcm - 1; }
+        var compressed;
+        if (pcm < 256) {
+            compressed = pcm >> 4;
+        } else {
+            var exponent = 7;
+            for (var bit = 0x4000; (pcm & bit) === 0 && exponent > 0; bit >>= 1) { exponent--; }
+            compressed = (exponent << 4) | ((pcm >> (exponent + 3)) & 0x0F);
         }
-        return (aval ^ mask) & 0xFF;
+        return (compressed ^ mask) & 0xFF;
     }
 
     async function talkStart(did) {
@@ -5951,8 +5968,8 @@
         });
         $('btnFullscreen').addEventListener('click', togglePreviewFullscreen);
         $('btnFsExit').addEventListener('click', function () { exitPreviewFullscreen(false); });
-        document.addEventListener('fullscreenchange', updateFsOverlay);
-        document.addEventListener('webkitfullscreenchange', updateFsOverlay);
+        document.addEventListener('fullscreenchange', guardNativeVideoFs);
+        document.addEventListener('webkitfullscreenchange', guardNativeVideoFs);
         $('btnChaseLive').addEventListener('click', function () {
             if (!chaseLiveEdge(false)) { toast('当前已是最新画面', 'ok'); }
             updateLiveBadge();
@@ -6567,6 +6584,9 @@
         var coarsePtr = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
         var hasTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
         pv.controls = !coarsePtr && !hasTouch;
+        // v2.3.1 第十八轮：禁画中画 + 禁长按菜单，进一步堵住手机内核的接管入口
+        try { pv.disablePictureInPicture = true; } catch (e4) { /* 旧内核无此属性 */ }
+        try { pv.setAttribute('controlslist', 'nodownload noplaybackrate nofullscreen'); } catch (e5) { /* 忽略 */ }
     }
 
     /* ---------- 初始化 ---------- */

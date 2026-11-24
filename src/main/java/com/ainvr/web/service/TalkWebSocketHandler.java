@@ -124,6 +124,21 @@ public class TalkWebSocketHandler extends AbstractWebSocketHandler {
             log.warn("[{}] 对讲音频块大小异常（{} 字节），忽略", did, payload.length);
             return;
         }
+        // v2.3.1 第十八轮：上行流自证——首帧 + 每 250 帧打点，无声/杂音时能直接看出
+        // 「数据根本没到」还是「到了但设备不响」
+        java.util.concurrent.atomic.AtomicInteger af = (java.util.concurrent.atomic.AtomicInteger)
+                session.getAttributes().computeIfAbsent("audioFrames",
+                        k -> new java.util.concurrent.atomic.AtomicInteger());
+        java.util.concurrent.atomic.AtomicLong abytes = (java.util.concurrent.atomic.AtomicLong)
+                session.getAttributes().computeIfAbsent("audioBytes",
+                        k -> new java.util.concurrent.atomic.AtomicLong());
+        int frameCount = af.incrementAndGet();
+        long totalBytes = abytes.addAndGet(payload.length);
+        if (frameCount == 1) {
+            log.info("[{}] 对讲首帧上行（{} 字节，codec={}）", did, payload.length, speaker.codec());
+        } else if (frameCount % 250 == 0) {
+            log.info("[{}] 对讲上行进行中：累计 {} 帧 / {} 字节", did, frameCount, totalBytes);
+        }
         try {
             if (Boolean.TRUE.equals(session.getAttributes().get("opus"))) {
                 // OPUS 帧：前端按 40ms 帧编码后一帧一消息，设备按帧边界解码，直接透传

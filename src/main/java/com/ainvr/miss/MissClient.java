@@ -126,6 +126,22 @@ public final class MissClient implements AutoCloseable {
                                 lastSpeakerReplyAt = System.currentTimeMillis();
                                 detail += " 扬声器应答：" + reply;
                                 log.info("MISS 扬声器设备应答 0x107：{}", reply);
+                            } else if (inner == MissCommands.CMD_GET_AUDIO_FORMAT_RES) {
+                                // v2.3.1 第十八轮：0x10B 设备音频格式应答——开源界均未解析该命令，
+                                // 仅记 hex 与 LE32 序列作真机诊断（无声/杂音机型差异排查）
+                                byte[] body = plain.length > 4
+                                        ? Arrays.copyOfRange(plain, 4, plain.length) : new byte[0];
+                                StringBuilder hexb = new StringBuilder();
+                                for (byte b : body) { hexb.append(String.format("%02x", b)); }
+                                StringBuilder words = new StringBuilder();
+                                for (int i = 0; i + 4 <= body.length; i += 4) {
+                                    long le = (body[i] & 0xFFL) | ((body[i + 1] & 0xFFL) << 8)
+                                            | ((body[i + 2] & 0xFFL) << 16) | ((body[i + 3] & 0xFFL) << 24);
+                                    words.append(le).append(' ');
+                                }
+                                log.info("MISS 音频格式应答 0x10C：hex={}（LE32 序列：{}）",
+                                        hexb, words.length() > 0 ? words.toString().trim() : "（空）");
+                                detail += " 音频格式：" + hexb;
                             } else if (inner != 0x114 && plain.length > 4) {
                                 detail += " 明文：" + readableUtf8(plain, 4);
                             }
@@ -299,6 +315,16 @@ public final class MissClient implements AutoCloseable {
         lastSpeakerCommandAt = System.currentTimeMillis();
         writeEncrypted(outer);
         log.info("MISS SpeakerStart 0x106 已发送（对讲上行开始）");
+        // v2.3.1 第十八轮：顺带查询设备音频格式（0x10B），应答 0x10C 记录到日志，
+        // 用于对讲无声/杂音的机型差异诊断（不影响主流程，发送失败仅记 debug）
+        try {
+            byte[] q = new byte[4];
+            putBe32(q, MissCommands.CMD_GET_AUDIO_FORMAT_REQ);
+            writeEncrypted(q);
+            log.info("MISS 音频格式查询 0x10B 已发送");
+        } catch (Exception qe) {
+            log.debug("MISS 音频格式查询 0x10B 发送失败（忽略）：{}", qe.toString());
+        }
     }
 
     /** 关闭扬声器会话（SpeakerStop 0x108，无 body）。 */

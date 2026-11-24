@@ -31,7 +31,7 @@ class StaticAssetContractTest {
 
         assertTrue(html.contains("btnPreviewBack"), "预览弹层缺少应用内返回按钮");
         assertTrue(html.contains("btnPlayerBack"), "回放弹层缺少应用内返回按钮");
-        assertTrue(html.contains("v=83"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
+        assertTrue(html.contains("v=84"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
         // v2.3.1 真机验证第五轮：主题快捷按钮两态 + 选目录自动授权 + 内置权限面板
         assertTrue(js.contains("trimAuthorizePath"), "缺少选目录自动授权逻辑");
         assertTrue(js.contains("authorizeUserFile"), "缺少用户空间授权调用");
@@ -44,6 +44,12 @@ class StaticAssetContractTest {
         assertTrue(html.contains("btn tiny sdk-only\" id=\"btnOpenAppPerm\""), "打开系统授权页按钮应保留 sdk-only");
         assertTrue(js.contains("refreshPermStatus();"), "进入存储分组应无条件刷新权限状态（不限飞牛宿主）");
         assertTrue(js.contains("应用中心 → 本应用 → 设置 → 存储管理"), "独立浏览器未授权时应有文字授权指引");
+        // v2.3.1 真机验证第十八轮回归锁
+        assertTrue(js.contains("pcm = -pcm - 1"), "A-law 编码负数应为 -pcm-1（旧版 -pcm-8 负半周失真致杂音）");
+        assertFalse(js.contains("-pcm - 8"), "A-law 编码不得残留旧版 -pcm-8 分支");
+        assertTrue(js.contains("guardNativeVideoFs"), "应有原生视频全屏拦截转换（手机莫名全屏+无云台浮层）");
+        assertTrue(js.contains("disablePictureInPicture"), "预览视频应禁画中画");
+        assertTrue(css.contains("padding: 14px 16px 0"), "设备卡文字区应留足内边距（不贴边）");
         assertFalse(js.contains("'light' ? 'auto' : 'dark'"), "侧栏主题快捷按钮不应循环到跟随系统");
         // v2.3.1 第四轮性能修复：解锁懒加载录像列表 + 分组增量渲染 + 回放换段预载修复
         assertTrue(js.contains("maybeSwapEarly"), "缺少回放边界提前交接逻辑");
@@ -124,7 +130,7 @@ class StaticAssetContractTest {
         assertTrue(js.contains("api/settings/device-order"), "缺少摄像头顺序端点调用");
         assertTrue(js.contains("q-move"), "设置页缺少摄像头调序按钮标记");
         assertFalse(html.contains("x5-video-player-fullscreen"), "预览不应保留 X5 强制全屏属性");
-        assertTrue(js.contains("ALAW_SEG_END"), "缺少标准 G.711 A-law 编码实现");
+        assertTrue(js.contains("linearToAlaw"), "缺少标准 G.711 A-law 编码实现");
         assertTrue(css.contains(".q-no"), "缺少摄像头编号样式");
         // v2.3.1 回放自定义控制 + 事件页更多操作收纳 + 设置宽卡
         assertTrue(html.contains("btnPbPlay"), "回放缺少自定义播放按钮");

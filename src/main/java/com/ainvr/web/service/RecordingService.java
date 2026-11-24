@@ -90,6 +90,12 @@ public class RecordingService {
     /** v1.2.21 录像目录容量水位（占该卷总容量百分比，0=关闭循环覆盖），volatile；设置页可改。 */
     private volatile int waterPercent;
     private final Map<String, RecordingSink> active = new ConcurrentHashMap<>();
+    /**
+     * v2.3.1 热修：因摄像头休眠而<b>暂停</b>持续录像的 DID 集合。
+     * 休眠停录像只解除订阅、保留「期望持续录像」标记；本集合防止 reconcile
+     * 在休眠期间把订阅拉起来（否则会打断休眠取流闸门）。唤醒时移除并恢复。
+     */
+    private final Set<String> sleepPaused = ConcurrentHashMap.newKeySet();
 
     public RecordingService(NvrProperties props, StreamHub hub, CameraConnector connector,
                             RecordingStateStore stateStore, AppSettingsStore settingsStore) {
@@ -190,6 +196,49 @@ public class RecordingService {
                 "videoPackets", sink.videoPackets(), "segments", sink.segmentCount());
     }
 
+    /**
+     * v2.3.1 热修：摄像头休眠时自动暂停录像——只解除订阅并封段，<b>保留</b>「期望持续录像」
+     * 标记，并记入 {@code sleepPaused}（reconcile 休眠期间跳过，避免打断休眠取流闸门）。
+     * 唤醒后由 {@link #resumeAfterSleep(String)} 恢复；用户显式停止仍走 {@link #stop}。
+     */
+    public synchronized void stopForSleep(String did) {
+        RecordingSink sink = detach(did);
+        if (sink == null) {
+            return;
+        }
+        if (isPersistentRecording(did)) {
+            sleepPaused.add(did);
+            log.info("[{}] 摄像头休眠，暂停持续录像（保留期望标记，唤醒后自动恢复）", did);
+        } else {
+            log.info("[{}] 摄像头休眠，已停止录像", did);
+        }
+    }
+
+    /**
+     * v2.3.1 热修：摄像头唤醒后恢复因休眠暂停的持续录像。
+     * 仅当该设备确实处于「休眠暂停」且期望状态仍在时介入；失败不抛错（reconcile 下一轮重试）。
+     */
+    public synchronized void resumeAfterSleep(String did) {
+        if (!sleepPaused.remove(did)) {
+            return;
+        }
+        Long seg = null;
+        try {
+            seg = stateStore.cameras().get(did);
+        } catch (Exception e) {
+            log.debug("[{}] 唤醒恢复录像：读取期望状态失败（{}），交由对账重试", did, e.toString());
+        }
+        if (seg == null || active.containsKey(did)) {
+            return;
+        }
+        try {
+            start(did, seg);
+            log.info("[{}] 摄像头唤醒，已自动恢复持续录像", did);
+        } catch (Exception e) {
+            log.debug("[{}] 唤醒恢复录像暂未成功，交由对账重试：{}", did, e.toString());
+        }
+    }
+
     /** 该 DID 是否被用户显式设为"持续录像"（自动录像状态机不应介入或停止它）。 */
     public boolean isPersistentRecording(String did) {
         try {
@@ -250,6 +299,11 @@ public class RecordingService {
         for (Map.Entry<String, Long> e : wanted.entrySet()) {
             String did = e.getKey();
             if (active.containsKey(did)) {
+                continue;
+            }
+            // v2.3.1 热修：休眠暂停中的设备不拉起订阅（否则会打断休眠取流闸门），
+            // 唤醒时由 resumeAfterSleep 恢复
+            if (sleepPaused.contains(did)) {
                 continue;
             }
             try {
