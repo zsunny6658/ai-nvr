@@ -3634,6 +3634,7 @@
        「播放 → ended → 携带 from 续取」，实现与 HLS 同源的内联直播。连续取片失败 3 次自动
        退回原生 HLS（仍有全屏接受/退出降级链路兜底）。 */
     function stopLiveRoll() {
+        stopLiveMms(); // v2.3.1 第二十六轮：MMS 会话与滚动会话互斥，换路径时一并清理
         var roll = state.liveRoll;
         if (!roll) { return; }
         state.liveRoll = null;
@@ -3641,6 +3642,119 @@
         var v = $('previewVideo');
         if (v) { v.onended = null; }
         if (roll.blobUrl) { try { URL.revokeObjectURL(roll.blobUrl); } catch (e) { /* 忽略 */ } roll.blobUrl = null; }
+    }
+
+    /* ==================== v2.3.1 第二十六轮：iPhone 内联直播成熟方案 ====================
+       【根因】live.mp4 滚动用 video.src=blob:——blob URL 属「URL 资源加载」路径，
+       iOS 直接交 AVPlayer → 系统全屏（webkitbeginfullscreen 日志实锤）。go2rtc 源码
+       为此宁可用「隐藏 video 解码 + canvas 抓帧贴 poster」也绝不把 fMP4 设给 src。
+       【成熟方案】go2rtc / Frigate 的 mse 模式：ManagedMediaSource（iOS 17.1+ 唯一
+       MediaSource API，W3C 规范无 [SecureContext]，HTTP 局域网可用）通过
+       video.srcObject=ms 挂接 + disableRemotePlayback=true 激活，fMP4 字节经
+       /ws/live/{did} 推送、JS appendBuffer 喂入——彻底绕开 URL 资源加载。 */
+    function stopLiveMms() {
+        var sess = state.liveMms;
+        if (!sess) { return; }
+        state.liveMms = null;
+        sess.stopped = true;
+        if (sess.ws) { try { sess.ws.close(); } catch (e) { /* 忽略 */ } sess.ws = null; }
+        var v = $('previewVideo');
+        if (v) { try { v.srcObject = null; } catch (e) { /* 忽略 */ } }
+    }
+
+    function liveWsUrl(did) {
+        var base = location.pathname.replace(/[^/]*$/, '');
+        var proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
+        var u = proto + location.host + base + 'ws/live/' + encodeURIComponent(did);
+        var t = getToken();
+        return t ? u + '?__ainvr_t=' + encodeURIComponent(t) : u;
+    }
+
+    function mountPreviewMms(video, did) {
+        var MMS = window.ManagedMediaSource;
+        if (!MMS || !MMS.isTypeSupported) { return false; }
+        // HlsSink 产 hvc1（HEVC 机型）或 avc1（H.264 机型）+ AAC 音轨；按设备支持取 mime
+        var mimes = ['video/mp4; codecs="hvc1.1.6.L93.B0,mp4a.40.2"',
+            'video/mp4; codecs="hvc1.1.6.L153.B0,mp4a.40.2"',
+            'video/mp4; codecs="avc1.640029,mp4a.40.2"'];
+        var mime = null;
+        for (var i = 0; i < mimes.length; i++) {
+            if (MMS.isTypeSupported(mimes[i])) { mime = mimes[i]; break; }
+        }
+        if (!mime) { return false; }
+        try { video.disableRemotePlayback = true; } catch (e) { /* 忽略 */ }
+        var ms = new MMS();
+        var sess = { ms: ms, ws: null, sb: null, queue: [], stopped: false };
+        state.liveMms = sess;
+        video.srcObject = ms; // ← 关键：绝不用 video.src = blob URL（那是全屏路径）
+
+        ms.addEventListener('sourceopen', function () {
+            if (sess.stopped) { return; }
+            try {
+                sess.sb = ms.addSourceBuffer(mime);
+                sess.sb.mode = 'segments';
+                sess.sb.addEventListener('updateend', function () {
+                    pumpMms(sess);
+                    // 滑动窗口修剪：只留最近 ~30s，防 SourceBuffer 无限增长
+                    try {
+                        var b = sess.sb.buffered;
+                        if (b.length && b.end(b.length - 1) - 30 > b.start(0) && !sess.sb.updating) {
+                            sess.sb.remove(b.start(0), b.end(b.length - 1) - 30);
+                        }
+                    } catch (e2) { /* 忽略 */ }
+                });
+                pumpMms(sess);
+            } catch (e3) {
+                mmsFail(video, did, sess, 'SourceBuffer 创建失败');
+                return;
+            }
+            startLiveMmsWs(video, did, sess);
+        }, { once: true });
+
+        var p = video.play(); if (p && p.catch) { p.catch(function () { /* MMS 激活后重试 */ }); }
+        return true;
+    }
+
+    function pumpMms(sess) {
+        if (!sess.sb || sess.sb.updating || !sess.queue.length || sess.stopped) { return; }
+        var u8 = sess.queue.shift();
+        try { sess.sb.appendBuffer(u8); } catch (e) { sess.queue.unshift(u8); }
+    }
+
+    function startLiveMmsWs(video, did, sess) {
+        var ws = new WebSocket(liveWsUrl(did));
+        ws.binaryType = 'arraybuffer';
+        sess.ws = ws;
+        ws.onmessage = function (ev) {
+            if (typeof ev.data === 'string') {
+                // {"live":false}：设备离线/直播中断
+                if (!sess.stopped && state.previewDid === did && !$('previewModal').hidden) {
+                    mmsFail(video, did, sess, '直播中断');
+                }
+                return;
+            }
+            sess.queue.push(new Uint8Array(ev.data));
+            pumpMms(sess);
+            // 首包到达后补一次 play（MMS sourceopen 后才能起播）
+            if (video.paused) {
+                var p = video.play(); if (p && p.catch) { p.catch(function () {}); }
+            }
+        };
+        ws.onclose = ws.onerror = function () {
+            if (sess.stopped || state.previewDid !== did || !$('previewModal') || $('previewModal').hidden) { return; }
+            mmsFail(video, did, sess, 'WS 断开');
+        };
+    }
+
+    /** MMS 失败降级链：live.mp4 滚动 → 原生 HLS（仍有全屏接受/退出兜底）。 */
+    function mmsFail(video, did, sess, why) {
+        if (sess && !sess.stopped) { stopLiveMms(); }
+        reportClientDiag('mms_fail', 'did=' + did + ' why=' + why);
+        var c = findDevice(did);
+        if (!c || !$('previewModal') || $('previewModal').hidden || state.previewDid !== did) { return; }
+        if (!startLiveMp4Roll(video, withToken(c.hlsUrl))) {
+            mountNativeHls(video, withToken(c.hlsUrl));
+        }
     }
 
     function startLiveMp4Roll(video, url) {
@@ -3692,7 +3806,18 @@
        'live-mp4' / null（原生）/ undefined（不支持）。
        MSE 路径完全是应用内 <video> 播放，从根上消灭系统全屏。 */
     function mountPreviewPlayer(video, url) {
-        stopLiveRoll(); // 换路径/重挂载时先停掉旧的 live.mp4 滚动会话
+        stopLiveRoll(); // 换路径/重挂载时先停掉旧的直播会话（MMS / live.mp4 滚动）
+        // v2.3.1 第二十六轮：纯 MMS 环境（iPhone——经典 MediaSource 不存在，仅
+        // ManagedMediaSource）优先走 srcObject + WS 推流成熟路径（go2rtc mse 模式）。
+        // 必须放在 hls.js 判定之前：hls.js ≥1.5 在 iPhone 上 isSupported() 同样为真，
+        // 但其 MMS 激活时机我们无法控制；Mac Safari 等双 API 平台不受影响，仍走 hls.js。
+        var didM = /hls\/([^\/?]+)\/index\.m3u8/.exec(url || '');
+        if (didM && 'ManagedMediaSource' in window && !window.MediaSource) {
+            if (mountPreviewMms(video, didM[1])) {
+                reportMountPath('mms');
+                return 'mms';
+            }
+        }
         if (window.Hls && Hls.isSupported()) {
             // v2.3.1 第二十三轮：MMS 硬性要求——iPhone 上 ManagedMediaSource 必须在
             // disableRemotePlayback=true（或提供 AirPlay 备选源）时才激活 sourceopen，
@@ -4020,13 +4145,19 @@
         updateFsOverlay();
     }
 
-    /* ==================== v2.3.1 对讲喊话 ====================
-       浏览器麦克风 → 8kHz 重采样 → G.711 A-law（或 hlc6 线性 PCM）编码 →
-       WebSocket 二进制上行 → 服务端 MISS CS2 通道 3 → 摄像头扬声器。
-       复用当前取流会话（0x106/0x108），不新增摄像头连接。 */
+    /* ==================== v2.3.1 对讲喊话（第二十六轮：成熟方案重写） ====================
+       后端 MISS 协议（0x106/0x108 经 0x1001 加密、codec 1027 PCMA、CS2 通道 3、
+       ChaCha20 + 32B 小端头、1s 预热、40ms/320B 帧）已与 go2rtc / lalmax-nvr 逐字节
+       对齐，真机日志确认设备应答 0x107=0、音频格式 g711a——后端无问题。
+       【根因】此前 AudioContext 在 ws.onmessage 回调里创建，早已脱离用户点击手势，
+       iOS WKWebView / Chrome 判为自动播放而挂起（suspended），采集回调永不触发 →
+       真机日志实锤：喊话会话只发 1 帧甚至 0 帧，设备 1s 无音频自动关扬声器 → 无声。
+       【成熟方案】① AudioContext 在点击手势内同步创建 + resume()；② AudioWorklet
+       （替代已废弃且会被 WKWebView 节流的 ScriptProcessor）稳定采集；③ 按设备 codec
+       产出严格 40ms 帧；④ 40ms 恒速发送，静默期补 A-law 静音帧保持扬声器常开。 */
     var talk = { ws: null, ctx: null, stream: null, node: null, src: null, gain: null,
         active: false, did: null, linearPcm: false, opus: false, enc: null, opusFrame: null, opusUsed: 0, opusTs: 0,
-        buf: null,
+        buf: null, rate: 0, workletUrl: null,
         pool: null, queue: null, pacer: null, dc: 0, acc: null, accPos: 0 };
 
     function talkTip(text, kind) {
@@ -4071,9 +4202,34 @@
             setPtzStatus('当前浏览器不支持麦克风访问（需 HTTPS 或 localhost 环境）', 'err');
             return;
         }
+        // 【第二十六轮根修】AudioContext 必须在用户点击手势的同步调用栈内创建并 resume()。
+        // 放到 ws.onmessage 里创建会脱离手势 → iOS WKWebView 将 context 置为 suspended，
+        // 音频采集回调永不触发（真机日志：0 帧上行）。此处先探测该机型目标采样率。
+        var Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) {
+            setPtzStatus('当前浏览器不支持 Web Audio（对讲需要 AudioContext）', 'err');
+            return;
+        }
+        var wantRate = 8000;
+        try {
+            // codec 判断与服务端 speakerCodecFor 一致：hlc6=PCM(8k)，72ac1=OPUS(48k)，其余 PCMA(8k)
+            var m = findDevice(did);
+            var model = m ? m.model : '';
+            if (model === 'chuangmi.camera.72ac1') { wantRate = 48000; }
+            try { talk.ctx = new Ctx({ sampleRate: wantRate }); }
+            catch (eRate) { talk.ctx = new Ctx(); }
+            talk.rate = talk.ctx.sampleRate || wantRate;
+            // resume 必须同步发起（不 await），保持手势链
+            var rp = talk.ctx.resume();
+            if (rp && rp.catch) { rp.catch(function () {}); }
+        } catch (eCtx) {
+            setPtzStatus('无法创建音频上下文：' + eCtx.message, 'err');
+            talkCleanup();
+            return;
+        }
         try {
             talk.stream = await navigator.mediaDevices.getUserMedia({
-                audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+                audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: false }
             });
         } catch (e) {
             setPtzStatus('无法访问麦克风：' + e.message + '（浏览器需 HTTPS/localhost 才允许麦克风）', 'err');
@@ -4119,54 +4275,40 @@
 
     function talkStartMic() {
         try {
-            var Ctx = window.AudioContext || window.webkitAudioContext;
-            var ctx = null, rate = 0;
-            if (talk.opus) {
-                // 72ac1 等 OPUS 机型：48kHz 上下文 + WebCodecs AudioEncoder（lalmax 同款）
-                try { ctx = new Ctx({ sampleRate: 48000 }); rate = ctx.sampleRate; } catch (eOp) { ctx = null; }
-                if (!ctx || rate !== 48000) {
-                    setPtzStatus('该机型对讲需要浏览器支持 48kHz 音频上下文（WebCodecs）', 'err');
-                    talkStop(true);
-                    return;
-                }
-            } else {
-                // v2.3.1 第十六轮（对照 go2rtc / lalmax-nvr 参考实现重写）：
-                // 首选 8000Hz 采集上下文——设备扬声器即 8kHz，浏览器原生重采样自带
-                // 高质量低通，样本零抽取直发（lalmax 同款做法）。此前 16kHz 上下文
-                // + 成对平均在部分内核不生效时静默掉进 48k 线性插值兜底，无低通
-                // 抗混叠 → 高频折回 → 摄像头喇叭满幅杂音。
-                try { ctx = new Ctx({ sampleRate: 8000 }); rate = ctx.sampleRate; } catch (e0) { ctx = null; }
-                if (!ctx || rate !== 8000) {
-                    if (ctx) { try { ctx.close(); } catch (e0c) { /* 忽略 */ } ctx = null; }
-                    try { ctx = new Ctx({ sampleRate: 16000 }); rate = ctx.sampleRate; } catch (e1) { ctx = null; }
-                    if (ctx && rate !== 16000 && rate !== 8000) {
-                        // 内核不支持自定义采样率：用默认上下文 + 兜底重采样
-                        try { ctx.close(); } catch (e1c) { /* 忽略 */ }
-                        ctx = new Ctx();
-                        rate = ctx.sampleRate || 16000;
-                    }
-                }
+            // 【第二十六轮】复用 talkStart 在用户手势内已创建并 resume 的上下文。
+            // 绝不可在此 new AudioContext()——此处已在 ws.onmessage 里，脱离手势。
+            var ctx = talk.ctx;
+            var rate = talk.rate || (ctx && ctx.sampleRate) || 8000;
+            if (!ctx) {
+                setPtzStatus('音频上下文不可用，请重新点击喊话', 'err');
+                talkStop(true);
+                return;
             }
-            talk.ctx = ctx;
+            if (talk.opus && rate !== 48000) {
+                setPtzStatus('该机型对讲需要 48kHz 音频上下文（当前 ' + rate + 'Hz）', 'err');
+                talkStop(true);
+                return;
+            }
+            // 兜底：若 resume 时尚未激活（部分内核异步生效），再补一次
+            var rp2 = ctx.resume(); if (rp2 && rp2.catch) { rp2.catch(function () {}); }
+            reportClientDiag('talk_capture', 'rate=' + rate + ' state=' + ctx.state
+                + ' worklet=' + !!(ctx.audioWorklet && window.AudioWorkletNode)
+                + ' ua=' + navigator.userAgent.slice(0, 60));
             talk.acc = [];
             talk.accPos = 0;
             talk.pool = [];   // 非 8kHz 上下文时的原始样本池
             talk.queue = [];  // 40ms 整块队列（匀速发送）
             talk.src = ctx.createMediaStreamSource(talk.stream);
-            talk.node = ctx.createScriptProcessor(1024, 1, 1);
-            if (talk.opus) {
-                setupOpusEncoder();
-            }
-            talk.node.onaudioprocess = function (e) {
+            if (talk.opus) { setupOpusEncoder(); }
+
+            // 采样 → 设备 codec 帧（A-law / 线性 PCM / OPUS）。AudioWorklet 与
+            // ScriptProcessor 两条采集路径共用，绝不出现编码逻辑分叉。
+            function processTalkInput(input) {
                 if (!talk.active || !talk.ws || talk.ws.readyState !== 1) { return; }
-                var input = e.inputBuffer.getChannelData(0);
-                if (talk.opus) {
-                    feedOpusSamples(input);
-                    return;
-                }
+                talk.lastAudioAt = Date.now();
+                if (talk.opus) { feedOpusSamples(input); return; }
                 var out = [];
                 if (rate === 8000) {
-                    // 主路径：上下文即 8kHz，样本直接可用，只做 DC 高通去底噪
                     for (var i = 0; i < input.length; i++) {
                         talk.dc += (input[i] - talk.dc) * 0.01;
                         out.push(input[i] - talk.dc);
@@ -4175,15 +4317,12 @@
                     var pool = talk.pool;
                     for (var p = 0; p < input.length; p++) { pool.push(input[p]); }
                     if (rate === 16000) {
-                        // 2:1 成对平均（[0.5,0.5] FIR，8k Nyquist 处有零点，抗混叠）
                         while (pool.length >= 2) {
                             var s16 = (pool.shift() + pool[0]) * 0.5;
                             talk.dc += (s16 - talk.dc) * 0.01;
                             out.push(s16 - talk.dc);
                         }
                     } else {
-                        // 兜底：上下文不支持 8k/16k（旧 iOS 等），整数倍滑动平均低通
-                        // + 带窗线性插值抽取到 8kHz（先滤后抽，抑制混叠）
                         var step = rate / 8000;
                         var acc = pool, pos = talk.accPos;
                         var i0, f;
@@ -4201,14 +4340,12 @@
                 }
                 if (!out.length) { return; }
                 if (talk.linearPcm) {
-                    // hlc6：16bit 小端线性 PCM，每 40ms 640 字节
                     var pcm = new Int16Array(out.length);
                     for (var m = 0; m < out.length; m++) {
                         pcm[m] = Math.max(-32768, Math.min(32767, Math.round(out[m] * 32767)));
                     }
                     pushTalkChunk(new Uint8Array(pcm.buffer), 640);
                 } else {
-                    // 绝大多数机型：G.711 A-law 8kHz，每 40ms 320 字节
                     var bytes = new Uint8Array(out.length);
                     for (var k = 0; k < out.length; k++) {
                         var sv = Math.max(-32768, Math.min(32767, Math.round(out[k] * 32767)));
@@ -4216,25 +4353,65 @@
                     }
                     pushTalkChunk(bytes, 320);
                 }
-            };
-            talk.src.connect(talk.node);
-            // 经零增益节点接到 destination：保证 ScriptProcessor 持续回调，又不把麦克风
-            // 声音外放（手机扬声器外放会被麦克风再次拾音造成回声啸叫）
+            }
+
+            // 零增益节点接到 destination：保证音频图持续渲染，又不外放麦克风声音
+            // （外放会被麦克风二次拾音造成啸叫）。两条采集路径都走这里。
             talk.gain = ctx.createGain();
             talk.gain.gain.value = 0;
-            talk.node.connect(talk.gain);
-            talk.gain.connect(ctx.destination);
+
+            function attachScriptProcessor() {
+                talk.node = ctx.createScriptProcessor(1024, 1, 1);
+                talk.node.onaudioprocess = function (e) {
+                    processTalkInput(e.inputBuffer.getChannelData(0));
+                };
+                talk.src.connect(talk.node);
+                talk.node.connect(talk.gain);
+                talk.gain.connect(ctx.destination);
+            }
+            // 【成熟方案】AudioWorklet 优先：运行在音频渲染线程，不受主线程卡顿/节流影响；
+            // 老 WebView 无 AudioWorklet 时回退 ScriptProcessor。
+            function attachWorklet() {
+                var code = 'class TalkCapture extends AudioWorkletProcessor{'
+                    + 'process(inputs){var c=inputs[0]&&inputs[0][0];'
+                    + 'if(c&&c.length){this.port.postMessage(new Float32Array(c));}'
+                    + 'return true;}}registerProcessor("ainvr-talk-capture",TalkCapture);';
+                var url = URL.createObjectURL(new Blob([code], { type: 'application/javascript' }));
+                return ctx.audioWorklet.addModule(url).then(function () {
+                    talk.workletUrl = url;
+                    if (!talk.active) { return; }
+                    talk.node = new AudioWorkletNode(ctx, 'ainvr-talk-capture');
+                    talk.node.port.onmessage = function (e) { processTalkInput(e.data); };
+                    talk.src.connect(talk.node);
+                    talk.node.connect(talk.gain);
+                    talk.gain.connect(ctx.destination);
+                });
+            }
+            if (ctx.audioWorklet && window.AudioWorkletNode && window.Blob && URL.createObjectURL) {
+                attachWorklet().catch(function () { if (talk.active) { attachScriptProcessor(); } });
+            } else {
+                attachScriptProcessor();
+            }
+
             if (!talk.opus) {
-                // 40ms 匀速发送——ScriptProcessor 回调天然抖动，直发会让设备侧播放
-                // 忽快忽慢（机械感杂音）；队列积压 ≥3 块时双发追赶。
-                // OPUS 路径按 40ms 帧在编码器输出侧即时发送，无需节奏器。
+                // 40ms 恒速发送；静默期补 A-law 静音帧(0xD5)，保持设备扬声器常开。
+                // MISS 语义（go2rtc README）：>1s 无被接收音频会自动关闭扬声器，
+                // 下一帧音频再自动打开——补静音帧消除「开口第一字被吞」。
+                talk.lastAudioAt = Date.now();
                 talk.pacer = setInterval(function () {
                     if (!talk.active || !talk.ws || talk.ws.readyState !== 1) { return; }
                     var q = talk.queue;
-                    if (!q.length) { return; }
                     var n = q.length >= 3 ? 2 : 1;
                     while (n-- > 0 && q.length) {
                         talk.ws.send(q.shift().buffer);
+                        talk.lastAudioAt = Date.now();
+                    }
+                    if (!q.length && Date.now() - talk.lastAudioAt > 600) {
+                        var sz = talk.linearPcm ? 640 : 320;
+                        var silence = new Uint8Array(sz);
+                        if (!talk.linearPcm) { silence.fill(0xD5); } // G.711 A-law 静音字节
+                        talk.ws.send(silence.buffer);
+                        talk.lastAudioAt = Date.now();
                     }
                 }, 40);
             }
@@ -4313,7 +4490,12 @@
     }
 
     function talkCleanup() {
-        if (talk.node) { try { talk.node.disconnect(); } catch (e) { /* 忽略 */ } talk.node = null; }
+        if (talk.node) {
+            if (talk.node.port) { try { talk.node.port.onmessage = null; } catch (e) { /* 忽略 */ } }
+            try { talk.node.disconnect(); } catch (e) { /* 忽略 */ }
+            if (talk.node.onaudioprocess) { talk.node.onaudioprocess = null; }
+            talk.node = null;
+        }
         if (talk.gain) { try { talk.gain.disconnect(); } catch (e) { /* 忽略 */ } talk.gain = null; }
         if (talk.src) { try { talk.src.disconnect(); } catch (e) { /* 忽略 */ } talk.src = null; }
         if (talk.enc) { try { if (talk.enc.state !== 'closed') { talk.enc.close(); } } catch (e) { /* 忽略 */ } talk.enc = null; }
@@ -4324,12 +4506,15 @@
         if (talk.ctx) { try { talk.ctx.close(); } catch (e) { /* 忽略 */ } talk.ctx = null; }
         if (talk.stream) { talk.stream.getTracks().forEach(function (t) { t.stop(); }); talk.stream = null; }
         if (talk.pacer) { clearInterval(talk.pacer); talk.pacer = null; }
+        if (talk.workletUrl) { try { URL.revokeObjectURL(talk.workletUrl); } catch (e) { /* 忽略 */ } talk.workletUrl = null; }
         talk.buf = null;
         talk.pool = null;
         talk.queue = null;
         talk.dc = 0;
         talk.acc = null;
         talk.accPos = 0;
+        talk.rate = 0;
+        talk.lastAudioAt = 0;
     }
 
     function talkStop(silent) {

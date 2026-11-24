@@ -31,7 +31,19 @@ class StaticAssetContractTest {
 
         assertTrue(html.contains("btnPreviewBack"), "预览弹层缺少应用内返回按钮");
         assertTrue(html.contains("btnPlayerBack"), "回放弹层缺少应用内返回按钮");
-        assertTrue(html.contains("v=90"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
+        assertTrue(html.contains("v=91"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
+        // v2.3.1 第二十六轮回归锁：iPhone 预览成熟方案（ManagedMediaSource via srcObject）
+        assertTrue(js.contains("function mountPreviewMms") && js.contains("video.srcObject = ms"),
+                "iPhone 纯 MMS 环境必须走 srcObject 挂接（video.src=blob: 是 AVPlayer 全屏路径）");
+        assertTrue(js.contains("ws/live/") , "MMS 数据源应为 /ws/live/{did} WS 推流");
+        assertTrue(js.indexOf("if (didM && 'ManagedMediaSource' in window") < js.indexOf("if (window.Hls && Hls.isSupported())"),
+                "纯 MMS 环境（iPhone）判定必须先于 hls.js（其 isSupported 在 iPhone 亦为真）");
+        assertTrue(js.contains("function stopLiveMms") && js.contains("stopLiveMms(); // v2.3.1 第二十六轮"),
+                "换路径/关预览必须停掉 MMS 会话（防僵尸 WS）");
+        // v2.3.1 第二十六轮回归锁：对讲成熟方案（手势内 AudioContext + AudioWorklet + 静音保活）
+        assertTrue(js.contains("talk.ctx = new Ctx("), "AudioContext 必须在用户手势内创建（ws.onmessage 里创建会 suspended → 0 帧）");
+        assertTrue(js.contains("ainvr-talk-capture"), "采集应优先 AudioWorklet（ScriptProcessor 已废弃且 WKWebView 节流）");
+        assertTrue(js.contains("silence.fill(0xD5)"), "静默期应补发 A-law 静音帧保持设备扬声器常开（>1s 无音频自动关）");
         // v2.3.1 真机验证第五轮：主题快捷按钮两态 + 选目录自动授权 + 内置权限面板
         assertTrue(js.contains("trimAuthorizePath"), "缺少选目录自动授权逻辑");
         assertTrue(js.contains("authorizeUserFile"), "缺少用户空间授权调用");
@@ -200,14 +212,14 @@ class StaticAssetContractTest {
         assertTrue(css.contains("#previewVideo::-webkit-media-controls"),
                 "触屏端应有 webkit 媒体控件 CSS 兜底隐藏");
         // v2.3.1 真机验证第十一轮续：对讲音质修复 + 全屏悬浮控制
-        assertTrue(js.contains("new Ctx({ sampleRate: 16000 })"), "对讲应请求 16kHz 采集上下文（浏览器抗混叠重采样）");
+        assertTrue(js.contains("var wantRate = 8000"), "对讲应按机型目标采样率建上下文（PCMA 8k / OPUS 48k，浏览器不支持时兜底重采样）");
         assertTrue(js.contains("pool.shift() + pool[0]) * 0.5"), "16k→8k 应相邻平均（Nyquist 零点抗混叠）而非纯线性插值");
         assertTrue(js.contains("setInterval"), "对讲应有 40ms 匀速发送节奏器");
         // v2.3.1 第十六轮：8kHz 上下文主路径（对齐 go2rtc/lalmax）+ OPUS 机型 WebCodecs
-        assertTrue(js.contains("new Ctx({ sampleRate: 8000 })"), "对讲应首选 8kHz 采集上下文（设备扬声器原生采样率）");
+        assertTrue(js.contains("var wantRate = 8000"), "对讲应首选 8kHz 采集上下文（设备扬声器原生采样率）");
         assertTrue(js.contains("talk.opus = msg.codec === 1032") && js.contains("new window.AudioEncoder"),
                 "OPUS 机型（72ac1）应有 WebCodecs 编码路径");
-        assertTrue(js.contains("new Ctx({ sampleRate: 48000 })"), "OPUS 机型应请求 48kHz 采集上下文");
+        assertTrue(js.contains("wantRate = 48000"), "OPUS 机型（72ac1）应请求 48kHz 采集上下文");
         assertTrue(html.contains("fsOverlay") && html.contains("fsPtz") && html.contains("btnTalkFs"),
             "全屏浮层应含云台方向键与喊话按钮");
         assertTrue(js.contains("togglePreviewFullscreen") && js.contains("fs-fake"),

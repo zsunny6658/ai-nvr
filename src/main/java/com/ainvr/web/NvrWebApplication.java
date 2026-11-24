@@ -1,5 +1,6 @@
 package com.ainvr.web;
 
+import com.ainvr.codec.FfmpegLogConfig;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
@@ -20,6 +21,9 @@ import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
 public class NvrWebApplication {
 
     public static void main(String[] args) {
+        // v2.3.1 第二十六轮：在任何 ffmpeg native 调用之前熄灭逐帧日志洪水。
+        // 放在 Spring 启动前，避免早于本类的静态初始化（如 SnapshotDecoder）重新打开告警。
+        FfmpegLogConfig.install();
         SpringApplication.run(NvrWebApplication.class, args);
     }
 }

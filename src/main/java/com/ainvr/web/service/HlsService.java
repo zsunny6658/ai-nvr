@@ -239,10 +239,25 @@ public class HlsService {
      * 分片序号早于滑动窗口起点时 clamp 到窗口起点（旧片已被 muxer 删除，取不到属正常）。
      */
     public LiveChunk liveChunk(String did, Integer from, int maxSegs, long waitMs) throws InterruptedException {
+        return livePush(did, from, maxSegs, waitMs, true);
+    }
+
+    /**
+     * v2.3.1 第二十六轮：WS 直播推流（iOS ManagedMediaSource via srcObject，go2rtc mse
+     * 模式同款）专用——与 {@link #liveChunk} 同窗口逻辑，但 {@code from != null} 时
+     * <strong>不含 init.mp4</strong>（同一 SourceBuffer 只能收一次 init，重复 append 会
+     * 直接 MediaError）。首包仍由调用方用 {@code from=null} 取「init + 起播窗口」。
+     */
+    public LiveChunk liveSegments(String did, Integer from, int maxSegs, long waitMs) throws InterruptedException {
+        return livePush(did, from, maxSegs, waitMs, false);
+    }
+
+    private LiveChunk livePush(String did, Integer from, int maxSegs, long waitMs, boolean includeInit)
+            throws InterruptedException {
         ensure(did);
         long deadline = System.currentTimeMillis() + Math.max(1000, Math.min(waitMs, FIRST_SEGMENT_TIMEOUT_MS));
         while (true) {
-            LiveChunk chunk = tryBuildChunk(did, from, maxSegs);
+            LiveChunk chunk = tryBuildChunk(did, from, maxSegs, includeInit);
             if (chunk != null) {
                 touch(did);
                 return chunk;
@@ -256,7 +271,7 @@ public class HlsService {
     }
 
     /** 单次尝试拼接；窗口内没有可用分片（或 init 未就绪）返回 null。 */
-    private LiveChunk tryBuildChunk(String did, Integer from, int maxSegs) {
+    private LiveChunk tryBuildChunk(String did, Integer from, int maxSegs, boolean includeInit) {
         HlsSink sink = sinks.get(did);
         if (sink == null) {
             return null;
@@ -271,8 +286,8 @@ public class HlsService {
         if (start > hi) {
             return null;
         }
-        File init = sink.mediaFile("init.mp4");
-        if (init == null) {
+        File init = includeInit ? sink.mediaFile("init.mp4") : null;
+        if (includeInit && init == null) {
             return null;
         }
         // 滑动窗口可能已删掉 m3u8 尾部仍列着的旧分片文件（罕见竞态）：向内收缩到文件齐全区间
@@ -289,7 +304,9 @@ public class HlsService {
         }
         try {
             ByteArrayOutputStream buf = new ByteArrayOutputStream(2 << 20);
-            buf.write(Files.readAllBytes(init.toPath()));
+            if (init != null) {
+                buf.write(Files.readAllBytes(init.toPath()));
+            }
             for (int n = begin; n <= end; n++) {
                 buf.write(Files.readAllBytes(sink.mediaFile("seg-" + n + ".m4s").toPath()));
             }
