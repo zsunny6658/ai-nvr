@@ -28,7 +28,9 @@ import java.util.ArrayList;
 import java.util.Deque;
 import java.util.Iterator;
 import java.util.List;
+import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import static org.bytedeco.ffmpeg.global.avcodec.AV_CODEC_ID_AAC;
@@ -105,6 +107,7 @@ public final class HlsSink implements StreamSink {
     private static final AVRational TB_AUDIO = new AVRational().num(1).den(48_000);
     private static final int AUDIO_RATE = 48_000;
     private static final Pattern SEG_NAME = Pattern.compile("seg-\\d+\\.m4s");
+    private static final Pattern SEG_NUM = Pattern.compile("seg-(\\d+)\\.m4s");
 
     private final String did;
     private final File dir;
@@ -299,6 +302,31 @@ public final class HlsSink implements StreamSink {
             return text.getBytes(StandardCharsets.UTF_8);
         } catch (Exception e) {
             throw new IllegalStateException("读取 m3u8 失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * m3u8 播放列表中当前<b>已完成</b>的分片序号（升序去重）。
+     *
+     * <p>v2.3.1 第二十五轮：live.mp4 滚动拼接以此为准——ffmpeg 在分片关闭（切换写入下一个）
+     * 后才把 seg-N 写入 m3u8，正在写的半成品分片不会列出，天然规避「读到不完整分片」；
+     * 同 {@link #awaitFirstSegment} 的判定逻辑保持一致。</p>
+     */
+    public List<Integer> playlistSegmentNumbers() {
+        File pl = new File(dir, "index.m3u8");
+        if (!pl.isFile()) {
+            return List.of();
+        }
+        try {
+            Matcher m = SEG_NUM.matcher(Files.readString(pl.toPath(), StandardCharsets.UTF_8));
+            TreeSet<Integer> out = new TreeSet<>();
+            while (m.find()) {
+                out.add(Integer.parseInt(m.group(1)));
+            }
+            return List.copyOf(out);
+        } catch (Exception e) {
+            // m3u8 正被 muxer 重写，读失败按空处理，调用方稍后重试
+            return List.of();
         }
     }
 

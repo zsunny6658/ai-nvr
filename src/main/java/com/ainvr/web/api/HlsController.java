@@ -9,6 +9,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.io.File;
@@ -75,6 +76,45 @@ public class HlsController {
                              @PathVariable String filename,
                              HttpServletResponse resp) throws Exception {
         writeMedia(did, filename, "video/iso.segment", resp);
+    }
+
+    /**
+     * v2.3.1 第二十五轮：live.mp4 滚动拼接——无 MSE 环境（iPhone 局域网 HTTP WKWebView，
+     * ManagedMediaSource 仅 secure context 可用）的「回放同款」内联直播路径。
+     *
+     * <p>把 init.mp4 + 已完成分片拼成一个独立可播的渐进式 fMP4（hvc1 + AAC，与录像段同格式），
+     * 客户端循环「播放 → ended → 携带 {@code from} 续取」，绕开系统播放器全屏劫持。</p>
+     *
+     * <ul>
+     *   <li>{@code from}：上次响应的 X-Live-To（不传取最新窗口）；</li>
+     *   <li>{@code max}：单次最多拼几个分片（默认 2，≈12s 内容）；</li>
+     *   <li>{@code wait}：窗口内暂无新分片时的长轮询等待（直播 6s/片，ended 后通常即刻有新片）。</li>
+     * </ul>
+     *
+     * <p>响应头 {@code X-Live-From/X-Live-To} 告知本次覆盖的分片区间；503 表示冷启动未就绪或
+     * 直播中断，客户端退避重试。</p>
+     */
+    @GetMapping("/{did}/live.mp4")
+    public void liveMp4(@PathVariable String did,
+                        @RequestParam(name = "from", required = false) Integer from,
+                        @RequestParam(name = "max", defaultValue = "2") int max,
+                        @RequestParam(name = "wait", defaultValue = "6000") long wait,
+                        HttpServletResponse resp) throws Exception {
+        if (!session.isLoggedIn()) {
+            resp.sendError(HttpServletResponse.SC_GONE);
+            return;
+        }
+        HlsService.LiveChunk chunk = hls.liveChunk(did, from, Math.max(1, Math.min(max, 6)), wait);
+        if (chunk == null) {
+            resp.sendError(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
+            return;
+        }
+        resp.setContentType("video/mp4");
+        resp.setHeader("Cache-Control", "no-cache");
+        resp.setHeader("X-Live-From", String.valueOf(chunk.from()));
+        resp.setHeader("X-Live-To", String.valueOf(chunk.to()));
+        resp.setContentLength(chunk.data().length);
+        resp.getOutputStream().write(chunk.data());
     }
 
     private void writeMedia(String did, String name, String mime, HttpServletResponse resp) throws Exception {

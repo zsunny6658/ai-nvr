@@ -3625,14 +3625,74 @@
         return hls;
     }
 
-    /* 按浏览器能力选择路径并挂载：hls.js 可用即优先 MSE（v2.3.1 第二十二轮），
-       原生降级；返回 hls 实例 / null（原生）/ undefined（不支持）。
-       第二十二轮根修：去掉 isChromium 前置门槛。iPhone（iOS 17.1+）的 hls.js 走
-       ManagedMediaSource，此前被该门槛排除在 MSE 之外只能用原生 HLS——而原生 HLS
-       会被 WKWebView 系统播放器接管（全屏劫持 + 退出后暂停黑屏，真机实测）。
-       MSE 路径完全是应用内 <video> 播放，从根上消灭系统全屏；旧 iOS 无 MSE 时
-       Hls.isSupported() 自然为 false，仍走原生 HLS 兜底。 */
+    /* ==================== v2.3.1 第二十五轮：live.mp4 滚动播放（回放同款） ====================
+       无 MSE 环境（iPhone 经飞牛 App / 局域网 HTTP 打开时 ManagedMediaSource 仅 secure
+       context 可用，Hls.isSupported()=false）此前只能走原生 HLS——会被 WKWebView 系统播放器
+       接管（全屏劫持，client-diag 实锤）。而回放页的渐进式 fMP4（hvc1+AAC，moov 在前）在
+       同一环境内联播放已被真机验证可行。
+       服务端 GET /hls/{did}/live.mp4 把 init.mp4 + 已完成分片拼成一个独立 fMP4；前端循环
+       「播放 → ended → 携带 from 续取」，实现与 HLS 同源的内联直播。连续取片失败 3 次自动
+       退回原生 HLS（仍有全屏接受/退出降级链路兜底）。 */
+    function stopLiveRoll() {
+        var roll = state.liveRoll;
+        if (!roll) { return; }
+        state.liveRoll = null;
+        roll.stopped = true;
+        var v = $('previewVideo');
+        if (v) { v.onended = null; }
+        if (roll.blobUrl) { try { URL.revokeObjectURL(roll.blobUrl); } catch (e) { /* 忽略 */ } roll.blobUrl = null; }
+    }
+
+    function startLiveMp4Roll(video, url) {
+        var m = /hls\/([^\/?]+)\/index\.m3u8/.exec(url || '');
+        if (!m) { return null; }
+        var did = m[1];
+        var roll = { stopped: false, from: null, fails: 0, blobUrl: null };
+        state.liveRoll = roll;
+        function fetchNext() {
+            if (roll.stopped || $('previewModal').hidden || state.previewDid !== did) { return; }
+            // 首次取片给更长等待（冷启动含建连+等 IDR+攒首片）；续取 5s（直播 6s/片，通常即刻有新片）
+            var q = 'hls/' + encodeURIComponent(did) + '/live.mp4?'
+                + (roll.from == null ? 'wait=12000' : 'from=' + roll.from + '&wait=5000');
+            fetch(withToken(q), { cache: 'no-store' }).then(function (r) {
+                if (roll.stopped) { return null; }
+                if (!r.ok) { throw new Error('HTTP ' + r.status); }
+                var to = parseInt(r.headers.get('X-Live-To') || '0', 10);
+                return r.blob().then(function (b) { return { blob: b, to: to }; });
+            }).then(function (got) {
+                if (!got || roll.stopped || $('previewModal').hidden || state.previewDid !== did) { return; }
+                roll.fails = 0;
+                roll.from = got.to + 1;
+                if (roll.blobUrl) { try { URL.revokeObjectURL(roll.blobUrl); } catch (e) { /* 忽略 */ } }
+                roll.blobUrl = URL.createObjectURL(got.blob);
+                video.src = roll.blobUrl;
+                video.play().catch(function () { /* 已解锁元素通常成功；失败由重试链路兜底 */ });
+            }).catch(function () {
+                if (roll.stopped) { return; }
+                roll.fails++;
+                if (roll.fails >= 3) {
+                    reportClientDiag('live_mp4_giveup', 'did=' + did + ' 连续取片失败，退回原生 HLS');
+                    stopLiveRoll();
+                    var c = findDevice(did);
+                    if (c && !$('previewModal').hidden && state.previewDid === did) {
+                        mountNativeHls(video, withToken(c.hlsUrl));
+                    }
+                    return;
+                }
+                setTimeout(fetchNext, 2000);
+            });
+        }
+        video.onended = function () { if (!roll.stopped) { fetchNext(); } };
+        fetchNext();
+        return roll;
+    }
+
+    /** 按浏览器能力选择路径并挂载：hls.js 可用即优先 MSE（v2.3.1 第二十二轮），
+       无 MSE 走 live.mp4 滚动播放（第二十五轮），原生 HLS 仅作兜底；返回 hls 实例 /
+       'live-mp4' / null（原生）/ undefined（不支持）。
+       MSE 路径完全是应用内 <video> 播放，从根上消灭系统全屏。 */
     function mountPreviewPlayer(video, url) {
+        stopLiveRoll(); // 换路径/重挂载时先停掉旧的 live.mp4 滚动会话
         if (window.Hls && Hls.isSupported()) {
             // v2.3.1 第二十三轮：MMS 硬性要求——iPhone 上 ManagedMediaSource 必须在
             // disableRemotePlayback=true（或提供 AirPlay 备选源）时才激活 sourceopen，
@@ -3642,22 +3702,27 @@
             reportMountPath('mse');
             return state.hls;
         }
+        if (startLiveMp4Roll(video, url)) {
+            reportMountPath('live-mp4');
+            return 'live-mp4';
+        }
         if (video.canPlayType('application/vnd.apple.mpegurl')) {
-            // Safari / Edge 原生 HLS：先预热等首个 fMP4 分片生成，再赋 src 播放
-            reportMountPath('native-hls');
-            warmHls(url, function () {
-                if (!$('previewModal').hidden) {
-                    video.src = url;
-                    video.play().catch(function () {});
-                }
-            });
+            mountNativeHls(video, url);
             return null;
         }
-        if (window.Hls && Hls.isSupported()) {
-            state.hls = mountPreviewMse(video, url);
-            return state.hls;
-        }
         return undefined;
+    }
+
+    /** 原生 HLS 兜底：先预热等首个 fMP4 分片生成，再赋 src 播放。
+        仅在 live.mp4 连续失败后退到这里（iOS 全屏接受/退出降级链路继续兜底）。 */
+    function mountNativeHls(video, url) {
+        reportMountPath('native-hls');
+        warmHls(url, function () {
+            if (!$('previewModal').hidden) {
+                video.src = url;
+                video.play().catch(function () {});
+            }
+        });
     }
 
     /** v2.3.1 第二十三轮：预览挂载路径诊断（每页面会话一次）。MMS/MSE 可用性
@@ -3737,6 +3802,7 @@
     function applyPreviewPlayback(did, url) {
         stopPreviewWatchdog();
         stopCompatMode();
+        stopLiveRoll(); // v2.3.1 第二十五轮：切兼容画面/换设备时停掉旧滚动会话
         if (state.previewWatch) { clearTimeout(state.previewWatch); state.previewWatch = null; }
         if (state.hls) { try { state.hls.destroy(); } catch (e) {} state.hls = null; }
         var video = $('previewVideo');
@@ -3851,6 +3917,7 @@
         var video = $('previewVideo');
         if (state.previewWatch) { clearTimeout(state.previewWatch); state.previewWatch = null; }
         stopPreviewWatchdog();
+        stopLiveRoll(); // v2.3.1 第二十五轮：停掉 live.mp4 滚动会话（onended 续取链）
         stopLiveBadge();
         if (state.hls) { try { state.hls.destroy(); } catch (e) {} state.hls = null; }
         // v1.2.22：先退出原生全屏再销毁；刚退出全屏时延迟销毁，等 iOS 收回全屏层

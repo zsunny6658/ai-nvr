@@ -31,7 +31,7 @@ class StaticAssetContractTest {
 
         assertTrue(html.contains("btnPreviewBack"), "预览弹层缺少应用内返回按钮");
         assertTrue(html.contains("btnPlayerBack"), "回放弹层缺少应用内返回按钮");
-        assertTrue(html.contains("v=89"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
+        assertTrue(html.contains("v=90"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
         // v2.3.1 真机验证第五轮：主题快捷按钮两态 + 选目录自动授权 + 内置权限面板
         assertTrue(js.contains("trimAuthorizePath"), "缺少选目录自动授权逻辑");
         assertTrue(js.contains("authorizeUserFile"), "缺少用户空间授权调用");
@@ -163,6 +163,19 @@ class StaticAssetContractTest {
                 "时间刻度抽稀阈值应提升至 76px 且抽稀时使用 HH:MM 短标签（iPhone 仍拥挤）");
         assertTrue(js.contains("api/diagnostics/client-log"),
                 "前端应有客户端诊断上报通道");
+        // v2.3.1 第二十五轮回归锁：无 MSE 环境的预览改走 live.mp4 滚动播放（回放同款 fMP4）
+        {
+            int mountIdx = js.indexOf("function mountPreviewPlayer");
+            int nativeIdx = js.indexOf("function mountNativeHls");
+            assertTrue(mountIdx >= 0 && nativeIdx > mountIdx, "mountPreviewPlayer / mountNativeHls 应存在");
+            String mountBlock = js.substring(mountIdx, nativeIdx);
+            assertTrue(mountBlock.indexOf("startLiveMp4Roll") < mountBlock.indexOf("canPlayType('application/vnd.apple.mpegurl')"),
+                    "无 MSE 时应先试 live.mp4 滚动播放，原生 HLS（会被系统播放器劫持）只作兜底");
+            assertTrue(js.contains("/live.mp4?"), "live.mp4 滚动取片端点应被调用");
+            assertTrue(js.contains("X-Live-To"), "滚动会话应跟踪服务端分片区间（ended 后携带 from 续取）");
+            assertTrue(js.contains("stopLiveRoll()"), "换路径/关预览/切兼容画面必须停掉滚动会话（防僵尸续取）");
+            assertTrue(js.contains("live_mp4_giveup"), "连续取片失败应上报诊断并退回原生 HLS 兜底");
+        }
         // v2.3.1 第十九轮回归锁：.stat-link 只加交互态，禁止再重置卡片外观——
         // 此前 background:none/border:none/padding:inherit 把 .stat 卡片底色边框
         // 内边距全数覆盖，统计区退化成裸文字贴边（真机截图实锤）

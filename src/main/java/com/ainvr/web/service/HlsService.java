@@ -12,7 +12,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -217,6 +219,85 @@ public class HlsService {
         }
         touch(did);
         return sink.mediaFile(name);
+    }
+
+    // ===================== v2.3.1 第二十五轮：live.mp4 滚动拼接 =====================
+
+    /** live.mp4 滚动拼接结果：data = init.mp4 + [from..to] 分片的完整独立 fMP4 文件。 */
+    public record LiveChunk(byte[] data, int from, int to) {
+    }
+
+    /**
+     * 拼一个「回放同款」的渐进式 fMP4 直播文件（无 MSE 环境的内联播放路径）：
+     * <ul>
+     *   <li>{@code from == null}：取最新 {@code maxSegs} 片（起播窗口，首画延迟≈片数×片时长）；</li>
+     *   <li>{@code from != null}：取 {@code (from, 窗口末尾]} 最多 {@code maxSegs} 片——
+     *       客户端播完上一段后携带上次响应的 {@code to} 续取，实现连续直播。</li>
+     * </ul>
+     * 分片就绪以 m3u8 播放列表为准（muxer 关片后才列出，规避半成品）。窗口内暂无新分片时在
+     * {@code waitMs} 内轮询等待；超时仍无则返回 null，调用方给 503 让客户端稍后重试。
+     * 分片序号早于滑动窗口起点时 clamp 到窗口起点（旧片已被 muxer 删除，取不到属正常）。
+     */
+    public LiveChunk liveChunk(String did, Integer from, int maxSegs, long waitMs) throws InterruptedException {
+        ensure(did);
+        long deadline = System.currentTimeMillis() + Math.max(1000, Math.min(waitMs, FIRST_SEGMENT_TIMEOUT_MS));
+        while (true) {
+            LiveChunk chunk = tryBuildChunk(did, from, maxSegs);
+            if (chunk != null) {
+                touch(did);
+                return chunk;
+            }
+            if (System.currentTimeMillis() >= deadline) {
+                touch(did);
+                return null;
+            }
+            Thread.sleep(400);
+        }
+    }
+
+    /** 单次尝试拼接；窗口内没有可用分片（或 init 未就绪）返回 null。 */
+    private LiveChunk tryBuildChunk(String did, Integer from, int maxSegs) {
+        HlsSink sink = sinks.get(did);
+        if (sink == null) {
+            return null;
+        }
+        List<Integer> segs = sink.playlistSegmentNumbers();
+        if (segs.isEmpty()) {
+            return null;
+        }
+        int lo = segs.get(0);
+        int hi = segs.get(segs.size() - 1);
+        int start = from == null ? Math.max(lo, hi - maxSegs + 1) : Math.max(from + 1, lo);
+        if (start > hi) {
+            return null;
+        }
+        File init = sink.mediaFile("init.mp4");
+        if (init == null) {
+            return null;
+        }
+        // 滑动窗口可能已删掉 m3u8 尾部仍列着的旧分片文件（罕见竞态）：向内收缩到文件齐全区间
+        int end = hi;
+        while (end >= start && sink.mediaFile("seg-" + end + ".m4s") == null) {
+            end--;
+        }
+        int begin = start;
+        while (begin <= end && sink.mediaFile("seg-" + begin + ".m4s") == null) {
+            begin++;
+        }
+        if (begin > end) {
+            return null;
+        }
+        try {
+            ByteArrayOutputStream buf = new ByteArrayOutputStream(2 << 20);
+            buf.write(Files.readAllBytes(init.toPath()));
+            for (int n = begin; n <= end; n++) {
+                buf.write(Files.readAllBytes(sink.mediaFile("seg-" + n + ".m4s").toPath()));
+            }
+            return new LiveChunk(buf.toByteArray(), begin, end);
+        } catch (Exception e) {
+            // 读分片过程中文件被删（窗口滑动）：下一轮重试
+            return null;
+        }
     }
 
     private void touch(String did) {
