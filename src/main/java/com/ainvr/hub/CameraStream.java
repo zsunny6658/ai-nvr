@@ -462,8 +462,8 @@ public final class CameraStream {
         }
         try {
             c.startSpeaker();
-            return new SpeakerSession(c, MissCommands.speakerCodecFor(model),
-                    MissCommands.speakerLinearPcm(model));
+            return new SpeakerSession(c, MissCommands.speakerCodecFor(model, did),
+                    MissCommands.speakerLinearPcm(model, did));
         } catch (Exception e) {
             log.warn("[{}] 对讲开启失败（0x106 发送异常）：{}", did, e.toString());
             return null;

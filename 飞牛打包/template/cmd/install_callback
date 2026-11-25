@@ -8,9 +8,10 @@ mkdir -p "${ETC_DIR}" "${VAR_DIR}/logs" "${VAR_DIR}/data"
 SERVER_PORT=$(grep -E "^service_port[[:space:]]*=" "${TRIM_APPDEST}/manifest" | cut -d= -f2 | tr -d ' ')
 SERVER_PORT=${SERVER_PORT:-9099}
 
-# 安装向导里用户输入的 JVM 配置
-JVM_XMX="${wizard_jvm_xmx:-512}"
-JVM_XMS="${wizard_jvm_xms:-128}"
+# 安装向导里用户输入的 JVM 配置（第二十七轮起推荐 1024MB：3 路取流 + AI + 转码
+# 在 512m 下长时间运行有堆 OOM 风险，2026-11-25 真机实锤）
+JVM_XMX="${wizard_jvm_xmx:-1024}"
+JVM_XMS="${wizard_jvm_xms:-256}"
 
 # 生成 Spring Boot 配置：
 # - port 从 manifest 读取（TCP 双监听保留，checkport 健康检查用）

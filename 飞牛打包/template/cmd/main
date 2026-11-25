@@ -10,7 +10,7 @@ APP_PATH="/app/ainvr/"
 if [ -f "${TRIM_PKGETC}/jvm.conf" ]; then
   source "${TRIM_PKGETC}/jvm.conf"
 else
-  JAVA_OPTS="-Xms128m -Xmx512m -Dfile.encoding=UTF-8 -Duser.timezone=Asia/Shanghai"
+  JAVA_OPTS="-Xms256m -Xmx1024m -Dfile.encoding=UTF-8 -Duser.timezone=Asia/Shanghai"
 fi
 # 日志重定向到 app.log 时，JDK 17/21 的 stdout/stderr 编码取自平台 locale；
 # fnOS 容器多为 C/POSIX，会把中文全部写成 '?'，排障时无法读日志。
@@ -20,6 +20,10 @@ JAVA_OPTS="${JAVA_OPTS} -Dfile.encoding=UTF-8 -Dsun.stdout.encoding=UTF-8 -Dsun.
 # 避免容器内 /dev/random 熵不足阻塞 SecureRandom 初始化。二者都不改变应用行为，
 # 也不受 install_callback 重写 jvm.conf 影响（始终在最后追加）。
 JAVA_OPTS="${JAVA_OPTS} -Xshare:auto -Djava.security.egd=file:/dev/urandom"
+# v2.3.1 第二十七轮：OOM 时自动转储堆快照到应用数据目录 logs/（相对 CWD=PKGVAR）。
+# 2026-11-25 凌晨三路取流线程连环 Java heap OOM 无现场可查，加此参数后下次 OOM
+# 直接留 hprof 取证，不再盲猜泄漏点。堆转储约 512MB，注意 logs 目录容量。
+JAVA_OPTS="${JAVA_OPTS} -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=logs/"
 # v1.2.23 修复：手动输入含中文的目录（如 /vol2/1000/影视/cam）时目录名全部变成 '?'。
 # 根因：fnOS 容器 locale 为 C/POSIX，JVM 启动时 sun.jnu.encoding 退化为 ANSI_X3.4-1968，
 # java.io.File / 环境变量（含 fnOS 注入的授权路径）中的非 ASCII 字符在 native 层全部被

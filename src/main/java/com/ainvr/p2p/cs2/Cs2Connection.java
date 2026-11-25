@@ -35,7 +35,10 @@ public final class Cs2Connection implements AutoCloseable {
         this.tcp = tcp;
         // 通道 0：无乱序缓存、pop 队列 10；通道 2：乱序缓存 250、pop 队列 100
         this.channels[Cs2.CHANNEL_CMD] = new DataChannel(0, 10);
-        this.channels[Cs2.CHANNEL_MEDIA] = new DataChannel(250, 100);
+        // v2.3.1 第二十七轮：媒体 pop 队列 100→32。队列上限按「条数」计而消息无字节上限
+        // （视频关键帧 1~2MB），100 条 × 3 台设备即可撑满 512m 堆（真机 OOM 实锤）；
+        // 32 条（约 32MB/设备）已远超消费端所需的平滑余量，堆积更深即断流重连。
+        this.channels[Cs2.CHANNEL_MEDIA] = new DataChannel(250, 32);
     }
 
     void start() {

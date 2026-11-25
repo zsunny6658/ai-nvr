@@ -19,6 +19,14 @@ import java.util.concurrent.TimeUnit;
  */
 public final class DataChannel {
 
+    /**
+     * 单条逻辑消息长度上限（BE32 长度前缀上限）。视频关键帧实际约 0.5~2MB，留足余量；
+     * 超过视为流失步（垃圾字节被当成消息长度），必须立刻断流重连——否则
+     * {@link #append} 会把后续所有包攒进一个无限增长的缓冲，直至 Java 堆 OOM
+     * （2026-11-25 真机凌晨 0:52 三台设备同时 OOM 的根因）。
+     */
+    private static final int MAX_MSG_SIZE = 16 * 1024 * 1024;
+
     private final int pushSize;
     private final Map<Integer, byte[]> pushBuf;
     private final BlockingQueue<byte[]> popBuf;
@@ -43,6 +51,11 @@ public final class DataChannel {
         while (waitLen > 4) {
             if (waitSize == 0) {
                 waitSize = readBe32(waitData, 0);
+                if (waitSize > MAX_MSG_SIZE) {
+                    // 流失步防护：垃圾长度前缀。抛错让连接重建（重连后重新同步），
+                    // 而不是带着污染的重组缓冲继续攒包到堆爆。
+                    throw new IOException("cs2: 消息长度前缀异常 " + waitSize + "（流失步，需重连）");
+                }
                 consume(4);
             }
             if (waitSize > waitLen) {
@@ -134,7 +147,10 @@ public final class DataChannel {
         closed = true;
     }
 
-    private void append(byte[] src, int len) {
+    private void append(byte[] src, int len) throws IOException {
+        if (waitLen + len > MAX_MSG_SIZE) {
+            throw new IOException("cs2: 重组缓冲超过 " + MAX_MSG_SIZE + " 字节（流失步，需重连）");
+        }
         byte[] grown = new byte[waitLen + len];
         System.arraycopy(waitData, 0, grown, 0, waitLen);
         System.arraycopy(src, 0, grown, waitLen, len);

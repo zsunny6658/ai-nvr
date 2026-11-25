@@ -19,10 +19,14 @@
         "helpText": "数据位置：录像默认保存在应用 var 目录的 recordings/，登录态、访问密码、设置与告警事件在 .ainvr/，运行日志在 logs/。卸载或迁移前请先通过飞牛文件管理自行备份；重装后沿用同一数据目录可继续使用。"
       },
       {
+        "type": "tips",
+        "helpText": "内存建议：本应用同时承担 3 路取流 + AI 识别 + 录像 + 转码，JVM 最大内存默认 1024MB。若 NAS 内存充裕（8GB 及以上）可保持默认；内存紧张时再下调，但低于 768MB 时多摄像头长时间运行可能触发堆 OOM（应用会在 logs/ 自动留存堆转储供排查）。"
+      },
+      {
         "type": "text",
         "field": "jvm_xmx",
         "label": "JVM 最大内存 (MB)",
-        "initValue": "512",
+        "initValue": "1024",
         "rules": [
           { "required": true, "message": "请输入内存大小" },
           { "pattern": "^[0-9]+$", "message": "请输入数字" }

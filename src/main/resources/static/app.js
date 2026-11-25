@@ -57,6 +57,7 @@
             zoom: 24, winStart: 0, dayStart: 0, winDur: 86400000,
             segs: [], idx: -1, curStart: 0, pendingOffset: null,
             swapping: false, // v2.3.1 换段交接进行中（防 ended/提前交接重入）
+            mms: false, // v2.3.1 第二十七轮：当前段走 MMS 渐进回放（预载/提前交接不适用）
             motionMs: [],
             liveTimer: null, liveBusy: false,
             loop: 'off', // v2.1.0 循环播放：off | seg（单段）| day（当天）
@@ -3752,9 +3753,161 @@
         reportClientDiag('mms_fail', 'did=' + did + ' why=' + why);
         var c = findDevice(did);
         if (!c || !$('previewModal') || $('previewModal').hidden || state.previewDid !== did) { return; }
-        if (!startLiveMp4Roll(video, withToken(c.hlsUrl))) {
-            mountNativeHls(video, withToken(c.hlsUrl));
+        if (!sess || !sess.retried) {
+            // v2.3.1 第二十七轮：先原路重试一次 MMS（真机实锤首轮失败多为冷启动等片超时，
+            // 不是链路坏）；重试再失败才降级。blob 直链在 iPhone 上必被 AVPlayer 全屏接管，
+            // 绝不再作为 iPhone 的降级路径。
+            var r = mountPreviewMms(video, did);
+            if (r) { state.liveMms.retried = true; reportMountPath('mms-retry'); return; }
         }
+        autoFallbackToCompat('直播推流中断：已切换到兼容画面（每秒刷新）。');
+    }
+
+    /* ==================== v2.3.1 第二十七轮：iPhone MMS-VOD 内联回放 ====================
+       【根因】回放页 / 录像弹层的 <video src=HTTP 直链> 属 URL 资源加载 → AVPlayer；
+       Safari 里 playsinline 能保内联，但部分 WKWebView 宿主（飞牛 App 等）忽略
+       playsinline → 播放即系统全屏（真机 ios_fs_begin pb 实锤，且发生在预览 MMS 会话
+       之后，与访问容器相关）。唯一在两类容器都能内联的路径 = ManagedMediaSource
+       srcObject（预览 MMS 直播同款）。
+       【方案】录像文件本就是 moov 在前的渐进式 fMP4：fetch 流式读取 → SourceBuffer
+       渐进 append（init+mdat 天然合法），duration 先置 Infinity、文件读完定格为
+       实际缓冲末端（让播完触发 ended 自动接下一段）；达到起始偏移后才 seek+play。
+       失败回退直链（旧路径全屏兜底仍在）。 */
+    function mmsOnlyEnv() {
+        return 'ManagedMediaSource' in window && !window.MediaSource;
+    }
+
+    function pickMmsMime(MMS) {
+        var mimes = ['video/mp4; codecs="hvc1.1.6.L93.B0,mp4a.40.2"',
+            'video/mp4; codecs="hvc1.1.6.L153.B0,mp4a.40.2"',
+            'video/mp4; codecs="avc1.640029,mp4a.40.2"'];
+        for (var i = 0; i < mimes.length; i++) {
+            if (MMS.isTypeSupported(mimes[i])) { return mimes[i]; }
+        }
+        return null;
+    }
+
+    /**
+     * MMS 渐进回放挂载。非 MMS-only 环境（桌面/Mac Safari）返回 null 走原路径。
+     * 成功返回会话；{@code offsetSec} 为起播偏移（缓冲覆盖后才 seek+play）。
+     */
+    function mountVodMms(video, url, offsetSec) {
+        if (!mmsOnlyEnv()) { return null; }
+        var MMS = window.ManagedMediaSource;
+        var mime = MMS.isTypeSupported ? pickMmsMime(MMS) : null;
+        if (!mime) { return null; }
+        var sess = {
+            video: video, url: url, ms: null, sb: null, mime: mime, reader: null,
+            queue: [], stopped: false, seeked: false, eof: false, offset: offsetSec || 0
+        };
+        state.vodSess = sess;
+        try { video.disableRemotePlayback = true; } catch (e0) { /* 忽略 */ }
+        var ms = new MMS();
+        sess.ms = ms;
+        video.srcObject = ms; // 与直播同款：绝不走 video.src（那是 AVPlayer 全屏路径）
+        ms.addEventListener('sourceopen', function () {
+            if (sess.stopped) { return; }
+            try {
+                var sb = ms.addSourceBuffer(mime);
+                sb.mode = 'segments';
+                sb.addEventListener('updateend', function () {
+                    pumpVod(sess);
+                    vodCheckStart(sess);
+                    vodTrim(sess);
+                });
+                sess.sb = sb;
+                ms.duration = Infinity;
+            } catch (e1) {
+                vodFail(sess, 'SourceBuffer 创建失败');
+                return;
+            }
+            fetchVod(sess);
+        }, { once: true });
+        var p = video.play(); if (p && p.catch) { p.catch(function () { /* 缓冲后补 */ }); }
+        return sess;
+    }
+
+    function pumpVod(sess) {
+        if (!sess.sb || sess.sb.updating || !sess.queue.length || sess.stopped) { return; }
+        var u8 = sess.queue.shift();
+        try { sess.sb.appendBuffer(u8); } catch (e) { sess.queue.unshift(u8); }
+    }
+
+    /** 缓冲覆盖起始偏移后才 seek+play（MMS 对未缓冲区 seek 会卡死）。 */
+    function vodCheckStart(sess) {
+        if (sess.seeked || sess.stopped || !sess.sb) { return; }
+        try {
+            var b = sess.sb.buffered;
+            if (b.length && b.end(b.length - 1) > sess.offset) {
+                sess.seeked = true;
+                sess.video.currentTime = sess.offset;
+                sess.video.play().catch(function () { /* 忽略 */ });
+            }
+        } catch (e) { /* 忽略 */ }
+    }
+
+    /** 滑动修剪：只留当前进度之前 ~10s（长录像不占满内存）。 */
+    function vodTrim(sess) {
+        if (!sess.sb || sess.sb.updating || sess.stopped) { return; }
+        try {
+            var b = sess.sb.buffered;
+            var cut = sess.video.currentTime - 10;
+            if (b.length && b.start(0) < cut && cut > 0) {
+                sess.sb.remove(b.start(0), cut);
+            }
+        } catch (e) { /* 忽略 */ }
+    }
+
+    function fetchVod(sess) {
+        fetch(sess.url, { cache: 'no-store' }).then(function (r) {
+            if (!r.ok || !r.body) { throw new Error('HTTP ' + r.status); }
+            sess.reader = r.body.getReader();
+            (function read() {
+                if (sess.stopped) { return; }
+                sess.reader.read().then(function (res) {
+                    if (sess.stopped) { return; }
+                    if (res.done) {
+                        sess.eof = true;
+                        // 定格实际时长：Infinity 时播放到缓冲末端只会 waiting 不触发 ended
+                        try {
+                            var b = sess.sb.buffered;
+                            if (b.length) { sess.ms.duration = b.end(b.length - 1); }
+                        } catch (e3) { /* 忽略 */ }
+                        return;
+                    }
+                    sess.queue.push(res.value);
+                    pumpVod(sess);
+                    vodCheckStart(sess);
+                    read();
+                }).catch(function () {
+                    if (!sess.stopped) { sess.eof = true; }
+                });
+            })();
+        }).catch(function (e4) {
+            vodFail(sess, e4 && e4.message ? e4.message : '取流失败');
+        });
+    }
+
+    function stopVodMms() {
+        var sess = state.vodSess;
+        if (!sess) { return; }
+        state.vodSess = null;
+        sess.stopped = true;
+        if (sess.reader) { try { sess.reader.cancel(); } catch (e) { /* 忽略 */ } }
+        if (sess.video) { try { sess.video.srcObject = null; } catch (e2) { /* 忽略 */ } }
+    }
+
+    /** MMS 回放失败：回退直链（全屏兜底，至少有画面）。 */
+    function vodFail(sess, why) {
+        if (sess.stopped) { return; }
+        var video = sess.video, url = sess.url, offset = sess.offset;
+        var isPb = video === pbV();
+        stopVodMms();
+        reportClientDiag('pb_vod_fail', 'why=' + why + ' target=' + (isPb ? 'pb' : 'player'));
+        if (state.pb.mms) { state.pb.mms = false; }
+        video.src = url;
+        try { video.currentTime = offset; } catch (e) { /* 忽略 */ }
+        video.play().catch(function () { /* 忽略 */ });
     }
 
     function startLiveMp4Roll(video, url) {
@@ -3850,16 +4003,20 @@
         });
     }
 
-    /** v2.3.1 第二十三轮：预览挂载路径诊断（每页面会话一次）。MMS/MSE 可用性
-        直接决定 iPhone 端走哪条链路，remote 取证比猜靠谱。 */
+    /** v2.3.1 第二十三轮：预览挂载路径诊断。MMS/MSE 可用性
+        直接决定 iPhone 端走哪条链路，remote 取证比猜靠谱。
+        第二十七轮：UA 截断放宽到 300（Safari 与各 App WebView 的 UA 尾巴
+        是判断回放全屏容器的关键证据），mms-retry 允许补报。 */
     function reportMountPath(path) {
-        if (state.mountPathReported) { return; }
-        state.mountPathReported = true;
+        var retry = path === 'mms-retry';
+        if (state.mountPathReported && !retry) { return; }
+        if (!retry) { state.mountPathReported = true; }
         reportClientDiag('preview_mount', 'path=' + path
             + ' mms=' + ('ManagedMediaSource' in self)
             + ' mse=' + (typeof self.MediaSource)
             + ' secure=' + (window.isSecureContext)
-            + ' ua=' + navigator.userAgent.slice(0, 90));
+            + ' sdkHost=' + (document.body && document.body.classList.contains('sdk-host') ? 1 : 0)
+            + ' ua=' + navigator.userAgent.slice(0, 300));
     }
 
     /* 预览看门狗回调：销毁旧会话并清理 video，再按当前能力重新挂载，随后重建看门狗 */
@@ -4212,10 +4369,17 @@
         }
         var wantRate = 8000;
         try {
-            // codec 判断与服务端 speakerCodecFor 一致：hlc6=PCM(8k)，72ac1=OPUS(48k)，其余 PCMA(8k)
+            // codec 判断与服务端 speakerCodecFor 一致：hlc6=PCM(8k)，OPUS 机型=48k，
+            // 其余 PCMA(8k)。第二十七轮起 OPUS 机型含 hlc8 / 039a01（真机三台三症状根因：
+            // 新机型双向音频均为 OPUS，PCMA 8k 上行 → 变声/杂音/无声）。
+            var OPUS_TALK_MODELS = {
+                'chuangmi.camera.72ac1': 1,
+                'isa.camera.hlc8': 1,
+                'chuangmi.camera.039a01': 1
+            };
             var m = findDevice(did);
             var model = m ? m.model : '';
-            if (model === 'chuangmi.camera.72ac1') { wantRate = 48000; }
+            if (OPUS_TALK_MODELS[model]) { wantRate = 48000; }
             try { talk.ctx = new Ctx({ sampleRate: wantRate }); }
             catch (eRate) { talk.ctx = new Ctx(); }
             talk.rate = talk.ctx.sampleRate || wantRate;
@@ -4293,7 +4457,7 @@
             var rp2 = ctx.resume(); if (rp2 && rp2.catch) { rp2.catch(function () {}); }
             reportClientDiag('talk_capture', 'rate=' + rate + ' state=' + ctx.state
                 + ' worklet=' + !!(ctx.audioWorklet && window.AudioWorkletNode)
-                + ' ua=' + navigator.userAgent.slice(0, 60));
+                + ' ua=' + navigator.userAgent.slice(0, 300));
             talk.acc = [];
             talk.accPos = 0;
             talk.pool = [];   // 非 8kHz 上下文时的原始样本池
@@ -5366,11 +5530,18 @@
         $('playerTitle').textContent = '录像回放 · ' + name;
         $('playerModal').hidden = false;
         var v = $('playerVideo');
-        v.src = withToken('api/recordings/' + encodeURIComponent(name));
+        // v2.3.1 第二十七轮：iPhone（MMS-only）弹层回放同样走 srcObject 渐进流防全屏
+        var purl = withToken('api/recordings/' + encodeURIComponent(name));
+        stopVodMms(); // 单会话槽：回放页与弹层共用
+        if (mountVodMms(v, purl, 0)) {
+            return;
+        }
+        v.src = purl;
         v.play().catch(function () {});
     }
     function stopPlayerOnly() {
         $('playerModal').hidden = true;
+        stopVodMms(); // v2.3.1 第二十七轮：弹层若为 MMS 渐进回放，先停会话
         var v = $('playerVideo');
         // v1.2.22：与预览一致——先退原生全屏，刚退出时延迟销毁，避免僵尸全屏播放层
         if (exitNativeFullscreen(v)) {
@@ -5493,6 +5664,8 @@
         if (!pb.did) { $('tlBlocks').innerHTML = '<div class="tl-no">请先选择摄像头</div>'; return; }
         pb.dayStart = new Date(pb.dateStr + 'T00:00:00').getTime();
         pb.idx = -1; pb.curStart = 0;
+        stopVodMms(); // 换摄像头/日期：停掉 MMS 渐进回放会话
+        pb.mms = false;
         pb.waitingNext = false; pb.swapping = false; // 换摄像头/日期：取消任何进行中的自动接续
         try {
             var data = await api('api/timeline/' + encodeURIComponent(pb.did) + '?date=' + encodeURIComponent(pb.dateStr));
@@ -5669,7 +5842,7 @@
         var pb = state.pb;
         var cur = $('tlCursor');
         var v = pbV();
-        if (pb.idx < 0 || !v.src) { cur.hidden = true; return; }
+        if (pb.idx < 0 || (!v.src && !v.srcObject)) { cur.hidden = true; return; }
         var x = pct(pb.curStart + (v.currentTime || 0) * 1000);
         if (x < 0 || x > 100) { cur.hidden = true; return; }
         cur.hidden = false;
@@ -5679,7 +5852,7 @@
     function updateMeta() {
         var pb = state.pb;
         var v = pbV();
-        if (pb.idx >= 0 && v.src) {
+        if (pb.idx >= 0 && (v.src || v.srcObject)) {
             $('pbNow').textContent = hms(pb.curStart + (v.currentTime || 0) * 1000)
                 + (pb.waitingNext ? ' · 接续下一段…' : v.paused ? ' 已暂停' : ' 播放中');
             var s = pb.segs[pb.idx];
@@ -5730,8 +5903,18 @@
         $('pbEmpty').hidden = true;
         v.dataset.srcName = s.name; // 诊断与 code=4 自动 remux 重试需要知道当前段名
         delete v.dataset.remuxTried;
-        v.src = withToken('api/recordings/' + encodeURIComponent(s.name));
-        v.play().catch(function () {});
+        stopVodMms(); // 上一段若为 MMS 渐进回放，先停掉再走本次判定
+        pb.mms = false;
+        // v2.3.1 第二十七轮：iPhone（MMS-only 环境）回放走 srcObject 渐进流，
+        // 杜绝 AVPlayer 系统全屏（直链在部分 WKWebView 宿主里 playsinline 被忽略）。
+        var vodUrl = withToken('api/recordings/' + encodeURIComponent(s.name));
+        if (mountVodMms(v, vodUrl, pb.pendingOffset || 0)) {
+            pb.mms = true;
+            pb.pendingOffset = null; // 起始 seek 由 MMS 会话在缓冲覆盖后执行
+        } else {
+            v.src = vodUrl;
+            v.play().catch(function () {});
+        }
         // v2.3.1 录制段提示每次会话只弹一次：自动接续/循环进入录制段时不再反复打扰
         if (s.recording && !pb.recToastShown) {
             pb.recToastShown = true;
@@ -5752,6 +5935,7 @@
      */
     function maybePreloadNext() {
         var pb = state.pb;
+        if (pb.mms) return; // MMS 渐进回放：双 video 预载机制不适用（ended 自动接续）
         if (pb.idx < 0 || pb.loop === 'seg') return;
         var v = pbV();
         if (!v.duration || !isFinite(v.duration)) return;
@@ -5776,6 +5960,7 @@
      *  换段，不等 ended 事件——ended 之后浏览器可能先清帧，等待事件派发也会空转。 */
     function maybeSwapEarly() {
         var pb = state.pb;
+        if (pb.mms) return; // MMS 渐进回放：由 ended 事件接续
         if (pb.idx < 0 || pb.loop === 'seg' || pb.swapping) return;
         var v = pbV();
         if (!v.duration || !isFinite(v.duration)) return;
@@ -6615,7 +6800,7 @@
             /* v2.3.1 自定义播放控制（原生 controls 移除后，进度以底部全天时间轴为准） */
             function syncPbPlayBtn() {
                 var v = pbV();
-                $('btnPbPlay').textContent = (v && !v.paused && v.src) ? '⏸ 暂停' : '▶ 播放';
+                $('btnPbPlay').textContent = (v && !v.paused && (v.src || v.srcObject)) ? '⏸ 暂停' : '▶ 播放';
                 updateMeta();
             }
             function togglePbPlay() {

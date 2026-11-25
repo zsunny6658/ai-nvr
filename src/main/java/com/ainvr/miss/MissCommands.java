@@ -83,17 +83,48 @@ public final class MissCommands {
     }
 
     /**
-     * 对讲上行编码（对照 go2rtc SpeakerCodec / lalmax SpeakerCodec）：
-     * 绝大多数机型为 G.711 A-law 8kHz（{@link #CODEC_PCMA}，每 40ms 320 字节）；
-     * {@code isa.camera.hlc6} 与 dafang/xiaofang 老机型为 16bit 线性 PCM
-     * （{@link #CODEC_PCM}，每 40ms 640 字节）；{@code chuangmi.camera.72ac1}
-     * 需要 OPUS 40ms 帧（v2.3.1 第十六轮起支持，浏览器 WebCodecs 编码）。
+     * 对讲上行编码（对照 go2rtc SpeakerCodec / lalmax SpeakerCodec，以及米家 miot-plugin-sdk
+     * 的 per-model codec 选择）：
+     * <ul>
+     *   <li>2020 前老机型（dafang/xiaofang/{@code isa.camera.hlc6}）为 16bit 线性 PCM
+     *       （{@link #CODEC_PCM}，每 40ms 640 字节，8kHz）；</li>
+     *   <li>{@code chuangmi.camera.72ac1} 需要 OPUS 40ms 帧（第十六轮起支持，WebCodecs 编码）；</li>
+     *   <li><strong>第二十七轮</strong>：{@code isa.camera.hlc8}（CW400）与
+     *       {@code chuangmi.camera.039a01} 等较新机型上行音频实为 OPUS（设备 0x10C 应答
+     *       "g711a" 但 HlsSink 实收 CODEC_OPUS 48kHz，go2rtc DEVICES.md 该两机型标注
+     *       opus；lalmax 文档「C300 及更新机型双向 Opus」）——按 PCMA 8k 上行即出现
+     *       变声/杂音/无声（真机三台三症状实锤），改发 OPUS 48k；</li>
+     *   <li>其余机型 G.711 A-law 8kHz（{@link #CODEC_PCMA}，每 40ms 320 字节）。</li>
+     * </ul>
+     * 可用系统属性按 DID 覆盖现场试参：{@code -Dinvr.talkcodec.<did>=opus|pcma|pcm}。
      */
     public static int speakerCodecFor(String model) {
+        return speakerCodecFor(model, null);
+    }
+
+    /** 同上，支持按 DID 的系统属性覆盖（值不区分大小写：opus/pcma/pcm）。 */
+    public static int speakerCodecFor(String model, String did) {
+        String ov = did == null ? null : System.getProperty("invr.talkcodec." + did);
+        if (ov == null) {
+            ov = System.getProperty("invr.talkcodec");
+        }
+        if (ov != null) {
+            ov = ov.trim().toLowerCase();
+            if ("opus".equals(ov)) {
+                return CODEC_OPUS;
+            }
+            if ("pcma".equals(ov)) {
+                return CODEC_PCMA;
+            }
+            if ("pcm".equals(ov)) {
+                return CODEC_PCM;
+            }
+        }
         if ("isa.camera.hlc6".equals(model)) {
             return CODEC_PCM;
         }
-        if ("chuangmi.camera.72ac1".equals(model)) {
+        if ("isa.camera.hlc8".equals(model) || "chuangmi.camera.039a01".equals(model)
+                || "chuangmi.camera.72ac1".equals(model)) {
             return CODEC_OPUS;
         }
         return CODEC_PCMA;
@@ -101,7 +132,12 @@ public final class MissCommands {
 
     /** 该机型对讲上行是否为 16bit 线性 PCM（前端按此选择采样编码方式）。 */
     public static boolean speakerLinearPcm(String model) {
-        return "isa.camera.hlc6".equals(model);
+        return speakerLinearPcm(model, null);
+    }
+
+    /** 同上，支持按 DID 覆盖。 */
+    public static boolean speakerLinearPcm(String model, String did) {
+        return speakerCodecFor(model, did) == CODEC_PCM;
     }
 
     /**

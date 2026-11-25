@@ -60,5 +60,24 @@ class PresetAndSpeakerTest {
         assertFalse(MissCommands.speakerLinearPcm("chuangmi.camera.029a02"));
         // v2.3.1 第十六轮：72ac1 走 OPUS（浏览器 WebCodecs 编码），不再整体拒绝
         assertEquals(MissCommands.CODEC_OPUS, MissCommands.speakerCodecFor("chuangmi.camera.72ac1"));
+        // v2.3.1 第二十七轮：hlc8（CW400）/ 039a01 上行音频实为 OPUS（go2rtc DEVICES.md +
+        // lalmax 文档 + 真机 HlsSink 实收 CODEC_OPUS），PCMA 8k 上行 → 变声/杂音/无声
+        assertEquals(MissCommands.CODEC_OPUS, MissCommands.speakerCodecFor("isa.camera.hlc8"));
+        assertEquals(MissCommands.CODEC_OPUS, MissCommands.speakerCodecFor("chuangmi.camera.039a01"));
+        assertFalse(MissCommands.speakerLinearPcm("isa.camera.hlc8"));
+    }
+
+    @Test
+    void speakerCodecPerDidOverride() {
+        String did = "test-did-override";
+        System.setProperty("invr.talkcodec." + did, "pcma");
+        try {
+            assertEquals(MissCommands.CODEC_PCMA,
+                    MissCommands.speakerCodecFor("isa.camera.hlc8", did));
+            System.setProperty("invr.talkcodec." + did, "pcm");
+            assertTrue(MissCommands.speakerLinearPcm("isa.camera.hlc8", did));
+        } finally {
+            System.clearProperty("invr.talkcodec." + did);
+        }
     }
 }

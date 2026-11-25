@@ -123,8 +123,11 @@ public class LiveWebSocketHandler extends AbstractWebSocketHandler {
             Integer from = null;
             try {
                 while (running.get() && session.isOpen()) {
+                    // 首包只带 init+1 片（第二十七轮真机实锤：等 2 片在 6s 分片节奏下
+                    // 冷启动 ≈13s，超过 12s 截止被误判「直播中断」→ 降级 blob → 系统全屏，
+                    // 且起播要多等一个分片周期）。1 片 ≈8s 即可起播，后续 2 片维持平滑。
                     HlsService.LiveChunk chunk = from == null
-                            ? hls.liveChunk(did, null, 2, 12000)
+                            ? hls.liveChunk(did, null, 1, 18000)
                             : hls.liveSegments(did, from, 2, 6000);
                     if (chunk == null) {
                         // 设备离线/直播中断：通知前端走降级链路

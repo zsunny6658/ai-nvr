@@ -76,9 +76,8 @@ public class TalkWebSocketHandler extends AbstractWebSocketHandler {
             reject(session, "设备列表中未找到 did=" + baseDid);
             return;
         }
-        if (!MissCommands.speakerLinearPcm(device.model())
-                && MissCommands.speakerCodecFor(device.model()) == MissCommands.CODEC_OPUS) {
-            // 72ac1 等 OPUS 机型：前端用 WebCodecs 编码，服务端只透传；旧浏览器不支持时报错提示
+        if (MissCommands.speakerCodecFor(device.model(), baseDid) == MissCommands.CODEC_OPUS) {
+            // hlc8/039a01/72ac1 等 OPUS 机型：前端用 WebCodecs 编码，服务端只透传；旧浏览器不支持时报错提示
             session.getAttributes().put("opus", Boolean.TRUE);
         }
         if (activeByDid.containsKey(baseDid)) {
