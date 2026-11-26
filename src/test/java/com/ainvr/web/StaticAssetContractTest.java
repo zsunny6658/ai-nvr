@@ -31,17 +31,19 @@ class StaticAssetContractTest {
 
         assertTrue(html.contains("btnPreviewBack"), "预览弹层缺少应用内返回按钮");
         assertTrue(html.contains("btnPlayerBack"), "回放弹层缺少应用内返回按钮");
-        assertTrue(html.contains("v=92"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
+        assertTrue(html.contains("v=93"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
         // v2.3.1 第二十七轮回归锁：iPhone MMS-VOD 内联回放（根治回放系统全屏）
         assertTrue(js.contains("function mountVodMms") && js.contains("function stopVodMms"),
                 "回放/录像弹层必须支持 MMS 渐进回放（直链在部分 WKWebView 宿主里 playsinline 被忽略 → 全屏）");
         assertTrue(js.contains("state.vodSess"), "MMS 回放会话需有全局槽位（换段/关闭时停止）");
         assertTrue(js.contains("if (pb.mms) return;"), "MMS 回放下预载/提前交接必须让位（ended 自动接续）");
         assertTrue(js.contains("pb_vod_fail"), "MMS 回放失败须上报诊断并回退直链");
-        // v2.3.1 第二十七轮回归锁：对讲按机型选 OPUS（hlc8/039a01 双向音频均为 OPUS）
+        // v2.3.1 第二十八轮回归锁：对讲按机型选 OPUS（039a01/079ac1），CW400(hlc8) 回归 PCMA
         assertTrue(js.contains("OPUS_TALK_MODELS"), "前端手势内采样率决策须与服务端 speakerCodecFor 同表");
-        assertTrue(js.contains("'isa.camera.hlc8': 1") && js.contains("'chuangmi.camera.039a01': 1"),
-                "OPUS 机型表须包含 hlc8 与 039a01");
+        assertTrue(js.contains("'chuangmi.camera.039a01': 1") && js.contains("'chuangmi.camera.079ac1': 1")
+                        && js.contains("'chuangmi.camera.72ac1': 1"),
+                "OPUS 机型表须包含 039a01 / 079ac1 / 72ac1");
+        assertTrue(!js.contains("'isa.camera.hlc8': 1"), "CW400(hlc8) 对讲须为 PCMA，不得留在 OPUS 机型表");
         // v2.3.1 第二十七轮回归锁：MMS 首包 1 片（真机实锤 2 片冷启动 13s > 12s 截止被误判直播中断）
         assertTrue(js.contains("mms-retry"), "MMS 失败须先原路重试一次再降级（blob 直链在 iPhone 必全屏）");
         assertTrue(js.contains("autoFallbackToCompat('直播推流中断"), "MMS 重试仍失败应降级兼容画面而非 blob 全屏");

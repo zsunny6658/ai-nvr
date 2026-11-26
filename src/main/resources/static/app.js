@@ -4370,12 +4370,12 @@
         var wantRate = 8000;
         try {
             // codec 判断与服务端 speakerCodecFor 一致：hlc6=PCM(8k)，OPUS 机型=48k，
-            // 其余 PCMA(8k)。第二十七轮起 OPUS 机型含 hlc8 / 039a01（真机三台三症状根因：
-            // 新机型双向音频均为 OPUS，PCMA 8k 上行 → 变声/杂音/无声）。
+            // 其余 PCMA(8k)。第二十八轮：OPUS 机型 = 72ac1 / 039a01 / 079ac1
+            // （CW400/hlc8 改回 PCMA，go2rtc SpeakerCodec 实证）。
             var OPUS_TALK_MODELS = {
                 'chuangmi.camera.72ac1': 1,
-                'isa.camera.hlc8': 1,
-                'chuangmi.camera.039a01': 1
+                'chuangmi.camera.039a01': 1,
+                'chuangmi.camera.079ac1': 1
             };
             var m = findDevice(did);
             var model = m ? m.model : '';
