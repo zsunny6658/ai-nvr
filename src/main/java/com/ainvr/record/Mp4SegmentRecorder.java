@@ -111,10 +111,99 @@ public final class Mp4SegmentRecorder {
     private final int videoCodecId;
     private final int audioChannels;
 
-    private final LinkedBlockingQueue<VideoFrame> videoQueue = new LinkedBlockingQueue<>();
-    private final LinkedBlockingQueue<AudioFrame> audioQueue = new LinkedBlockingQueue<>();
+    /**
+     * 录像帧队列容量（按字节）。此前为无界 {@link LinkedBlockingQueue}：一旦录制线程异常退出
+     * 而 running 仍为 true，feed 侧会以码流速度无限入队——真机堆转储曾捕获 67 万帧 / 902MB
+     * byte[] 积压。改为字节上限 + 满时丢最旧完整帧：录像偶发瑕疵远优于 JVM 整体 OOM。
+     * 视频 64MB ≈ 20~30s 积压缓冲，音频 16MB ≈ 数分钟，正常写盘速度下永不触发。
+     */
+    private static final long MAX_VIDEO_QUEUE_BYTES = 64L * 1024 * 1024;
+    private static final long MAX_AUDIO_QUEUE_BYTES = 16L * 1024 * 1024;
+    private final BoundedMediaQueue<VideoFrame> videoQueue =
+            new BoundedMediaQueue<>(MAX_VIDEO_QUEUE_BYTES);
+    private final BoundedMediaQueue<AudioFrame> audioQueue =
+            new BoundedMediaQueue<>(MAX_AUDIO_QUEUE_BYTES);
     private final AtomicLong segmentCounter = new AtomicLong();
     private static final VideoFrame EOF = new VideoFrame(-1, null);
+
+    /**
+     * 按负载字节数限界的单生产者单消费者队列：满时丢最旧帧（drop-oldest），保证新帧总能进来，
+     * 缓存始终代表「最近 N 秒」。所有可变状态仅由入队线程 / 出队线程分别触碰，poll/take 与
+     * offer 内部用 synchronized 保护字节计数；Java synchronized 是内存屏障，帧内容对消费者可见。
+     */
+    private static final class BoundedMediaQueue<T> {
+        private final LinkedBlockingQueue<T> queue = new LinkedBlockingQueue<>();
+        private final long maxBytes;
+        private long bytes;
+        private long dropped;
+
+        BoundedMediaQueue(long maxBytes) {
+            this.maxBytes = maxBytes;
+        }
+
+        /** @return true 表示入队（可能伴随丢弃旧帧），false 表示帧本身超限被忽略。 */
+        synchronized boolean offer(T frame, int frameBytes) {
+            if (frameBytes <= 0) { // EOF 等控制项不计字节、不触发丢弃
+                queue.offer(frame);
+                return true;
+            }
+            if (frameBytes > maxBytes) {
+                dropped++;
+                return false;
+            }
+            while (bytes + frameBytes > maxBytes && !queue.isEmpty()) {
+                T old = queue.poll();
+                bytes -= payloadBytes(old);
+                dropped++;
+            }
+            queue.offer(frame);
+            bytes += frameBytes;
+            return true;
+        }
+
+        T take() throws InterruptedException {
+            T f = queue.take();
+            if (f != null) {
+                synchronized (this) {
+                    bytes -= payloadBytes(f);
+                }
+            }
+            return f;
+        }
+
+        T peek() {
+            return queue.peek();
+        }
+
+        T poll() {
+            T f = queue.poll();
+            if (f != null) {
+                synchronized (this) {
+                    bytes -= payloadBytes(f);
+                }
+            }
+            return f;
+        }
+
+        synchronized void clear() {
+            queue.clear();
+            bytes = 0;
+        }
+
+        synchronized long dropped() {
+            return dropped;
+        }
+
+        private static int payloadBytes(Object f) {
+            if (f instanceof VideoFrame v) {
+                return v.data == null ? 0 : v.data.length;
+            }
+            if (f instanceof AudioFrame a) {
+                return a.data == null ? 0 : a.data.length;
+            }
+            return 0;
+        }
+    }
 
     // 时间戳归一（仅在 feed 侧单线程调用）
     private long baseDevTs = -1;
@@ -208,20 +297,36 @@ public final class Mp4SegmentRecorder {
 
     /** 喂入一个视频访问单元（Annex-B，含起始码）与设备毫秒时间戳。 */
     public void feedVideo(byte[] annexB, long devTsMs) {
-        if (!running) {
+        // worker 一旦异常退出，running 立即置 false（见 run() finally），杜绝死后继续积压
+        if (!running || !worker.isAlive()) {
             return;
         }
         long outMs = normalize(devTsMs);
-        videoQueue.offer(new VideoFrame(outMs, annexB));
+        videoQueue.offer(new VideoFrame(outMs, annexB), annexB.length);
+        reportDrops();
     }
 
     /** 喂入一个裸 Opus 帧与设备毫秒时间戳。 */
     public void feedAudio(byte[] opus, long devTsMs) {
-        if (!running) {
+        if (!running || !worker.isAlive()) {
             return;
         }
         long outMs = normalize(devTsMs);
-        audioQueue.offer(new AudioFrame(outMs, opus));
+        audioQueue.offer(new AudioFrame(outMs, opus), opus.length);
+        reportDrops();
+    }
+
+    /** 背压可观测性：每丢 1000 帧 WARN 一次，记录累计丢弃量（日志节流，不刷屏）。 */
+    private long lastReportedDrops;
+    private void reportDrops() {
+        long drops = videoQueue.dropped() + audioQueue.dropped();
+        if (drops - lastReportedDrops >= 1000) {
+            lastReportedDrops = drops;
+            log.warn("[{}] 录像队列背压：已丢弃 {} 帧（视频 {} / 音频 {}，队列上限 {}MB/{}MB）；"
+                            + "通常为磁盘写入慢或上游码率突增，录像以丢帧换取服务稳定",
+                    did, drops, videoQueue.dropped(), audioQueue.dropped(),
+                    MAX_VIDEO_QUEUE_BYTES >> 20, MAX_AUDIO_QUEUE_BYTES >> 20);
+        }
     }
 
     /** 停止并收尾（写出 trailer、关闭所有文件）。 */
@@ -230,7 +335,7 @@ public final class Mp4SegmentRecorder {
             return;
         }
         running = false;
-        videoQueue.offer(EOF);
+        videoQueue.offer(EOF, 0);
         try {
             worker.join(15_000);
         } catch (InterruptedException e) {
@@ -283,6 +388,11 @@ public final class Mp4SegmentRecorder {
             fatal = t;
             log.error("[{}] MP4 录像线程异常：{}", did, t.toString(), t);
         } finally {
+            // 关键：worker 退出（无论正常/异常/OOM）立即拒绝新帧入队，
+            // 否则 feed 侧继续填充无界队列，重演 67 万帧 / 902MB 的 OOM
+            running = false;
+            videoQueue.clear();
+            audioQueue.clear();
             closeSegment();
             freeAudioChain();
             av_packet_unref(videoPkt);
