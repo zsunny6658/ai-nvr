@@ -31,6 +31,20 @@ public final class DataChannel {
     private final Map<Integer, byte[]> pushBuf;
     private final BlockingQueue<byte[]> popBuf;
     private volatile boolean closed;
+    /**
+     * 媒体通道背压（v2.3.1 第二十九轮，修第二十七轮回归）：第二十七轮把媒体 pop
+     * 队列 100 条砍到 32 条后，录像 24/7 场景消费端偶发过慢（HlsSink 队列满一次
+     * 丢 13000 包），32 条大帧瞬间打满 → push 抛「pop buffer is full」→ 收包线程
+     * 退出 → 全量重连（真机三台每天数百次断流，预览「连接不上」的直接根因）。
+     * 改为字节上限 + 丢最旧完整帧（drop-oldest，直播流成熟做法）：丢帧只有毫秒级
+     * 画面瑕疵，断流重连是 5~15s 画面中断 + 设备重新鉴权。
+     */
+    private final boolean dropOldest;
+    private final long maxQueueBytes;
+    private final java.util.concurrent.atomic.AtomicLong queuedBytes =
+            new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.concurrent.atomic.AtomicLong droppedFrames =
+            new java.util.concurrent.atomic.AtomicLong();
 
     private int waitSeq;
     private byte[] waitData = new byte[0];
@@ -38,9 +52,20 @@ public final class DataChannel {
     private int waitSize;
 
     public DataChannel(int pushSize, int popSize) {
+        this(pushSize, popSize, 0, false);
+    }
+
+    /** 媒体通道：字节上限 + 丢旧帧背压。 */
+    public static DataChannel media(int pushSize, int popSize, long maxQueueBytes) {
+        return new DataChannel(pushSize, popSize, maxQueueBytes, true);
+    }
+
+    private DataChannel(int pushSize, int popSize, long maxQueueBytes, boolean dropOldest) {
         this.pushSize = pushSize;
         this.pushBuf = pushSize > 0 ? new HashMap<>(pushSize) : null;
         this.popBuf = new ArrayBlockingQueue<>(Math.max(1, popSize));
+        this.maxQueueBytes = maxQueueBytes;
+        this.dropOldest = dropOldest;
     }
 
     /**
@@ -62,11 +87,76 @@ public final class DataChannel {
                 break;
             }
             byte[] msg = Arrays.copyOf(waitData, waitSize);
-            if (!popBuf.offer(msg)) {
+            if (!enqueue(msg)) {
                 throw new IOException("cs2: pop buffer is full");
             }
             consume(waitSize);
             waitSize = 0;
+        }
+    }
+
+    /**
+     * 入队一条完整消息。控制通道（不可丢）满即抛错；媒体通道按字节上限丢最旧
+     * 完整帧腾位（push 线程与 pop 消费线程并发，计数用 AtomicLong）。
+     *
+     * @return true=已入队；false=不可丢且已满（或可丢但消息单条超限）
+     */
+    private boolean enqueue(byte[] msg) {
+        if (dropOldest) {
+            trimFor(msg);
+        }
+        if (popBuf.offer(msg)) {
+            queuedBytes.addAndGet(msg.length);
+            return true;
+        }
+        if (!dropOldest) {
+            return false;
+        }
+        // 条数上限也满：继续丢旧帧直至腾出空间；极端情况下（单条消息超过上限且
+        // 队列无法清空）才放弃——防御性兜底
+        int dropped = 0;
+        while (true) {
+            byte[] old = popBuf.poll();
+            if (old == null) {
+                if (popBuf.offer(msg)) {
+                    queuedBytes.addAndGet(msg.length);
+                    return true;
+                }
+                return false;
+            }
+            queuedBytes.addAndGet(-old.length);
+            dropped++;
+            if (popBuf.offer(msg)) {
+                queuedBytes.addAndGet(msg.length);
+                logDrop(dropped);
+                return true;
+            }
+            if (dropped > 500) {
+                return false;
+            }
+        }
+    }
+
+    /** 字节上限预裁剪：丢最旧完整帧直至新消息能放进上限内。 */
+    private void trimFor(byte[] msg) {
+        int dropped = 0;
+        while (queuedBytes.get() + msg.length > maxQueueBytes) {
+            byte[] old = popBuf.poll();
+            if (old == null) {
+                break;
+            }
+            queuedBytes.addAndGet(-old.length);
+            dropped++;
+        }
+        logDrop(dropped);
+    }
+
+    private void logDrop(int dropped) {
+        if (dropped > 0) {
+            long total = droppedFrames.addAndGet(dropped);
+            org.slf4j.LoggerFactory.getLogger(DataChannel.class)
+                    .debug("cs2 媒体队列背压：本次丢 {} 帧（累计 {}），队列 {} 字节",
+                            dropped, total, queuedBytes.get());
         }
     }
 
@@ -115,10 +205,15 @@ public final class DataChannel {
         while (true) {
             byte[] data = popBuf.poll(200, TimeUnit.MILLISECONDS);
             if (data != null) {
+                queuedBytes.addAndGet(-data.length);
                 return data;
             }
             if (closed) {
-                return popBuf.poll();
+                byte[] rest = popBuf.poll();
+                if (rest != null) {
+                    queuedBytes.addAndGet(-rest.length);
+                }
+                return rest;
             }
         }
     }
@@ -135,10 +230,15 @@ public final class DataChannel {
             }
             byte[] data = popBuf.poll(Math.min(200, Math.max(1, remain)), TimeUnit.MILLISECONDS);
             if (data != null) {
+                queuedBytes.addAndGet(-data.length);
                 return data;
             }
             if (closed) {
-                return popBuf.poll();
+                byte[] rest = popBuf.poll();
+                if (rest != null) {
+                    queuedBytes.addAndGet(-rest.length);
+                }
+                return rest;
             }
         }
     }

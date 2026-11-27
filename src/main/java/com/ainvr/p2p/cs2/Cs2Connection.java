@@ -38,7 +38,9 @@ public final class Cs2Connection implements AutoCloseable {
         // v2.3.1 第二十七轮：媒体 pop 队列 100→32。队列上限按「条数」计而消息无字节上限
         // （视频关键帧 1~2MB），100 条 × 3 台设备即可撑满 512m 堆（真机 OOM 实锤）；
         // 32 条（约 32MB/设备）已远超消费端所需的平滑余量，堆积更深即断流重连。
-        this.channels[Cs2.CHANNEL_MEDIA] = new DataChannel(250, 32);
+        // 第二十九轮：字节上限 16MB + 丢旧帧背压（第二十七轮 32 条计数上限引发
+        // 「pop buffer is full」断流回归——录像 24/7 下三台每天数百次重连）
+        this.channels[Cs2.CHANNEL_MEDIA] = DataChannel.media(250, 128, 16L * 1024 * 1024);
     }
 
     void start() {

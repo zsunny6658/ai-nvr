@@ -89,12 +89,11 @@ public final class MissCommands {
      *   <li>2020 前老机型（dafang/xiaofang/{@code isa.camera.hlc6}）为 16bit 线性 PCM
      *       （{@link #CODEC_PCM}，每 40ms 640 字节，8kHz）；</li>
      *   <li>{@code chuangmi.camera.72ac1} 需要 OPUS 40ms 帧（第十六轮起支持，WebCodecs 编码）；</li>
-     *   <li><strong>第二十八轮修正</strong>：OPUS 机型 = {@code 039a01}（小米2 云台版，
-     *       真机 OPUS 正常/PCMA 变声）与 {@code 079ac1}（小米摄像头 4，2025 新机型，
-     *       PCMA 无声/与 039a01 同代同修法）；{@code isa.camera.hlc8}（CW400）改回
-     *       默认 PCMA——go2rtc {@code SpeakerCodec()} 仅 72ac1 特判 OPUS、CW400 走
-     *       默认 G.711A（DEVICES.md 的 "opus" 指上行媒体流而非对讲回传），上一轮
-     *       PCMA 杂音疑为当时 DataChannel 无界队列/堆压力损坏帧流（第二十七轮已根治）；</li>
+     *   <li><strong>第二十九轮定版</strong>：OPUS 机型 = {@code 039a01}（小米2 云台版，
+     *       真机 OPUS 正常/PCMA 变声）、{@code 079ac1}（小米摄像头 4，2025 新机型，
+     *       PCMA 无声）与 {@code isa.camera.hlc8}（CW400，第二十七轮 OPUS 真机正常
+     *       ——go2rtc {@code SpeakerCodec()} 将其归默认 PCMA 与实测不符，以真机为准；
+     *       其第二十六轮 PCMA「杂音」实为当时 DataChannel 无界队列/堆压力损坏帧流）；</li>
      *   <li>其余机型 G.711 A-law 8kHz（{@link #CODEC_PCMA}，每 40ms 320 字节）。</li>
      * </ul>
      * 可用系统属性按 DID 覆盖现场试参：{@code -Dinvr.talkcodec.<did>=opus|pcma|pcm}。
@@ -124,11 +123,14 @@ public final class MissCommands {
         if ("isa.camera.hlc6".equals(model)) {
             return CODEC_PCM;
         }
-        // 对照 go2rtc SpeakerCodec()：仅 72ac1 等明确机型走 OPUS，CW400(hlc8)
-        // 走默认 PCMA（DEVICES.md 的 "opus" 指上行媒体流而非对讲回传）。
-        // 039a01（小米2 云台版）与 079ac1（小米摄像头 4，2025 新机型）真机实测
-        // PCMA 无声/OPUS 正常（第二十七/二十八轮），与 lalmax「C300+ 双向 Opus」一致。
-        if ("chuangmi.camera.039a01".equals(model) || "chuangmi.camera.079ac1".equals(model)
+        // OPUS 机型（第二十九轮定版，均经真机验证）：72ac1（第十六轮）、
+        // 039a01 小米2云台版（第二十七轮，OPUS 正常/PCMA 变声）、
+        // 079ac1 小米摄像头4（2025 新机型，PCMA 无声，与 039a01 同代）、
+        // hlc8 CW400（第二十七轮 OPUS 真机正常——go2rtc SpeakerCodec() 将其归入
+        // 默认 PCMA 与实测不符，以真机为准；其第二十六轮 PCMA「杂音」实为当时
+        // DataChannel 无界队列/OOM 损坏帧流所致）。
+        if ("isa.camera.hlc8".equals(model) || "chuangmi.camera.039a01".equals(model)
+                || "chuangmi.camera.079ac1".equals(model)
                 || "chuangmi.camera.72ac1".equals(model)) {
             return CODEC_OPUS;
         }

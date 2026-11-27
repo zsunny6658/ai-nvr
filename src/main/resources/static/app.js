@@ -4370,12 +4370,13 @@
         var wantRate = 8000;
         try {
             // codec 判断与服务端 speakerCodecFor 一致：hlc6=PCM(8k)，OPUS 机型=48k，
-            // 其余 PCMA(8k)。第二十八轮：OPUS 机型 = 72ac1 / 039a01 / 079ac1
-            // （CW400/hlc8 改回 PCMA，go2rtc SpeakerCodec 实证）。
+            // 其余 PCMA(8k)。第二十九轮定版：OPUS 机型 = 72ac1 / 039a01 / 079ac1 /
+            // hlc8（CW400 第二十七轮 OPUS 真机正常，以实测为准）。
             var OPUS_TALK_MODELS = {
                 'chuangmi.camera.72ac1': 1,
                 'chuangmi.camera.039a01': 1,
-                'chuangmi.camera.079ac1': 1
+                'chuangmi.camera.079ac1': 1,
+                'isa.camera.hlc8': 1
             };
             var m = findDevice(did);
             var model = m ? m.model : '';
@@ -4415,7 +4416,11 @@
             var msg;
             try { msg = JSON.parse(ev.data); } catch (e2) { return; }
             if (!msg.ok) {
-                setPtzStatus('喊话失败：' + (msg.error || '未知原因'), 'err');
+                if ((msg.error || '').indexOf('接管') >= 0) {
+                    setPtzStatus('该摄像头已在另一页面/设备开始喊话，本端已停止', 'err');
+                } else {
+                    setPtzStatus('喊话失败：' + (msg.error || '未知原因'), 'err');
+                }
                 talkStop(true);
                 return;
             }

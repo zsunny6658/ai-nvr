@@ -97,4 +97,75 @@ class DataChannelGuardTest {
         assertEquals(64, r2.length);
         assertArrayEquals(m2, r2);
     }
+
+    // ===================== 第二十九轮：媒体通道丢旧帧背压 =====================
+
+    private static byte[] framed(byte[] m) {
+        byte[] f = new byte[4 + m.length];
+        System.arraycopy(be32(m.length), 0, f, 0, 4);
+        System.arraycopy(m, 0, f, 4, m.length);
+        return f;
+    }
+
+    /**
+     * 媒体通道队列溢出时丢最旧完整帧而不是断流——第二十七轮 32 条计数上限引发
+     * 「pop buffer is full」断流回归（真机三台每天数百次重连，预览「连接不上」）。
+     */
+    @Test
+    void mediaChannelDropsOldestInsteadOfDisconnecting() throws Exception {
+        DataChannel dc = DataChannel.media(0, 4, 1024 * 1024);
+        byte[] m1 = msg(16);
+        byte[] m2 = msg(32);
+        byte[] m3 = msg(48);
+        byte[] m4 = msg(64);
+        byte[] m5 = msg(80);
+        dc.push(framed(m1));
+        dc.push(framed(m2));
+        dc.push(framed(m3));
+        dc.push(framed(m4));
+        // 第 5 条超容量 4：必须成功入队（丢 m1），绝不抛异常断流
+        dc.push(framed(m5));
+        byte[] r2 = dc.pop();
+        byte[] r3 = dc.pop();
+        byte[] r4 = dc.pop();
+        byte[] r5 = dc.pop();
+        assertArrayEquals(m2, r2, "最旧的 m1 应被丢弃");
+        assertArrayEquals(m3, r3);
+        assertArrayEquals(m4, r4);
+        assertArrayEquals(m5, r5);
+    }
+
+    /** 字节上限同样触发丢旧帧：大帧场景（每条 ~100KB）不会按条数先爆。 */
+    @Test
+    void mediaChannelByteCapDropsOldest() throws Exception {
+        int frameBytes = 64 * 1024;
+        DataChannel dc = DataChannel.media(0, 64, frameBytes * 4L);
+        byte[] big = msg(frameBytes);
+        for (int i = 0; i < 10; i++) {
+            dc.push(framed(big)); // 持续超 4 帧字节上限：全部应成功入队（丢旧）
+        }
+        // 队列里应只剩最后 ~4 帧且字节数不超上限
+        int count = 0;
+        byte[] r;
+        long total = 0;
+        while ((r = dc.pop(1)) != null) {
+            assertEquals(frameBytes, r.length);
+            total += r.length;
+            count++;
+        }
+        assertTrue(count <= 5 && count >= 2, "应保留最近的若干帧，实际 " + count);
+        assertTrue(total <= frameBytes * 5L, "字节上限应生效");
+    }
+
+    /** 控制通道（不可丢）保持满即抛错的防护语义。 */
+    @Test
+    void controlChannelStillThrowsWhenFull() {
+        DataChannel dc = new DataChannel(0, 4);
+        byte[] one = framed(msg(8));
+        assertThrows(IOException.class, () -> {
+            for (int i = 0; i < 5; i++) {
+                dc.push(one);
+            }
+        });
+    }
 }

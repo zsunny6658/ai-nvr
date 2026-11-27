@@ -38,7 +38,8 @@ import java.util.regex.Pattern;
  *   <li>连接关闭或上游会话重建时服务端发 SpeakerStop 0x108。</li>
  * </ol>
  *
- * <p>同一台设备同一时刻只允许一路喊话（扬声器天然独占），重复连接会被拒绝。</p>
+ * <p>同一台设备同一时刻只允许一路喊话（扬声器天然独占）。新连接会<b>抢占接管</b>
+ * 旧会话（对齐米家 App 行为），旧会话收到 {@code ok:false,"喊话被另一客户端接管"} 后关闭。</p>
  */
 @Component
 public class TalkWebSocketHandler extends AbstractWebSocketHandler {
@@ -54,8 +55,8 @@ public class TalkWebSocketHandler extends AbstractWebSocketHandler {
     private final StreamHub hub;
     private final DeviceCatalog catalog;
 
-    /** 每台设备当前对讲会话：did → WS 会话 id。天然独占扬声器。 */
-    private final Map<String, String> activeByDid = new ConcurrentHashMap<>();
+    /** 每台设备当前对讲会话：did → WS 会话。天然独占扬声器。 */
+    private final Map<String, WebSocketSession> activeByDid = new ConcurrentHashMap<>();
 
     public TalkWebSocketHandler(StreamHub hub, DeviceCatalog catalog) {
         this.hub = hub;
@@ -77,12 +78,29 @@ public class TalkWebSocketHandler extends AbstractWebSocketHandler {
             return;
         }
         if (MissCommands.speakerCodecFor(device.model(), baseDid) == MissCommands.CODEC_OPUS) {
-            // hlc8/039a01/72ac1 等 OPUS 机型：前端用 WebCodecs 编码，服务端只透传；旧浏览器不支持时报错提示
+            // hlc8/039a01/079ac1/72ac1 等 OPUS 机型：前端用 WebCodecs 编码，服务端只透传；旧浏览器不支持时报错提示
             session.getAttributes().put("opus", Boolean.TRUE);
         }
-        if (activeByDid.containsKey(baseDid)) {
-            reject(session, "该摄像头正在被另一路喊话占用（扬声器独占）");
-            return;
+        // v2.3.1 第二十九轮：抢占式接管（米家 App 同款行为）。旧实现直接拒绝新连接，
+        // 旧会话若因客户端假死（锁屏/断网 WS 半开）未走 afterConnectionClosed，
+        // 用户后续喊话会一直收到「被另一路喊话占用」（真机 2026-11-26 23:08 实锤）。
+        WebSocketSession prev = activeByDid.get(baseDid);
+        if (prev != null && prev.isOpen()) {
+            CameraStream.SpeakerSession prevSpeaker =
+                    (CameraStream.SpeakerSession) prev.getAttributes().get("speaker");
+            String prevDid = (String) prev.getAttributes().get("did");
+            activeByDid.remove(baseDid, prev);
+            if (prevDid != null) {
+                hub.speakerStop(prevDid, prevSpeaker);
+            }
+            try {
+                prev.sendMessage(new TextMessage("{\"ok\":false,\"error\":\"喊话被另一客户端接管\"}"
+                        .getBytes(StandardCharsets.UTF_8)));
+            } catch (Exception ignored) {
+                // 旧会话可能已死
+            }
+            closeQuietly(prev, CloseStatus.NORMAL);
+            log.info("[{}] 对讲会话被新客户端接管（旧会话 {}）", baseDid, prev.getId());
         }
         if (!hub.isHealthy(baseDid)) {
             reject(session, "该摄像头当前没有可用的取流会话，请先打开实时预览再使用喊话");
@@ -93,7 +111,7 @@ public class TalkWebSocketHandler extends AbstractWebSocketHandler {
             reject(session, "对讲开启失败：取流会话不可用");
             return;
         }
-        activeByDid.put(baseDid, session.getId());
+        activeByDid.put(baseDid, session);
         session.getAttributes().put("did", baseDid);
         session.getAttributes().put("speaker", speaker);
         // 对齐 go2rtc：SpeakerStart 后等待设备准备扬声器通道再接收音频
@@ -184,7 +202,8 @@ public class TalkWebSocketHandler extends AbstractWebSocketHandler {
         }
         CameraStream.SpeakerSession speaker =
                 (CameraStream.SpeakerSession) session.getAttributes().get("speaker");
-        activeByDid.remove(did, session.getId());
+        // 抢占式接管时旧会话已先 remove(did, prev)，此处条件移除避免误删新会话
+        activeByDid.remove(did, session);
         hub.speakerStop(did, speaker);
         log.info("[{}] 对讲上行已结束（status={}）", did, status);
     }

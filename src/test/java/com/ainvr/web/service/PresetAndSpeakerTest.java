@@ -62,12 +62,12 @@ class PresetAndSpeakerTest {
         assertEquals(MissCommands.CODEC_OPUS, MissCommands.speakerCodecFor("chuangmi.camera.72ac1"));
         // v2.3.1 第十六轮：72ac1 走 OPUS（浏览器 WebCodecs 编码），不再整体拒绝
         assertEquals(MissCommands.CODEC_OPUS, MissCommands.speakerCodecFor("chuangmi.camera.72ac1"));
-        // v2.3.1 第二十八轮：OPUS 机型 = 039a01（真机 OPUS 正常/PCMA 变声）+
-        // 079ac1（小米4，2025 新机型，PCMA 无声，与 039a01 同代同修法）；
-        // hlc8（CW400）改回默认 PCMA（go2rtc SpeakerCodec 实证：仅 72ac1 特判 OPUS）
+        // v2.3.1 第二十九轮定版（均经真机验证）：OPUS 机型 = 72ac1 / 039a01 /
+        // 079ac1 / hlc8——CW400 第二十七轮 OPUS 真机正常，go2rtc SpeakerCodec()
+        // 将其归默认 PCMA 与实测不符，以真机为准
         assertEquals(MissCommands.CODEC_OPUS, MissCommands.speakerCodecFor("chuangmi.camera.039a01"));
         assertEquals(MissCommands.CODEC_OPUS, MissCommands.speakerCodecFor("chuangmi.camera.079ac1"));
-        assertEquals(MissCommands.CODEC_PCMA, MissCommands.speakerCodecFor("isa.camera.hlc8"));
+        assertEquals(MissCommands.CODEC_OPUS, MissCommands.speakerCodecFor("isa.camera.hlc8"));
         assertFalse(MissCommands.speakerLinearPcm("isa.camera.hlc8"));
     }
 
