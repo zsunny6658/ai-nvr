@@ -19,6 +19,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.file.Files;
+import java.nio.file.attribute.FileTime;
 import java.util.zip.Deflater;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
@@ -36,6 +37,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -63,9 +67,34 @@ public class RecordingService {
     private static final long MERGE_GAP_MS = 300_000L;
     /** v2.3.1 列表缓存 TTL：弹层反复开关 / 批量操作后刷新等短间隔重复请求不再重扫磁盘。 */
     private static final long LIST_CACHE_MS = 3_000L;
+    /** 索引后台刷新周期（秒）：捕捉正在写入分段的 size 增长（目录 mtime 不变）。 */
+    private static final int INDEX_REFRESH_SEC = 30;
     /** 列表缓存：key=didFilter（"*" 表示全部）。删除 / 目录切换时立即失效。 */
     private volatile List<Map<String, Object>> listCache;
     private volatile String listCacheKey;
+
+    /**
+     * v2.3.1 第三十一轮：录像分段内存索引（文件名 → size/lastModified）。
+     *
+     * <p>24/7 连续录像下目录会积累上万分段，原实现 list/timeline/dashboard 每次全目录
+     * listFiles + 每文件 2 次 stat，NAS 磁盘上秒级阻塞——概览每 30s 扫一遍、回放页每次
+     * 打开都扫。索引化后 API 只读内存；目录 mtime 变化（增删文件）才同步重扫一次，
+     * 另有后台定时刷新捕捉正在写入分段的 size 增长。</p>
+     */
+    private record SegMeta(long size, long lastModified) {}
+
+    private final ConcurrentHashMap<String, SegMeta> segIndex = new ConcurrentHashMap<>();
+    /**
+     * 上次索引刷新时观察到的目录 mtime（高精度 FileTime，保留纳秒——{@link File#lastModified}
+     * 只有毫秒精度，分段写入间隔几毫秒会落在同一毫秒而漏检）。null 表示不可探测。
+     */
+    private volatile java.nio.file.attribute.FileTime indexDirMtime;
+    private final ScheduledExecutorService indexRefresher = Executors
+            .newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "recording-index");
+                t.setDaemon(true);
+                return t;
+            });
 
     private final NvrProperties props;
     private final StreamHub hub;
@@ -110,6 +139,62 @@ public class RecordingService {
         Integer wp = settingsStore.recordMaxPercent();
         this.waterPercent = (wp != null && wp > 0) ? Math.min(wp, 95) : 0;
         ensureDir(rootDir);
+        // v2.3.1 索引化：启动同步建一次索引（空目录廉价），后台周期刷新捕捉写入中分段的增长
+        refreshIndex();
+        indexRefresher.scheduleWithFixedDelay(this::refreshIndexSafe,
+                INDEX_REFRESH_SEC, INDEX_REFRESH_SEC, TimeUnit.SECONDS);
+    }
+
+    /** 后台线程用的全量刷新：异常吞掉记日志，绝不让定时任务静默死亡。 */
+    private void refreshIndexSafe() {
+        try {
+            refreshIndex();
+        } catch (Throwable t) {
+            log.warn("录像索引后台刷新失败：{}", t.toString());
+        }
+    }
+
+    /** 全量扫描录像目录并重建内存索引（同时清理已不存在的条目）。 */
+    private void refreshIndex() {
+        File dir = rootDir;
+        String[] names = dir.list((d, name) ->
+                name.endsWith(".mp4") && FILE_PATTERN.matcher(name).matches());
+        ConcurrentHashMap<String, SegMeta> fresh = new ConcurrentHashMap<>();
+        if (names != null) {
+            for (String name : names) {
+                File f = new File(dir, name);
+                fresh.put(name, new SegMeta(f.length(), f.lastModified()));
+            }
+        }
+        segIndex.clear();
+        segIndex.putAll(fresh);
+        indexDirMtime = dirMtime(dir);
+    }
+
+    /** 目录 mtime（高精度）；不可读返回 null。 */
+    private static java.nio.file.attribute.FileTime dirMtime(File dir) {
+        try {
+            return java.nio.file.Files.getLastModifiedTime(dir.toPath());
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    /**
+     * 目录 mtime 变化检测：录像目录有文件增删（新分段封段 / 用户手动放删文件）时
+     * 同步重扫一次索引；未变化则纯内存读。单次 stat 目录，代价可忽略。
+     * 另有分段事件回调（SEGMENT_INDEXER）与后台 30s 刷新双保险。
+     */
+    private void ensureIndexFresh() {
+        java.nio.file.attribute.FileTime mtime = dirMtime(rootDir);
+        if (mtime == null || indexDirMtime == null) {
+            return; // 探测不到 mtime：依赖事件回调与后台刷新兜底
+        }
+        if (!mtime.equals(indexDirMtime)) {
+            indexDirMtime = mtime;
+            refreshIndex();
+            invalidateListCache(); // 索引已变，列表缓存同步失效（缓存本身无 TTL）
+        }
     }
 
     /** 启动时录像目录：Web 自定义设置优先，否则用配置文件默认值（相对路径相对运行目录）。 */
@@ -250,10 +335,31 @@ public class RecordingService {
 
     /** 用当前 {@link #rootDir} 为摄像头建立录像订阅（不碰持续录像状态），供 start 与切目录重连复用。 */
     private void attach(String did, CameraDevice device, long seg) {
-        RecordingSink sink = new RecordingSink(did, rootDir, seg);
+        RecordingSink sink = new RecordingSink(did, rootDir, seg, SEGMENT_INDEXER);
         hub.subscribe(did, device.model(), connector.openerFor(device), sink);
         active.put(did, sink);
     }
+
+    /**
+     * 分段事件驱动的索引维护（回调在录像线程内触发，必须轻量：纯内存操作）。
+     * 目录 mtime 轮询在粗粒度文件系统上不可靠（1~2s 延迟/粒度），封段必须立即对录像页可见，
+     * 事件回调是唯一可靠渠道。
+     */
+    private final com.ainvr.record.Mp4SegmentRecorder.SegmentListener SEGMENT_INDEXER =
+            new com.ainvr.record.Mp4SegmentRecorder.SegmentListener() {
+                @Override
+                public void onSegmentOpen(String name, File file) {
+                    // 文件尚在写入：登记占位（size 取当前值，30s 后台刷新与封段回调会更新）
+                    segIndex.putIfAbsent(name, new SegMeta(file.length(), file.lastModified()));
+                    invalidateListCache();
+                }
+
+                @Override
+                public void onSegmentClose(String name, File file, long size, long lastModified) {
+                    segIndex.put(name, new SegMeta(size, lastModified));
+                    invalidateListCache();
+                }
+            };
 
     public Map<String, Object> stop(String did) {
         RecordingSink sink = detach(did);
@@ -319,6 +425,7 @@ public class RecordingService {
 
     @PreDestroy
     public void stopAll() {
+        indexRefresher.shutdownNow();
         active.forEach((did, sink) -> {
             try {
                 hub.unsubscribe(did, sink);
@@ -332,6 +439,7 @@ public class RecordingService {
 
     /** 枚举录像分段文件（仅根目录下的 mp4，HLS 缓存子目录不计）。结果缓存 {@value #LIST_CACHE_MS}ms。 */
     public List<Map<String, Object>> list(String didFilter) throws IOException {
+        ensureIndexFresh();
         String key = (didFilter == null || didFilter.isBlank()) ? "*" : didFilter;
         List<Map<String, Object>> cached = listCache;
         if (cached != null && key.equals(listCacheKey)) {
@@ -349,14 +457,22 @@ public class RecordingService {
     }
 
     private List<Map<String, Object>> scanList(String didFilter) {
-        File[] files = rootDir.listFiles((d, name) ->
-                name.endsWith(".mp4") && FILE_PATTERN.matcher(name).matches());
-        List<Map<String, Object>> out = new ArrayList<>();
-        if (files == null) {
-            return out;
+        // v2.3.1 索引化：读内存索引，不再 listFiles + 逐文件 stat（万级分段在 NAS 上秒级阻塞）。
+        // 正在写入的当前分段可能尚未进索引（30s 后台刷新窗口内）：对 active 的 currentSegmentName
+        // 现场补一次 stat，保证「录制中」列表立即完整可见。
+        for (RecordingSink sink : active.values()) {
+            String cur = sink.currentSegmentName();
+            if (cur != null && !cur.isBlank() && !segIndex.containsKey(cur)) {
+                File f = new File(rootDir, cur);
+                if (f.isFile()) {
+                    segIndex.put(cur, new SegMeta(f.length(), f.lastModified()));
+                }
+            }
         }
-        for (File f : files) {
-            Matcher m = FILE_PATTERN.matcher(f.getName());
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map.Entry<String, SegMeta> e : segIndex.entrySet()) {
+            String name = e.getKey();
+            Matcher m = FILE_PATTERN.matcher(name);
             if (!m.matches()) {
                 continue;
             }
@@ -367,14 +483,15 @@ public class RecordingService {
             // 只有“当前正在写入、尚未封段”的那一个文件标记为录制中；
             // 已切完的历史分段即使该设备仍在录像，也不再显示录制中。
             RecordingSink sink = active.get(did);
-            boolean recording = sink != null && f.getName().equals(sink.currentSegmentName());
+            boolean recording = sink != null && name.equals(sink.currentSegmentName());
+            SegMeta meta = e.getValue();
             out.add(Map.of(
                     "did", did,
-                    "name", f.getName(),
-                    "size", f.length(),
-                    "lastModified", f.lastModified(),
+                    "name", name,
+                    "size", meta.size(),
+                    "lastModified", meta.lastModified(),
                     // v2.3.1 绝对路径：飞牛桌面内供「在文件管理中打开」（openFile）
-                    "path", f.toPath().toAbsolutePath().toString(),
+                    "path", new File(rootDir, name).toPath().toAbsolutePath().toString(),
                     "recording", recording));
         }
         out.sort(Comparator.comparingLong((Map<String, Object> x) -> (long) x.get("lastModified")).reversed());
@@ -403,30 +520,30 @@ public class RecordingService {
         String dayPart = day.format(NAME_DATE);
         long nominalMs = props.getRecordSegmentSec() * 1000L;
 
-        File[] files = rootDir.listFiles((d, name) ->
-                name.endsWith(".mp4") && TIMELINE_PATTERN.matcher(name).matches());
+        // v2.3.1 索引化：回放页每次打开都全目录 listFiles 是「加载回放慢」的元凶之一，改读内存索引
+        ensureIndexFresh();
         List<Map<String, Object>> segs = new ArrayList<>();
-        if (files != null) {
-            for (File f : files) {
-                Matcher m = TIMELINE_PATTERN.matcher(f.getName());
-                if (!m.matches() || !did.equals(m.group(1)) || !dayPart.equals(m.group(3))) {
-                    continue;
-                }
-                LocalDateTime ldt = LocalDateTime.of(
-                        LocalDate.parse(m.group(3), NAME_DATE),
-                        LocalTime.parse(m.group(4), NAME_TIME));
-                long startMs = ldt.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
-                RecordingSink sink = active.get(did);
-                boolean recording = sink != null && f.getName().equals(sink.currentSegmentName());
-                Map<String, Object> seg = new HashMap<>();
-                seg.put("name", f.getName());
-                seg.put("idx", Integer.parseInt(m.group(2)));
-                seg.put("startMs", startMs);
-                seg.put("size", f.length());
-                seg.put("lastModified", f.lastModified());
-                seg.put("recording", recording);
-                segs.add(seg);
+        for (Map.Entry<String, SegMeta> e : segIndex.entrySet()) {
+            String fname = e.getKey();
+            Matcher m = TIMELINE_PATTERN.matcher(fname);
+            if (!m.matches() || !did.equals(m.group(1)) || !dayPart.equals(m.group(3))) {
+                continue;
             }
+            LocalDateTime ldt = LocalDateTime.of(
+                    LocalDate.parse(m.group(3), NAME_DATE),
+                    LocalTime.parse(m.group(4), NAME_TIME));
+            long startMs = ldt.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
+            RecordingSink sink = active.get(did);
+            boolean recording = sink != null && fname.equals(sink.currentSegmentName());
+            SegMeta meta = e.getValue();
+            Map<String, Object> seg = new HashMap<>();
+            seg.put("name", fname);
+            seg.put("idx", Integer.parseInt(m.group(2)));
+            seg.put("startMs", startMs);
+            seg.put("size", meta.size());
+            seg.put("lastModified", meta.lastModified());
+            seg.put("recording", recording);
+            segs.add(seg);
         }
         segs.sort(Comparator.comparingLong(s -> (long) s.get("startMs")));
 
@@ -484,6 +601,7 @@ public class RecordingService {
         } catch (IOException e) {
             throw ApiException.badRequest("删除失败：" + e.getMessage());
         }
+        segIndex.remove(name);
         invalidateListCache();
     }
 
@@ -558,6 +676,7 @@ public class RecordingService {
                     continue;
                 }
                 if (Files.deleteIfExists(f.toPath())) {
+                    segIndex.remove(name);
                     deleted.add(name);
                 } else {
                     failed.add(failure(name, "文件已不存在"));
@@ -714,6 +833,8 @@ public class RecordingService {
         List<String> running = detachAll();
         // 切换根目录并持久化（先确保目录可用，再落盘，避免保存一个不可用路径）
         this.rootDir = abs;
+        segIndex.clear();
+        indexDirMtime = null; // 强制下次 list/timeline 同步重建新目录的索引
         invalidateListCache();
         ensureDir(abs);
         settingsStore.saveRecordingDir(reset ? null : abs.getAbsolutePath());
@@ -795,6 +916,7 @@ public class RecordingService {
                     continue;
                 }
                 if (Files.deleteIfExists(f.toPath())) {
+                    segIndex.remove(f.getName());
                     removed++;
                     log.info("清理过期录像（保留 {} 天）：{}", days, f.getName());
                 }
@@ -873,6 +995,7 @@ public class RecordingService {
             long len = f.length();
             try {
                 if (Files.deleteIfExists(f.toPath())) {
+                    segIndex.remove(f.getName());
                     used -= len;
                     removed++;
                     log.info("容量水位覆盖（水位 {}%）：删除最旧分段 {}", pct, f.getName());

@@ -219,6 +219,10 @@ public final class Mp4SegmentRecorder {
     private AVFormatContext outCtx;
     /** 当前正在写入（未封段）的文件名；封段完成或停止后为 null。供列表精确标记“录制中”。 */
     private volatile String currentSegmentName;
+    /** 当前分段文件（封段回调需要 size/mtime；null 表示无活动段）。 */
+    private volatile File currentSegmentFile;
+    /** 分段生命周期回调（可选，null 时无操作）。 */
+    private final SegmentListener listener;
     private AVIOContext outPb;
     private AVStream outVideo;
     private AVStream outAudio;
@@ -250,11 +254,34 @@ public final class Mp4SegmentRecorder {
 
     public Mp4SegmentRecorder(String did, File outDir, long segmentSeconds,
                               boolean h265, int audioChannels) throws IOException {
+        this(did, outDir, segmentSeconds, h265, audioChannels, null);
+    }
+
+    /**
+     * 分段生命周期回调：供 {@code RecordingService} 维护录像分段内存索引。
+     *
+     * <p>索引化的目录 mtime 变化检测在部分文件系统上粒度粗（1~2s）或延迟更新，
+     * 事件回调是唯一可靠的新增/封段通知渠道；回调在录像线程内触发，实现方必须轻量
+     * （内存操作，禁止磁盘 IO）。</p>
+     */
+    public interface SegmentListener {
+        /** 新分段开始写入（文件已创建、header 已落盘）。 */
+        default void onSegmentOpen(String name, File file) {
+        }
+
+        /** 分段封段完成（trailer 已写、文件已落盘）。size/lastModified 为最终值。 */
+        default void onSegmentClose(String name, File file, long size, long lastModified) {
+        }
+    }
+
+    public Mp4SegmentRecorder(String did, File outDir, long segmentSeconds,
+                              boolean h265, int audioChannels, SegmentListener listener) throws IOException {
         this.did = did;
         this.outDir = outDir;
         this.segmentMs = segmentSeconds * 1000L;
         this.videoCodecId = h265 ? AV_CODEC_ID_HEVC : AV_CODEC_ID_H264;
         this.audioChannels = audioChannels;
+        this.listener = listener;
         Files.createDirectories(outDir.toPath());
         // 分段序号跨重启接续：扫描本摄像头已有段的最大序号，从其后继续，
         // 避免服务重启后续录又从 001 开始而与旧段序号重复。
@@ -815,6 +842,14 @@ public final class Mp4SegmentRecorder {
         segmentStartMs = startMs;
         lastVideoRelMs = -1;
         currentSegmentName = name;
+        currentSegmentFile = file;
+        if (listener != null) {
+            try {
+                listener.onSegmentOpen(name, file);
+            } catch (Throwable t) {
+                log.warn("[{}] 分段开段回调异常：{}", did, t.toString());
+            }
+        }
         log.info("[{}] 开始录像分段：{}（{}，起始 t={}ms）", did, name,
                 videoCodecId == AV_CODEC_ID_HEVC ? "H.265" : "H.264", startMs);
     }
@@ -824,6 +859,7 @@ public final class Mp4SegmentRecorder {
             return;
         }
         // 先清除“录制中”标记：从此刻起该文件已是完成段（trailer 写入期间也不应再标记为录制中）。
+        String closedName = currentSegmentName;
         currentSegmentName = null;
         try {
             // 刷出编码器残余样本（不足 frame_size 的尾帧），保证段尾音频完整
@@ -852,6 +888,16 @@ public final class Mp4SegmentRecorder {
         outVideo = null;
         outAudio = null;
         outPb = null;
+        // v2.3.1 第三十一轮：封段完成即通知索引（携带最终 size/mtime，录像页立即可见新分段）
+        File f = currentSegmentFile;
+        currentSegmentFile = null;
+        if (listener != null && f != null && closedName != null) {
+            try {
+                listener.onSegmentClose(closedName, f, f.length(), f.lastModified());
+            } catch (Throwable t) {
+                log.warn("[{}] 分段封段回调异常：{}", did, t.toString());
+            }
+        }
     }
 
     /** 设备毫秒时间戳 → 连续输出毫秒；回退（重连）或 >1s 空洞时平移，保证时间轴连续。 */

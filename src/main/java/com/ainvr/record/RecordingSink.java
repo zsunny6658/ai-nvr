@@ -26,6 +26,8 @@ public final class RecordingSink implements StreamSink, AutoCloseable {
     private final long segmentSeconds;
 
     private Mp4SegmentRecorder recorder;
+    /** 分段生命周期回调（透传给 {@link Mp4SegmentRecorder}，可为 null）。 */
+    private final Mp4SegmentRecorder.SegmentListener segmentListener;
     private int currentGen;
     private int reconnects;
     private long videoPackets;
@@ -33,9 +35,20 @@ public final class RecordingSink implements StreamSink, AutoCloseable {
     private long audioPackets;
 
     public RecordingSink(String did, File outDir, long segmentSeconds) {
+        this(did, outDir, segmentSeconds, null);
+    }
+
+    /**
+     * @param listener 分段开段/封段回调（可选）。由 {@code RecordingService} 传入以维护
+     *                 录像分段内存索引；事件驱动比目录 mtime 轮询可靠（粗粒度文件系统上
+     *                 mtime 可能延迟更新）。
+     */
+    public RecordingSink(String did, File outDir, long segmentSeconds,
+                         Mp4SegmentRecorder.SegmentListener listener) {
         this.did = did;
         this.outDir = outDir;
         this.segmentSeconds = segmentSeconds;
+        this.segmentListener = listener;
     }
 
     @Override
@@ -56,7 +69,8 @@ public final class RecordingSink implements StreamSink, AutoCloseable {
         try {
             if (pkt.isVideo()) {
                 if (recorder == null) {
-                    recorder = new Mp4SegmentRecorder(did, outDir, segmentSeconds, pkt.isH265(), OPUS_CHANNELS);
+                    recorder = new Mp4SegmentRecorder(did, outDir, segmentSeconds,
+                            pkt.isH265(), OPUS_CHANNELS, segmentListener);
                     recorder.start();
                     log.info("[{}] 开始 MP4 分段录像（{}，{}s/段，目录 {}）",
                             did, pkt.isH265() ? "H.265" : "H.264", segmentSeconds,

@@ -599,16 +599,22 @@
         var oldLabel = $('btnUnlock').textContent;
         $('btnUnlock').textContent = '校验中…';
         try {
-            var d = await api('api/access/unlock', {
+            // v2.3.1 第三十一轮：解锁与会话查询并行（/api/session 在门禁白名单内不依赖解锁态），
+            // 省一次 RTT——弱网/外网访问时解锁后的等待直接减半
+            var dP = api('api/access/unlock', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ password: p })
             });
+            var sP = api('api/session').catch(function () { return null; });
+            var d = await dP;
             if (d && d.remember) { setRemember(d.remember); }
             state.unlocked = true;
-            var s = await api('api/session');
-            state.loggedIn = !!s.loggedIn;
-            state.userId = s.userId || state.userId;
-            state.region = s.region || state.region;
+            var s = await sP;
+            if (s) {
+                state.loggedIn = !!s.loggedIn;
+                state.userId = s.userId || state.userId;
+                state.region = s.region || state.region;
+            }
             toast('已解锁', 'ok');
             route();
         } catch (e) { showLockError(e.message); }

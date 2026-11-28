@@ -31,7 +31,7 @@ class StaticAssetContractTest {
 
         assertTrue(html.contains("btnPreviewBack"), "预览弹层缺少应用内返回按钮");
         assertTrue(html.contains("btnPlayerBack"), "回放弹层缺少应用内返回按钮");
-        assertTrue(html.contains("v=95"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
+        assertTrue(html.contains("v=96"), "静态资源版本号未同步升级，WebView 会命中旧缓存");
         // v2.3.1 第二十七轮回归锁：iPhone MMS-VOD 内联回放（根治回放系统全屏）
         assertTrue(js.contains("function mountVodMms") && js.contains("function stopVodMms"),
                 "回放/录像弹层必须支持 MMS 渐进回放（直链在部分 WKWebView 宿主里 playsinline 被忽略 → 全屏）");

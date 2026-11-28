@@ -274,9 +274,12 @@ public final class CameraStream {
             MissClient client = null;
             int gen = 0;
             boolean gotFrame = false;
+            // v2.3.1 第三十一轮：建连/首帧耗时观测——预览慢的量化依据（P2P 建连慢 or 摄像头出流慢）
+            long openStartMs = System.currentTimeMillis();
             try {
                 log.info("[{}] 正在建立上游取流连接（重新协商+CS2+MISS+VideoStart）...", did);
                 client = opener.open();
+                long openMs = System.currentTimeMillis() - openStartMs;
                 current = client;
                 synchronized (deliverLock) {
                     gen = ++generation;
@@ -286,7 +289,8 @@ public final class CameraStream {
                         s.dispatchReset(gen);
                     }
                 }
-                log.info("[{}] 上游已连接并开始推流（generation={}，{}）", did, gen, client.protocol());
+                log.info("[{}] 上游已连接并开始推流（generation={}，{}，建连耗时 {}ms）",
+                        did, gen, client.protocol(), openMs);
                 backoffIndex = 0;
                 healthy = false;
 
@@ -297,7 +301,8 @@ public final class CameraStream {
                     }
                     if (!gotFrame) {
                         healthy = true;
-                        log.info("[{}] 首帧已到达，上游链路健康（generation={}）", did, gen);
+                        log.info("[{}] 首帧已到达，上游链路健康（generation={}，建连到首帧 {}ms）",
+                                did, gen, System.currentTimeMillis() - openStartMs);
                     }
                     gotFrame = true;
                     lastFrameAt = System.currentTimeMillis();
